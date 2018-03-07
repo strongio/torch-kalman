@@ -102,7 +102,7 @@ class KalmanFilter(object):
         """
         The 'update' step of the kalman filter.
 
-        :param obs: The observations. Missing-values are allowed.
+        :param obs: The observations. (TODO: does it need to be 3D?)
         :param x: Mean
         :param P: Covariance
         :return: The new (mean, covariance)
