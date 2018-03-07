@@ -5,21 +5,14 @@ from kalman_pytorch.utils.torch_utils import expand, batch_transpose
 
 
 # noinspection PyPep8Naming
-class KalmanFilter(object):
-    def __init__(self, F, H, R, Q):
-        """
-        :param F:
-        :param H:
-        :param R:
-        :param Q:
-        """
+class KalmanFilter(torch.nn.Module):
+    def __init__(self, F=None, H=None, R=None, Q=None):
         super(KalmanFilter, self).__init__()
-
-        self.factories = dict(F=F, H=H, R=R, Q=Q)
-        self._F = None
-        self._H = None
-        self._R = None
-        self._Q = None
+        self.design_mats_as_args = (F is not None) and (H is not None) and (R is not None) and (Q is not None)
+        self._F = F
+        self._H = H
+        self._R = R
+        self._Q = Q
 
     # Main Forward-Pass Methods --------------------
     def predict_ahead(self, x, n_ahead):
@@ -40,8 +33,7 @@ class KalmanFilter(object):
         num_series, num_variables, num_timesteps = x.data.shape
 
         # initial values:
-        k_mean = Variable(torch.zeros(num_series, self.rank, 1))
-        k_cov = expand(self.initial_process_covariance, num_series)
+        k_mean, k_cov = self.initializer(x)
 
         # preallocate:
         output = Variable(torch.zeros(list(x.data.shape) + [n_ahead]))
@@ -63,7 +55,8 @@ class KalmanFilter(object):
             k_mean, k_cov = k_mean_next, k_cov_next
 
         # forward-pass is done, so make sure design-mats will be re-instantiated next time:
-        self.destroy_design_mats()
+        if not self.design_mats_as_args:
+            self.destroy_design_mats()
 
         #
         return output
@@ -77,6 +70,12 @@ class KalmanFilter(object):
         """
         out = self.predict_ahead(x, n_ahead=1)
         return torch.squeeze(out, 3)  # flatten
+
+    # Kalman-Smoother ------------------------------
+    def smooth(self, x):
+        if x is not None:
+            raise NotImplementedError("Kalman-smoothing is not yet implemented.")
+        return None
 
     # Main KF Steps -------------------------
     def kf_predict(self, x, P):
@@ -143,7 +142,8 @@ class KalmanFilter(object):
         Sinv = torch.cat([torch.inverse(S[i, :, :]).unsqueeze(0) for i in range(bs)], 0)
         return Sinv
 
-    def covariance_update(self, P, K, H_expanded, R_expanded):
+    @staticmethod
+    def covariance_update(P, K, H_expanded, R_expanded):
         """
         "Joseph stabilized" covariance correction.
 
@@ -153,7 +153,8 @@ class KalmanFilter(object):
         :param R_expanded: The R design-matrix, expanded for each batch.
         :return: The new process covariance.
         """
-        I = expand(Variable(torch.eye(self.rank, self.rank)), P.data.shape[0])
+        rank = H_expanded.data.shape[2]
+        I = expand(Variable(torch.eye(rank, rank)), P.data.shape[0])
         p1 = (I - torch.bmm(K, H_expanded))
         p2 = torch.bmm(torch.bmm(p1, P), batch_transpose(p1))
         p3 = torch.bmm(torch.bmm(K, R_expanded), batch_transpose(K))
@@ -174,28 +175,23 @@ class KalmanFilter(object):
     @property
     def F(self):
         if self._F is None:
-            self._F = self.factories['F'](self)
+            raise NotImplementedError("No value was passed at init.")
         return self._F
 
     @property
     def H(self):
         if self._H is None:
-            self._H = self.factories['H'](self)
+            raise NotImplementedError("No value was passed at init.")
         return self._H
 
     @property
     def R(self):
         if self._R is None:
-            self._R = self.factories['R'](self)
+            raise NotImplementedError("No value was passed at init.")
         return self._R
 
     @property
     def Q(self):
         if self._Q is None:
-            self._Q = self.factories['Q'](self)
+            raise NotImplementedError("No value was passed at init.")
         return self._Q
-
-    # Misc ---------------------------
-    @property
-    def initial_process_covariance(self):
-        return None

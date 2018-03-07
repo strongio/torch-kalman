@@ -1,4 +1,12 @@
-from torch import stack
+import torch
+
+
+def log_std_to_var(log_std):
+    """
+    :param log_std: The log(standard-deviation)
+    :return: The variance
+    """
+    return torch.pow(torch.exp(log_std), 2)
 
 
 def expand(x, ns):
@@ -20,4 +28,4 @@ def batch_transpose(x):
     :return: x transposed batchwise.
     """
     ns = x.data.shape[0]
-    return stack([x[i].t() for i in xrange(ns)], 0)
+    return torch.stack([x[i].t() for i in xrange(ns)], 0)
