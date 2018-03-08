@@ -106,41 +106,67 @@ class KalmanFilter(torch.nn.Module):
         :param P: Covariance
         :return: The new (mean, covariance)
         """
-        bs = P.data.shape[0]  # batch-size
 
         # handle missing values
-        is_nan_el = (obs != obs)  # by element
-        if is_nan_el.data.any():
-            raise NotImplementedError("TODO: Handle missing values.")
+        obs_nm, x_nm, P_nm, is_nan_slice = self.nan_remove(obs, x, P)
 
         # expand design-matrices to match batch-size:
+        bs = P_nm.data.shape[0]  # batch-size
         H_expanded = expand(self.H, bs)
-        Ht_expanded = expand(self.H.t(), bs)
         R_expanded = expand(self.R, bs)
 
-        # calculations required for kalman-gain:
-        S = torch.bmm(torch.bmm(H_expanded, P), Ht_expanded) + R_expanded  # total covariance
-        residual = obs - torch.bmm(H_expanded, x)
-        Sinv = self.invert_s(S, residual)
-        K = torch.bmm(torch.bmm(P, Ht_expanded), Sinv)  # kalman gain
+        # residual:
+        residual = obs_nm - torch.bmm(H_expanded, x_nm)
+
+        # kalman-gain:
+        K = self.kalman_gain(P_nm, H_expanded, R_expanded)
 
         # update mean and covariance:
-        x_new = x + torch.bmm(K, residual)
-        P_new = self.covariance_update(P, K, H_expanded, R_expanded)
+        x_new, P_new = x.clone(), P.clone()
+        x_new[is_nan_slice == 0] = x_nm + torch.bmm(K, residual)
+        P_new[is_nan_slice == 0] = self.covariance_update(P_nm, K, H_expanded, R_expanded)
 
         return x_new, P_new
 
-    # Computation Helpers ---------------------------
     @staticmethod
-    def invert_s(S, residual):
+    def nan_remove(obs, x, P):
         """
-        :param S: Covariance Matrix
-        :param residual: Currently unused. In the future, this will be used for outlier-rejection.
-        :return: S inverted, batchwise.
+        Remove group-slices from x and P where any variables in that slice are missing.
+
+        :param obs: The observed data, potentially with missing values.
+        :param x: Mean.
+        :param P: Covariance
+        :return: A tuple with four elements. The first three are the tensors originally passed as arguments, but without
+         any group-slices that have missing values. The fourth is a byte-tensor indicating which slices in the original
+         `obs` had missing-values.
         """
-        bs = S.data.shape[0]  # batch-size
-        Sinv = torch.cat([torch.inverse(S[i, :, :]).unsqueeze(0) for i in range(bs)], 0)
-        return Sinv
+        bs = P.data.shape[0]  # batch-size including missings
+        rank = P.data.shape[1]
+        is_nan_el = (obs != obs)  # by element
+        if is_nan_el.data.any():
+            # get a list, one for each group-slice, indicating 1 for nan:
+            is_nan_list = (torch.sum(is_nan_el, 1) > 0).squeeze(1).data.tolist()
+            # keep only the group-slices without nans:
+            obs_nm = torch.stack([obs[i] for i, is_nan in enumerate(is_nan_list) if is_nan == 0], 0)
+            x_nm = torch.stack([x[i] for i, is_nan in enumerate(is_nan_list) if is_nan == 0], 0)
+            P_nm = torch.stack([P[i] for i, is_nan in enumerate(is_nan_list) if is_nan == 0], 0)
+        else:
+            # don't need to do anything:
+            obs_nm, x_nm, P_nm = obs, x, P
+
+        # this is used to index into the original x,P when performing assignment later:
+        is_nan_slice = (torch.sum(is_nan_el, 1, keepdim=True) > 0).expand(bs, rank, 1)
+
+        return obs_nm, x_nm, P_nm, is_nan_slice
+
+    @staticmethod
+    def kalman_gain(P, H_expanded, R_expanded):
+        bs = P.data.shape[0]  # batch-size
+        Ht_expanded = expand(H_expanded[0].t(), bs)
+        S = torch.bmm(torch.bmm(H_expanded, P), Ht_expanded) + R_expanded  # total covariance
+        Sinv = torch.cat([torch.inverse(S[i, :, :]).unsqueeze(0) for i in range(bs)], 0)  # invert, batchwise
+        K = torch.bmm(torch.bmm(P, Ht_expanded), Sinv)  # kalman gain
+        return K
 
     @staticmethod
     def covariance_update(P, K, H_expanded, R_expanded):
