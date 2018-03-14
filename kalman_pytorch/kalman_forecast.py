@@ -85,6 +85,12 @@ class KalmanForecast(KalmanFilter):
 
         return self._var_indices
 
+    def destroy_design_mats(self):
+        self._Q = None
+        self._F = None
+        self._H = None
+        self._R = None
+
     @property
     def R(self):
         if self._R is None:

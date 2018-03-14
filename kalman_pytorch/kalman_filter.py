@@ -3,12 +3,13 @@ from torch.autograd import Variable
 
 from kalman_pytorch.utils.torch_utils import expand, batch_transpose
 
+from warnings import warn
+
 
 # noinspection PyPep8Naming
 class KalmanFilter(torch.nn.Module):
     def __init__(self, F=None, H=None, R=None, Q=None):
         super(KalmanFilter, self).__init__()
-        self.design_mats_as_args = (F is not None) and (H is not None) and (R is not None) and (Q is not None)
         self._F = F
         self._H = H
         self._R = R
@@ -55,8 +56,7 @@ class KalmanFilter(torch.nn.Module):
             k_mean, k_cov = k_mean_next, k_cov_next
 
         # forward-pass is done, so make sure design-mats will be re-instantiated next time:
-        if not self.design_mats_as_args:
-            self.destroy_design_mats()
+        self.destroy_design_mats()
 
         #
         return output
@@ -189,14 +189,15 @@ class KalmanFilter(torch.nn.Module):
     # Design-Matrices ---------------------------
     def destroy_design_mats(self):
         """
-        Once design-mats are defined within a forward-pass, there's no need to redefine them for the rest of that
-        forward pass. But when the forward pass is finished, we need to destroy them, so that they'll be rebuilt on the
-        next forward pass.
+        For most classes inheriting from KalmanFilter, these design-matrices will involve pytorch Parameters, which
+        means they need to be rebuilt after every call to 'backward'. So most classes will implement these matrices
+        using @property and then override this method with one that resets them to None. See, e.g., KalmanForecast.
         """
-        self._Q = None
-        self._F = None
-        self._H = None
-        self._R = None
+        for varname in ('F', 'H', 'R', 'Q'):
+            var = getattr(self, '_' + varname, default=None)
+            if isinstance(var, Variable):
+                warn("%s is a variable but `destroy_design_mats` doesn't reset it; do you need to override this method?"
+                     % varname)
 
     @property
     def F(self):
