@@ -1,0 +1,1 @@
+kalman-pytorch is copyright (c) 2018 Strong Analytics, LLC. All Rights Reserved.
