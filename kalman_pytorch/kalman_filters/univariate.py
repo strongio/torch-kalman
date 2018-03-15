@@ -1,5 +1,6 @@
 from kalman_pytorch.design import Design
-from kalman_pytorch.design.kalman_object import Measurement, State
+from kalman_pytorch.design.state import position_and_velocity
+from kalman_pytorch.design.measurement import Measurement
 from kalman_pytorch.kalman_filter import KalmanFilter
 
 from kalman_pytorch.design.lazy_parameter import LogLinked
@@ -10,6 +11,13 @@ from torch.nn import Parameter
 
 class UnivariateWithVelocity(KalmanFilter):
     def __init__(self):
+        """
+        This is a simple kalman filter mostly for demonstration purposes. It assumes we are tracking a single variable
+        with constant velocity, and estimates the latent position and velocity. It has two tuneable parameters: the
+        process noise (how much latent position/velocity can change over time) and measurement noise (how much noise
+        there is in taking a measurement of the latent position).
+        """
+
         # parameters ---
         self.log_process_std_dev = Parameter(torch.zeros(1))
         process_std_dev = LogLinked(self.log_process_std_dev)
@@ -18,23 +26,11 @@ class UnivariateWithVelocity(KalmanFilter):
         measurement_std_dev = LogLinked(self.log_measurement_std_dev)
 
         # states ---
-        states = dict()
-
-        # position and velocity:
-        states['position'] = State(id='position', std_dev=process_std_dev.with_added_lambda(lambda x: pow(.5, .5) * x))
-        states['velocity'] = State(id='velocity', std_dev=process_std_dev)
-        states['position'].add_correlation(states['velocity'], correlation=1.)
-
-        # next position is just positition + velocity
-        states['position'].add_transition(to_state=states['position'])
-        states['velocity'].add_transition(to_state=states['position'])
-        # next velocity is just current velocity:
-        states['velocity'].add_transition(to_state=states['velocity'])
+        states = position_and_velocity(process_std_dev, '')
 
         # measurements ---
-        measurements = dict()
-        measurements['position'] = Measurement(id=1, std_dev=measurement_std_dev)
-        measurements['position'].add_state(states['position'])
+        pos_measurement = Measurement(id=1, std_dev=measurement_std_dev)
+        pos_measurement.add_state(states[0])
 
-        design = Design(states=states.values(), measurements=measurements.values())
+        design = Design(states=states, measurements=[pos_measurement])
         super(UnivariateWithVelocity, self).__init__(design=design)
