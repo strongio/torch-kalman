@@ -3,17 +3,12 @@ from torch.autograd import Variable
 
 from kalman_pytorch.utils.torch_utils import expand, batch_transpose
 
-from warnings import warn
-
 
 # noinspection PyPep8Naming
 class KalmanFilter(torch.nn.Module):
-    def __init__(self, F=None, H=None, R=None, Q=None):
+    def __init__(self, design):
         super(KalmanFilter, self).__init__()
-        self._F = F
-        self._H = H
-        self._R = R
-        self._Q = Q
+        self.design = design
 
     # Main Forward-Pass Methods --------------------
     def predict_ahead(self, x, n_ahead):
@@ -56,7 +51,7 @@ class KalmanFilter(torch.nn.Module):
             k_mean, k_cov = k_mean_next, k_cov_next
 
         # forward-pass is done, so make sure design-mats will be re-instantiated next time:
-        self.destroy_design_mats()
+        self.design.reset()
 
         #
         return output
@@ -187,38 +182,18 @@ class KalmanFilter(torch.nn.Module):
         return p2 + p3
 
     # Design-Matrices ---------------------------
-    def destroy_design_mats(self):
-        """
-        For most classes inheriting from KalmanFilter, these design-matrices will involve pytorch Parameters, which
-        means they need to be rebuilt after every call to 'backward'. So most classes will implement these matrices
-        using @property and then override this method with one that resets them to None. See, e.g., KalmanForecast.
-        """
-        for varname in ('F', 'H', 'R', 'Q'):
-            var = getattr(self, '_' + varname, default=None)
-            if isinstance(var, Variable):
-                warn("%s is a variable but `destroy_design_mats` doesn't reset it; do you need to override this method?"
-                     % varname)
-
     @property
     def F(self):
-        if self._F is None:
-            raise NotImplementedError("No value was passed at init.")
-        return self._F
+        return self.design.F
 
     @property
     def H(self):
-        if self._H is None:
-            raise NotImplementedError("No value was passed at init.")
-        return self._H
+        return self.design.H
 
     @property
     def R(self):
-        if self._R is None:
-            raise NotImplementedError("No value was passed at init.")
-        return self._R
+        return self.design.R
 
     @property
     def Q(self):
-        if self._Q is None:
-            raise NotImplementedError("No value was passed at init.")
-        return self._Q
+        return self.design.Q

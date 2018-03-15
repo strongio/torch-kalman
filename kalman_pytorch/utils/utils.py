@@ -1,5 +1,6 @@
 import numpy as np
 
+
 def cummean(A, axis):
     """
     Take the cumulative mean along an axis.
@@ -21,3 +22,14 @@ def train_val_split(array, prop=.75):
     train_idx = np.random.choice(array.shape[0], int(round(array.shape[0] * prop)), replace=False)
     all_idx = np.arange(array.shape[0])
     return array[np.in1d(all_idx, train_idx)], array[~np.in1d(all_idx, train_idx)]
+
+
+def make_callable(x):
+    """
+    :param x: An object
+    :return: If x is callable, then x. Otherwise, a function that returns x.
+    """
+    if callable(x):
+        return x
+    else:
+        return lambda: x
