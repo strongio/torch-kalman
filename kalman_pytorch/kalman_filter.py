@@ -6,9 +6,12 @@ from kalman_pytorch.utils.torch_utils import expand, batch_transpose
 
 # noinspection PyPep8Naming
 class KalmanFilter(torch.nn.Module):
-    def __init__(self, design):
+    def __init__(self):
         super(KalmanFilter, self).__init__()
-        self.design = design
+
+    @property
+    def design(self):
+        raise NotImplementedError()
 
     # Main Forward-Pass Methods --------------------
     def predict_ahead(self, x, n_ahead):

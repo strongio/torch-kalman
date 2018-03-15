@@ -17,6 +17,7 @@ class UnivariateWithVelocity(KalmanFilter):
         process noise (how much latent position/velocity can change over time) and measurement noise (how much noise
         there is in taking a measurement of the latent position).
         """
+        super(UnivariateWithVelocity, self).__init__()
 
         # parameters ---
         self.log_process_std_dev = Parameter(torch.zeros(1))
@@ -32,5 +33,8 @@ class UnivariateWithVelocity(KalmanFilter):
         pos_measurement = Measurement(id=1, std_dev=measurement_std_dev)
         pos_measurement.add_state(states[0])
 
-        design = Design(states=states, measurements=[pos_measurement])
-        super(UnivariateWithVelocity, self).__init__(design=design)
+        self._design = Design(states=states, measurements=[pos_measurement])
+
+    @property
+    def design(self):
+        return self._design
