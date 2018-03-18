@@ -17,6 +17,9 @@ class LazyParameter(object):
         new_lazy.add_lambda(lam)
         return new_lazy
 
+    def __getitem__(self, item):
+        return self.with_added_lambda(lambda x: x[item])
+
     def __call__(self):
         param_out = self.parameter
         for lam in self.lambda_chain:
@@ -28,4 +31,11 @@ class LogLinked(LazyParameter):
     def __init__(self, parameter):
         super(LogLinked, self).__init__(parameter=parameter)
         self.lambda_chain.append(torch.exp)
+        self.after_init_idx = 1
+
+
+class LogitLinked(LazyParameter):
+    def __init__(self, parameter):
+        super(LogitLinked, self).__init__(parameter=parameter)
+        self.lambda_chain.append(torch.sigmoid)
         self.after_init_idx = 1

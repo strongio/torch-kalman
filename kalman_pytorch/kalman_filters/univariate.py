@@ -1,5 +1,5 @@
 from kalman_pytorch.design import Design
-from kalman_pytorch.design.state import position_and_velocity
+from kalman_pytorch.design.process import ConstantVelocity
 from kalman_pytorch.design.measurement import Measurement
 from kalman_pytorch.kalman_filter import KalmanFilter
 
@@ -19,6 +19,8 @@ class UnivariateWithVelocity(KalmanFilter):
         """
         super(UnivariateWithVelocity, self).__init__()
 
+        self.num_states = 2
+
         # parameters ---
         self.log_process_std_dev = Parameter(torch.zeros(1))
         process_std_dev = LogLinked(self.log_process_std_dev)
@@ -26,15 +28,23 @@ class UnivariateWithVelocity(KalmanFilter):
         self.log_measurement_std_dev = Parameter(torch.zeros(1))
         measurement_std_dev = LogLinked(self.log_measurement_std_dev)
 
+        self.initial_state = Parameter(torch.randn(self.num_states))
+        self.initial_log_std = Parameter(torch.randn(self.num_states))
+
         # states ---
-        states = position_and_velocity(process_std_dev, '')
+        process = ConstantVelocity(id_prefix=None, std_dev=process_std_dev)
 
         # measurements ---
         pos_measurement = Measurement(id=1, std_dev=measurement_std_dev)
-        pos_measurement.add_state(states[0])
+        pos_measurement.add_state(process.observable)
 
-        self._design = Design(states=states, measurements=[pos_measurement])
+        self._design = Design(states=process.states, measurements=[pos_measurement])
 
     @property
     def design(self):
         return self._design
+
+    def initializer(self, tens):
+        return self.default_initializer(tens=tens,
+                                        initial_state=self.initial_state,
+                                        initial_std_dev=torch.exp(self.initial_log_std))

@@ -1,5 +1,6 @@
-from torch.autograd import Variable
 from torch import Tensor
+from torch.autograd import Variable
+
 from warnings import warn
 
 from kalman_pytorch.utils.utils import make_callable
@@ -27,13 +28,13 @@ class CovarianceElement(object):
         """
         # std-dev:
         if isinstance(self.std_dev, float):
-            self.std_dev = Tensor([self.std_dev])
+            self.std_dev = Variable(Tensor([self.std_dev]))
         self.std_dev = make_callable(self.std_dev)
 
         # correlations:
         for key in self.correlations.keys():
             if isinstance(self.correlations[key], float):
-                self.correlations[key] = Tensor([self.correlations[key]])
+                self.correlations[key] = Variable(Tensor([self.correlations[key]]))
             self.correlations[key] = make_callable(self.correlations[key])
 
     @staticmethod

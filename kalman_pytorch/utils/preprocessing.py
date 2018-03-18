@@ -4,7 +4,7 @@ import pandas as pd
 
 
 class TSPreprocessor(object):
-    def __init__(self, variables, group_col, variable_col, value_col, date_col, freq=1):
+    def __init__(self, variables, group_col, variable_col, value_col, date_col, freq='D'):
         """
         Create a preprocessor for multivariate time-series. This converts pandas dataframes into numpy arrays and
         vice-versa.
@@ -15,10 +15,10 @@ class TSPreprocessor(object):
         :param variable_col: The column in the pandas dataframe containing the variable.
         :param value_col: The column in the pandas dataframe containing the actual values of the time-series.
         :param date_col: The column in the pandas dataframe containing the date.
-        :param freq: The frequency/period for the date. Currently only daily data are supported.
+        :param freq: The frequency for the date. Currently only daily data are supported.
         """
-        if freq != 1:
-            raise Exception("Only data with freq=1 currently supported.")
+        if freq != 'D':
+            raise Exception("Only data with freq='D' (daily) currently supported.")
         self.freq = freq
         self.variables = sorted(variables)
         self.group_col = group_col
@@ -167,7 +167,7 @@ class TSPreprocessor(object):
                 out[self.group_col][row:row2] = group_name
                 out[self.variable_col][row:row2] = var_name
                 out[self.date_col][row:row2] = pd.date_range(start_dates[group_name],
-                                                             periods=len(values), freq='D')  # TODO: use self.freq
+                                                             periods=len(values), freq=self.freq)
                 out[value_col][row:row2] = values
                 row = row2
 

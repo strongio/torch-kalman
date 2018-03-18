@@ -2,6 +2,8 @@ from kalman_pytorch.design.covariance_element import CovarianceElement
 from kalman_pytorch.utils.utils import make_callable
 from torch import Tensor
 
+from torch.autograd import Variable
+
 
 class State(CovarianceElement):
     def __init__(self, id, std_dev):
@@ -28,30 +30,5 @@ class State(CovarianceElement):
         super(State, self).torchify()
         for key in self.transitions.keys():
             if isinstance(self.transitions[key], float):
-                self.transitions[key] = Tensor([self.transitions[key]])
+                self.transitions[key] = Variable(Tensor([self.transitions[key]]))
             self.transitions[key] = make_callable(self.transitions[key])
-
-
-def position_and_velocity(process_std_dev, id_prefix):
-    """
-    Creates a tuple of States. The first is for position, the second is for velocity. The two are correlated according
-    to the "discrete white noise" method (see https://github.com/rlabbe/filterpy/blob/master/filterpy/common/discretization.py).
-    This assumes that the separation between each successive timestep is constant.
-
-    :param process_std_dev: Standard deviation (process-noise).
-    :param id_prefix: A prefix that will be added to the ids ('position','velocity'). Should include a separator.
-    :return: State for Position, State for Velocity.
-    """
-
-    # position and velocity:
-    position = State(id=id_prefix + 'position', std_dev=process_std_dev.with_added_lambda(lambda x: pow(.5, .5) * x))
-    velocity = State(id=id_prefix + 'velocity', std_dev=process_std_dev)
-    position.add_correlation(velocity, correlation=1.)
-
-    # next position is just positition + velocity
-    position.add_transition(to_state=position)
-    velocity.add_transition(to_state=position)
-    # next velocity is just current velocity:
-    velocity.add_transition(to_state=velocity)
-
-    return position, velocity

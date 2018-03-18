@@ -1,6 +1,6 @@
 import torch
 from torch.autograd import Variable
-from kalman_pytorch.utils.torch_utils import log_std_to_var
+from kalman_pytorch.utils.torch_utils import quad_form_diag
 
 
 # noinspection PyPep8Naming
@@ -58,13 +58,13 @@ class Design(object):
         :return: A covariance Matrix, as a pytorch Variable.
         """
         num_states = len(variables)
-        variance_diag = Variable(torch.zeros((num_states, num_states)))
+        std_devs = Variable(torch.zeros(num_states))
         corr_mat = Variable(torch.eye(num_states))
         idx_per_var = {var.id: idx for idx, var in enumerate(variables)}
         visited_corr_idx = set()
         for var in variables:
             idx = idx_per_var[var.id]
-            variance_diag[idx, idx] = torch.pow(var.std_dev(), 2)
+            std_devs[idx] = var.std_dev()
             for id, corr in var.correlations.iteritems():
                 idx2 = idx_per_var[id]
                 if (idx, idx2) not in visited_corr_idx:
@@ -72,7 +72,7 @@ class Design(object):
                     corr_mat[idx2, idx] = corr()
                     visited_corr_idx.add((idx, idx2))
 
-        return torch.mm(torch.mm(variance_diag, corr_mat), variance_diag)
+        return quad_form_diag(std_devs, corr_mat)
 
     @property
     def F(self):

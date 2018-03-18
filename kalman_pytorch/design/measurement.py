@@ -1,6 +1,7 @@
 from kalman_pytorch.design.covariance_element import CovarianceElement
 from kalman_pytorch.utils.utils import make_callable
 from torch import Tensor
+from torch.autograd import Variable
 
 
 class Measurement(CovarianceElement):
@@ -28,5 +29,5 @@ class Measurement(CovarianceElement):
         super(Measurement, self).torchify()
         for key in self.states.keys():
             if isinstance(self.states[key], float):
-                self.states[key] = Tensor([self.states[key]])
+                self.states[key] = Variable(Tensor([self.states[key]]))
             self.states[key] = make_callable(self.states[key])

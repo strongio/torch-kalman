@@ -1,7 +1,7 @@
 import torch
 from torch.autograd import Variable
 
-from kalman_pytorch.utils.torch_utils import expand, batch_transpose
+from kalman_pytorch.utils.torch_utils import expand, batch_transpose, quad_form_diag
 
 
 # noinspection PyPep8Naming
@@ -10,8 +10,37 @@ class KalmanFilter(torch.nn.Module):
         super(KalmanFilter, self).__init__()
 
     @property
+    def state_ids(self):
+        return (state.id for state in self.design.states)
+
+    @property
+    def measurement_ids(self):
+        return (measurement.id for measurement in self.design.measurements)
+
+    @property
     def design(self):
         raise NotImplementedError()
+
+    def initializer(self, tens):
+        """
+        :param tens: A tensor of observed values.
+        :return: Initial values for mean, cov that match the shape of the batch (tens).
+        """
+        raise NotImplementedError()
+
+    @staticmethod
+    def default_initializer(tens, initial_state, initial_std_dev):
+        """
+        :param tens: A tensor of a batch observed values.
+        :param initial_state: A Variable/Parameter that stores the initial state.
+        :param initial_std_dev: A Variable/Parameter that stores the initial std-deviation.
+        :return: Initial values for mean, cov that match the shape of the batch (tens).
+        """
+        num_states = initial_state.data.shape[0]
+        initial_mean = initial_state[:, None]
+        initial_cov = quad_form_diag(std_devs=initial_std_dev, corr_mat=Variable(torch.eye(num_states, num_states)))
+        bs = tens.data.shape[0]  # batch-size
+        return expand(initial_mean, bs), expand(initial_cov, bs)
 
     # Main Forward-Pass Methods --------------------
     def predict_ahead(self, x, n_ahead):
@@ -23,6 +52,9 @@ class KalmanFilter(torch.nn.Module):
         :param n_ahead: The number of steps ahead for prediction. Minumum is 1.
         :return: Predictions: a 4D tensor with group * variable * time * n_ahead.
         """
+
+        if not isinstance(x.data, torch.FloatTensor):
+            raise ValueError("The data for `x` must be a torch.FloatTensor.")
 
         # data shape:
         if len(x.data.shape) != 3:
@@ -38,20 +70,20 @@ class KalmanFilter(torch.nn.Module):
         output = Variable(torch.zeros(list(x.data.shape) + [n_ahead]))
 
         # fill one timestep at a time
-        for i in xrange(num_timesteps - 1):
-            # update. note `[i]` instead of `i` (keeps dimensionality)
-            k_mean, k_cov = self.kf_update(x[:, :, [i]], k_mean, k_cov)
-
+        for i in xrange(num_timesteps):
             # predict n-ahead
             for nh in xrange(n_ahead):
                 k_mean, k_cov = self.kf_predict(k_mean, k_cov)
                 if nh == 0:
                     k_mean_next, k_cov_next = k_mean, k_cov
-                output[:, :, i + 1, nh] = torch.bmm(expand(self.H, num_series), k_mean)
+                output[:, :, i, nh] = torch.bmm(expand(self.H, num_series), k_mean)
 
             # but for next timestep, only use 1-ahead:
             # noinspection PyUnboundLocalVariable
             k_mean, k_cov = k_mean_next, k_cov_next
+
+            # update. note `[i]` instead of `i` (keeps dimensionality)
+            k_mean, k_cov = self.kf_update(x[:, :, [i]], k_mean, k_cov)
 
         # forward-pass is done, so make sure design-mats will be re-instantiated next time:
         self.design.reset()
@@ -107,6 +139,8 @@ class KalmanFilter(torch.nn.Module):
 
         # handle missing values
         obs_nm, x_nm, P_nm, is_nan_slice = self.nan_remove(obs, x, P)
+        if obs_nm is None: # all missing
+            return x, P
 
         # expand design-matrices to match batch-size:
         bs = P_nm.data.shape[0]  # batch-size
@@ -141,6 +175,8 @@ class KalmanFilter(torch.nn.Module):
         bs = P.data.shape[0]  # batch-size including missings
         rank = P.data.shape[1]
         is_nan_el = (obs != obs)  # by element
+        if is_nan_el.data.all():
+            return None, None, None, None
         if is_nan_el.data.any():
             # get a list, one for each group-slice, indicating 1 for nan:
             is_nan_list = (torch.sum(is_nan_el, 1) > 0).squeeze(1).data.tolist()
