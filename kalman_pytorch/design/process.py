@@ -33,7 +33,42 @@ class NoVelocity(Process):
         return self.states[0]
 
 
-class ConstantVelocity(Process):
+class DampenedVelocity(Process):
+    def __init__(self, id_prefix, std_dev, damp_multi, sep="_"):
+        """
+        A process with velocity, where the expected value of the next state's velocity is equal to, or slightly less
+        than, the current one. The position and velocity are correlated according to the "discrete white noise" method
+        (see https://github.com/rlabbe/filterpy/blob/master/filterpy/common/discretization.py). This assumes that the
+        separation between each successive timestep is constant.
+
+        :param id_prefix: A prefix that will be added to the ids ('position','velocity'). Or can be None.
+        :param std_dev: Standard deviation (process-noise).
+        :param sep: The separator between id_prefix and the state name (defaults "_").
+        :param damp_multi: A multiplier between 0 and 1 that is applied to the velocity at each timestep.
+        """
+        assert 0 > damp_multi >= 1
+
+        def white_noise_multi(x): return pow(.5, .5) * x
+
+        # position and velocity:
+        position = State(id=join([id_prefix, 'position'], sep), std_dev=std_dev.with_added_lambda(white_noise_multi))
+        velocity = State(id=join([id_prefix, 'velocity'], sep), std_dev=std_dev)
+        position.add_correlation(velocity, correlation=1.)
+
+        # next position is just positition + velocity
+        position.add_transition(to_state=position)
+        velocity.add_transition(to_state=position)
+        # next velocity is just current velocity:
+        velocity.add_transition(to_state=velocity, multiplier=damp_multi)
+
+        super(DampenedVelocity, self).__init__((position, velocity))
+
+    @property
+    def observable(self):
+        return self.states[0]
+
+
+class ConstantVelocity(DampenedVelocity):
     def __init__(self, id_prefix, std_dev, sep="_"):
         """
         A process with velocity, where the expected value of the next state's velocity is equal to the current one. The
@@ -45,24 +80,7 @@ class ConstantVelocity(Process):
         :param std_dev: Standard deviation (process-noise).
         :param sep: The separator between id_prefix and the state name (defaults "_").
         """
-
-        # position and velocity:
-        def white_noise_multi(x): return pow(.5, .5) * x
-
-        position = State(id=join([id_prefix, 'position'], sep), std_dev=std_dev.with_added_lambda(white_noise_multi))
-        velocity = State(id=join([id_prefix, 'velocity'], sep), std_dev=std_dev)
-        position.add_correlation(velocity, correlation=1.)
-
-        # next position is just positition + velocity
-        position.add_transition(to_state=position)
-        velocity.add_transition(to_state=position)
-        # next velocity is just current velocity:
-        velocity.add_transition(to_state=velocity)
-        super(ConstantVelocity, self).__init__((position, velocity))
-
-    @property
-    def observable(self):
-        return self.states[0]
+        super(ConstantVelocity, self).__init__(id_prefix=id_prefix, std_dev=std_dev, damp_multi=1., sep=sep)
 
 
 class Seasonal(Process):
