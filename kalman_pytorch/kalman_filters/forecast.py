@@ -12,11 +12,16 @@ from warnings import warn
 
 
 class Forecast(KalmanFilter):
-    def __init__(self, variables, seasonal_period,
-                 level_factors='both', trend_factors='common', season_factors='separate'):
+    def __init__(self,
+                 variables,
+                 seasonal_period,
+                 level_factors='both',
+                 trend_factors='common',
+                 season_factors='separate'):
         """
 
-        :param variables: A list of the names of variables being measured (or can just pass range([number-of-variables]).
+        :param variables: A list of the names of variables being measured. Will be coerced to strings, so you can just
+         pass range([number-of-variables]) if the variables don't have/need meaningful names.
         :param seasonal_period: The number of timesteps for a seasonal cycle. This is for relatively short seasonality,
         (e.g., weekly) since it increases the size of the design-matrices quadratically.
         :param level_factors: Is there a latent level that's separate for each variable, or common to all? Can pass 'separate',
@@ -147,16 +152,18 @@ class Forecast(KalmanFilter):
             pos_and_vel_vars.extend(self.variables)
         elif 'separate' in level:
             pos_only_vars.extend(self.variables)
-
-        if 'common' in trend:
-            pos_and_vel_vars.append('common')
-        elif 'common' in level:
-            pos_only_vars.append('common')
-
         if 'separate' in season:
             season_vars.extend(self.variables)
-        if 'common' in season:
-            season_vars.append('common')
+
+        if len(self.variables) == 1:
+            warn("Univariate kalman-filter, so no 'common' factor will be used.")
+        else:
+            if 'common' in trend:
+                pos_and_vel_vars.append('common')
+            elif 'common' in level:
+                pos_only_vars.append('common')
+            if 'common' in season:
+                season_vars.append('common')
 
         return tuple(pos_only_vars), tuple(pos_and_vel_vars), tuple(season_vars)
 
