@@ -46,7 +46,7 @@ class DampenedVelocity(Process):
         :param sep: The separator between id_prefix and the state name (defaults "_").
         :param damp_multi: A multiplier between 0 and 1 that is applied to the velocity at each timestep.
         """
-        assert 0 > damp_multi <= 1
+        assert 0 < damp_multi <= 1
 
         def white_noise_multi(x): return pow(.5, .5) * x
 
