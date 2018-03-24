@@ -45,7 +45,7 @@ class Forecast(KalmanFilter):
         self.seasonal_period = self.parse_seasonal_arg(seasonal_period)
 
         # initial values ----
-        self.initial_state = Parameter(torch.randn(self.num_states))
+        self.initial_state = Parameter(torch.zeros(self.num_variables))
         self.initial_log_std = Parameter(torch.randn(self.num_states))
 
         # states ----

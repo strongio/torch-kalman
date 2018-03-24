@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 
 
-class TSPreprocessor(object):
+class ForecastPreprocessor(object):
     def __init__(self, variables, group_col, variable_col, value_col, date_col, freq='D'):
         """
         Create a preprocessor for multivariate time-series. This converts pandas dataframes into numpy arrays and

@@ -28,16 +28,27 @@ class KalmanFilter(torch.nn.Module):
         """
         raise NotImplementedError()
 
-    @staticmethod
-    def default_initializer(tens, initial_state, initial_std_dev):
+    def default_initializer(self, tens, initial_state, initial_std_dev):
         """
         :param tens: A tensor of a batch observed values.
         :param initial_state: A Variable/Parameter that stores the initial state.
         :param initial_std_dev: A Variable/Parameter that stores the initial std-deviation.
         :return: Initial values for mean, cov that match the shape of the batch (tens).
         """
-        num_states = initial_state.data.shape[0]
-        initial_mean = initial_state[:, None]
+        num_measurements, num_states = self.H.data.shape
+        if len(initial_state) == num_states:
+            # if the initial state is just as big as the number of states, then mapping is one-to-one
+            initial_mean = initial_state[:, None]
+        elif len(initial_state) == num_measurements:
+            # TODO: this code doesn't work
+            initial_mean = Variable(torch.zeros(num_states, 1))
+            for midx in range(num_measurements):
+                for sidx,include in enumerate(self.H[midx,:].data.tolist()):
+                    if include:
+                        initial_mean[sidx] = initial_state[midx] / torch.sum(self.H[midx,:])
+        else:
+            raise ValueError("The initial state is not a compatible size.")
+
         initial_cov = quad_form_diag(std_devs=initial_std_dev, corr_mat=Variable(torch.eye(num_states, num_states)))
         bs = tens.data.shape[0]  # batch-size
         return expand(initial_mean, bs), expand(initial_cov, bs)

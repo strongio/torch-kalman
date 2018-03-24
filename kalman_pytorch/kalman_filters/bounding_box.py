@@ -8,6 +8,7 @@ from kalman_pytorch.design.lazy_parameter import LogLinked
 
 import torch
 from torch.nn import Parameter
+from torch.autograd import Variable
 
 from collections import OrderedDict
 
@@ -50,7 +51,7 @@ class BoundingBox(KalmanFilter):
         self.log_y_measurement_std_dev = Parameter(torch.zeros(1))
         y_measurement_std_dev = LogLinked(self.log_y_measurement_std_dev)
 
-        self.initial_state = Parameter(torch.randn(self.num_states))
+        self.initial_state = Parameter(torch.zeros(len(ordering)))
         self.initial_log_std = Parameter(torch.randn(self.num_states))
 
         # states ---

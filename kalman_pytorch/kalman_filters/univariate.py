@@ -7,6 +7,7 @@ from kalman_pytorch.design.lazy_parameter import LogLinked
 
 import torch
 from torch.nn import Parameter
+from torch.autograd import Variable
 
 
 class UnivariateWithVelocity(KalmanFilter):
@@ -28,8 +29,8 @@ class UnivariateWithVelocity(KalmanFilter):
         self.log_measurement_std_dev = Parameter(torch.zeros(1))
         measurement_std_dev = LogLinked(self.log_measurement_std_dev)
 
-        self.initial_state = Parameter(torch.randn(self.num_states))
-        self.initial_log_std = Parameter(torch.randn(self.num_states))
+        self.initial_state = Parameter(torch.zeros(1))
+        self.initial_log_std = Parameter(torch.zeros(self.num_states))
 
         # states ---
         process = ConstantVelocity(id_prefix=None, std_dev=process_std_dev)
