@@ -17,7 +17,8 @@ class Forecast(KalmanFilter):
                  seasonal_period,
                  level_factors='both',
                  trend_factors='common',
-                 season_factors='separate'):
+                 season_factors='separate',
+                 forward_ahead=1):
         """
 
         :param variables: A list of the names of variables being measured. Will be coerced to strings, so you can just
@@ -30,8 +31,9 @@ class Forecast(KalmanFilter):
         'common', 'both', or None. If 'common' is included, it will be included in 'level' as well.
         :param season_factors: Is the latent seasonal cycle separate for each variable, or common to all? Can pass 'separate',
         'common', 'both', or None.
+        :param forward_ahead: For the default N-step-ahead predictions (i.e., what's used by `forward`), what is N?
         """
-        super(Forecast, self).__init__()
+        super(Forecast, self).__init__(forward_ahead=forward_ahead)
 
         # variables:
         self.num_variables = len(variables)

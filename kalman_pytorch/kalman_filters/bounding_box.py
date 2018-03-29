@@ -30,8 +30,6 @@ class BoundingBox(KalmanFilter):
         if set(ordering) != ordering_names:
             raise ValueError("`ordering` must have the elements: %s" % str(ordering_names))
 
-        self.num_states = (2 if velocity else 1) * 2 + 2
-
         # parameters ---
         self.log_x_process_std_dev = Parameter(torch.zeros(1))
         x_process_std_dev = LogLinked(self.log_x_process_std_dev)
@@ -51,8 +49,9 @@ class BoundingBox(KalmanFilter):
         self.log_y_measurement_std_dev = Parameter(torch.zeros(1))
         y_measurement_std_dev = LogLinked(self.log_y_measurement_std_dev)
 
+        num_states = 6 if velocity else 4
         self.initial_state = Parameter(torch.zeros(len(ordering)))
-        self.initial_log_std = Parameter(torch.randn(self.num_states))
+        self.initial_log_std = Parameter(torch.randn(num_states))
 
         # states ---
         process = ConstantVelocity if velocity else NoVelocity

@@ -6,8 +6,17 @@ from kalman_pytorch.utils.torch_utils import expand, batch_transpose, quad_form_
 
 # noinspection PyPep8Naming
 class KalmanFilter(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, forward_ahead=1):
         super(KalmanFilter, self).__init__()
+        self.forward_ahead = forward_ahead
+
+    @property
+    def num_states(self):
+        return len(self.design.states)
+
+    @property
+    def num_measurements(self):
+        return len(self.design.measurements)
 
     @property
     def state_ids(self):
@@ -40,7 +49,6 @@ class KalmanFilter(torch.nn.Module):
             # if the initial state is just as big as the number of states, then mapping is one-to-one
             initial_mean = initial_state[:, None]
         elif len(initial_state) == num_measurements:
-            # TODO: this code doesn't work
             initial_mean = Variable(torch.zeros(num_states, 1))
             for midx in range(num_measurements):
                 for sidx,include in enumerate(self.H[midx,:].data.tolist()):
@@ -54,67 +62,126 @@ class KalmanFilter(torch.nn.Module):
         return expand(initial_mean, bs), expand(initial_cov, bs)
 
     # Main Forward-Pass Methods --------------------
-    def predict_ahead(self, x, n_ahead):
-        """
-        Given a time-series X -- a 3D tensor with group * variable * time -- generate predictions -- a 4D tensor with
-        group * variable * time * n_ahead.
+    def _filter(self, input, n_ahead):
 
-        :param x: A 3D tensor with group * variable * time.
-        :param n_ahead: The number of steps ahead for prediction. Minumum is 1.
-        :return: Predictions: a 4D tensor with group * variable * time * n_ahead.
-        """
+        num_series, num_timesteps, num_variables = input.data.shape
 
-        if not isinstance(x.data, torch.FloatTensor):
-            raise ValueError("The data for `x` must be a torch.FloatTensor.")
+        if n_ahead == 0:
+            n_ahead_was_zero = True
+            n_ahead = 1
+        else:
+            n_ahead_was_zero = False
 
-        # data shape:
-        if len(x.data.shape) != 3:
-            raise Exception("`x` should have three-dimensions: group*variable*time. "
-                            "If there's only one dimension and current structure is group*time, "
-                            "reshape with x[:,None,:].")
-        num_series, num_variables, num_timesteps = x.data.shape
+        # "preallocate"
+        mean_out = [[] for _ in range(n_ahead+1)]
+        cov_out = [[] for _ in range(n_ahead+1)]
 
         # initial values:
-        k_mean, k_cov = self.initializer(x)
+        k_mean, k_cov = self.initializer(input)
 
-        # preallocate:
-        output = Variable(torch.zeros(list(x.data.shape) + [n_ahead]))
+        # run filter:
+        for t in range(-self.forward_ahead, num_timesteps):
+            # update
+            if t >= 0:
+                # the timestep for "initial" depends on self.forward_ahead.
+                # e.g., if self.forward_ahead is -1, then we start at -1, and update isn't called yet.
+                k_mean, k_cov = self.kf_update(input[:, t, :], k_mean, k_cov)
 
-        # fill one timestep at a time
-        for i in xrange(num_timesteps):
-            # predict n-ahead
-            for nh in xrange(n_ahead):
-                k_mean, k_cov = self.kf_predict(k_mean, k_cov)
-                if nh == 0:
+            # predict
+            for nh in range(n_ahead+1):
+                if nh > 0:
+                    # if ahead is in the future, need to predict. otherwise will just use posterior for the current time
+                    k_mean, k_cov = self.kf_predict(k_mean, k_cov)
+                if nh == 1:
+                    # if ahead is 1-step ahead, save it for the next iter
                     k_mean_next, k_cov_next = k_mean, k_cov
-                output[:, :, i, nh] = torch.bmm(expand(self.H, num_series), k_mean)
+                if 0 <= (t + nh) < num_timesteps:
+                    # don't assign to the matrix unless there's a corresponding observation in the original data
+                    mean_out[nh].append(k_mean)
+                    cov_out[nh].append(k_cov)
 
-            # but for next timestep, only use 1-ahead:
+            # next timestep:
             # noinspection PyUnboundLocalVariable
             k_mean, k_cov = k_mean_next, k_cov_next
-
-            # update. note `[i]` instead of `i` (keeps dimensionality)
-            k_mean, k_cov = self.kf_update(x[:, :, [i]], k_mean, k_cov)
 
         # forward-pass is done, so make sure design-mats will be re-instantiated next time:
         self.design.reset()
 
-        #
-        return output
+        # we added an extra n_ahead dimension b/c it was needed for k_*_next. but they didn't ask for that, so remove
+        # from final output:
+        if n_ahead_was_zero:
+            mean_out.pop()
+            cov_out.pop()
+            # mean_out = mean_out[:, :, :, :, [0]]
+            # cov_out = cov_out[:, :, :, :, [0]]
 
-    def forward(self, x):
+        return mean_out, cov_out
+
+    def filter(self, input, n_ahead):
+        """
+        Get the n-step-ahead state mean and covariance.
+
+        :param input: A torch.autograd.Variable of size num_groups*num_timesteps*num_variables.
+        :param n_ahead: The number of timesteps ahead predictions are desired for. Each timestep under this will also
+        be included (e.g., n_ahead = 7 means the state for time N and the predictions for times N1 through N7).
+        :return: The mean and covariance. Each is a num_groups*num_timesteps*num_states*X*n_ahead
+        torch.autograd.Variable, where `X` is 1 for the mean and num_states for the covariance.
+        """
+        input = self.check_input(input)
+        mean_out, cov_out = self._filter(input=input, n_ahead=n_ahead)
+        # don't forget to pad if n_ahead > self.forward_ahead
+        raise NotImplementedError("")
+
+    def predict_ahead(self, input, n_ahead):
+        """
+        Get the n-step-ahead predictions for measurements -- i.e., the state mapped into measurement-space.
+
+        :param input:  A torch.autograd.Variable of size num_groups*num_timesteps*num_variables.
+        :param n_ahead: The number of timesteps ahead predictions are desired for. Each timestep under this will also
+        be included (e.g., n_ahead = 7 means the state for time N and the predictions for times N1 through N7).
+        :return: A num_groups*num_timesteps*num_variables*n_ahead torch.autograd.Variable, containing the predictions.
+        """
+        input = self.check_input(input)
+        mean_out, _ = self._filter(input=input, n_ahead=n_ahead)
+        # don't forget to pad if n_ahead > self.forward_ahead
+        raise NotImplementedError("")
+
+    def forward(self, input):
         """
         The forward pass.
 
-        :param x: A 3D tensor with group * variable * time
-        :return: A 3D tensor with model output.
+        :param input: A torch.autograd.Variable of size num_groups*num_timesteps*num_variables.
+        :return: A torch.autograd.Variable of size num_groups*num_timesteps*num_variables, containing the predictions
+        for time=self.forward_ahead.
         """
-        out = self.predict_ahead(x, n_ahead=1)
-        return torch.squeeze(out, 3)  # flatten
+        input = self.check_input(input)
+        num_series, num_timesteps, num_variables = input.data.shape
+
+        means_per_ahead, _ = self._filter(input=input, n_ahead=self.forward_ahead)
+        means = means_per_ahead[self.forward_ahead]
+
+        # H_expanded = expand(self.H, num_series)
+        # out = torch.stack([torch.bmm(H_expanded, k_mean).squeeze(2) for k_mean in means], 1)
+
+        means = torch.cat(means, 0)
+        H_expanded = expand(self.H, means.data.shape[0])
+
+        out_long = torch.bmm(H_expanded, means)
+        out = out_long.view(num_timesteps, num_series, num_variables).transpose(0, 1)
+
+        return out
+
+    def check_input(self, input):
+        if len(input.data.shape) == 2 and self.num_measurements == 1:
+            # if it's a univariate series, then 2D input is permitted.
+            input = input[:, :, None]
+        elif len(input.data.shape) != 3:
+            raise ValueError("`input` should have three-dimensions: group*time*variable. ")
+        return input
 
     # Kalman-Smoother ------------------------------
-    def smooth(self, x):
-        if x is not None:
+    def smooth(self, input):
+        if input is not None:
             raise NotImplementedError("Kalman-smoothing is not yet implemented.")
         return None
 
@@ -142,32 +209,39 @@ class KalmanFilter(torch.nn.Module):
         """
         The 'update' step of the kalman filter.
 
-        :param obs: The observations. (TODO: does it need to be 3D?)
+        :param obs: The observations.
         :param x: Mean
         :param P: Covariance
         :return: The new (mean, covariance)
         """
 
         # handle missing values
-        obs_nm, x_nm, P_nm, is_nan_slice = self.nan_remove(obs, x, P)
-        if obs_nm is None: # all missing
+        obs_nm, x_nm, P_nm, is_nan_per_slice = self.nan_remove(obs, x, P)
+        if obs_nm is None:  # all missing
             return x, P
 
         # expand design-matrices to match batch-size:
-        bs = P_nm.data.shape[0]  # batch-size
+        bs_orig = obs.data.shape[0] # batch-size including missings
+        bs = obs_nm.data.shape[0]  # batch-size
         H_expanded = expand(self.H, bs)
         R_expanded = expand(self.R, bs)
 
         # residual:
-        residual = obs_nm - torch.bmm(H_expanded, x_nm)
+        residual = obs_nm - torch.bmm(H_expanded, x_nm).squeeze(2)
 
         # kalman-gain:
         K = self.kalman_gain(P_nm, H_expanded, R_expanded)
 
         # update mean and covariance:
-        x_new, P_new = x.clone(), P.clone()
-        x_new[is_nan_slice == 0] = x_nm + torch.bmm(K, residual)
-        P_new[is_nan_slice == 0] = self.covariance_update(P_nm, K, H_expanded, R_expanded)
+        x_new = x.clone()
+        # from group*one_for_all_states to group*state to group*state*1:
+        is_nan_slice_x = is_nan_per_slice[:, None].expand(bs_orig, self.num_states)[:, :, None]
+        x_new[is_nan_slice_x == 0] = x_nm + torch.bmm(K, residual.unsqueeze(2))
+
+        P_new = P.clone()
+        # group*state*1 to group*state*state:
+        is_nan_slice_P = is_nan_slice_x.expand(bs_orig, self.num_states, self.num_states)
+        P_new[is_nan_slice_P == 0] = self.covariance_update(P_nm, K, H_expanded, R_expanded)
 
         return x_new, P_new
 
@@ -189,8 +263,8 @@ class KalmanFilter(torch.nn.Module):
         if is_nan_el.data.all():
             return None, None, None, None
         if is_nan_el.data.any():
-            # get a list, one for each group-slice, indicating 1 for nan:
-            is_nan_list = (torch.sum(is_nan_el, 1) > 0).squeeze(1).data.tolist()
+            # get a list, one for each group, indicating 1 for nan (for *any* variable):
+            is_nan_list = (torch.sum(is_nan_el, 1) > 0).data.tolist()
             # keep only the group-slices without nans:
             obs_nm = torch.stack([obs[i] for i, is_nan in enumerate(is_nan_list) if is_nan == 0], 0)
             x_nm = torch.stack([x[i] for i, is_nan in enumerate(is_nan_list) if is_nan == 0], 0)
@@ -199,10 +273,10 @@ class KalmanFilter(torch.nn.Module):
             # don't need to do anything:
             obs_nm, x_nm, P_nm = obs, x, P
 
-        # this is used to index into the original x,P when performing assignment later:
-        is_nan_slice = (torch.sum(is_nan_el, 1, keepdim=True) > 0).expand(bs, rank, 1)
+        # this will be used later for assigning to x/P _new.
+        is_nan_per_slice = (torch.sum(is_nan_el, 1) > 0)
 
-        return obs_nm, x_nm, P_nm, is_nan_slice
+        return obs_nm, x_nm, P_nm, is_nan_per_slice
 
     @staticmethod
     def kalman_gain(P, H_expanded, R_expanded):

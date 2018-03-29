@@ -20,8 +20,6 @@ class UnivariateWithVelocity(KalmanFilter):
         """
         super(UnivariateWithVelocity, self).__init__()
 
-        self.num_states = 2
-
         # parameters ---
         self.log_process_std_dev = Parameter(torch.zeros(1))
         process_std_dev = LogLinked(self.log_process_std_dev)
@@ -30,7 +28,7 @@ class UnivariateWithVelocity(KalmanFilter):
         measurement_std_dev = LogLinked(self.log_measurement_std_dev)
 
         self.initial_state = Parameter(torch.zeros(1))
-        self.initial_log_std = Parameter(torch.zeros(self.num_states))
+        self.initial_log_std = Parameter(torch.zeros(2))
 
         # states ---
         process = ConstantVelocity(id_prefix=None, std_dev=process_std_dev)

@@ -32,7 +32,7 @@ class ForecastPreprocessor(object):
         Convert a dataframe into an array (that's suitable for passing to KalmanFilters), additionally returning
         information about that array.
 
-        :param dataframe: A pandas dataframe. The dataframe should be in a "tidy" format: a single 'value' column
+        :param dataframe: A pandas dataframe. The dataframe should be in a "long" format: a single 'value' column
         contains the actual values of the time-series, a 'variable' column indicates which values belong to which
         variable within a group, and a 'group' column indicates which values belong to which group.
         :param min_len_prop: The longest group in the dataset will dictate the size of the array. If there are groups
@@ -40,11 +40,12 @@ class ForecastPreprocessor(object):
         example, if the longest group is 365, and you want to exclude any groups that are less than half of this length,
         Then set `min_len_prop = .50`.
         :return: A tuple with three elements:
-            * A 3D numpy array. The first dimension is the group, the second is the variable, and the third is the
-        timepoint. All groups will have their first element corresponding to their first date.
+            * A 3D numpy array. The first dimension is the group, the second is the timepoint, and the third is the
+            variable. All groups will have their first element corresponding to their first date. If one or more of the
+            variables for a group starts later than the first variable in that group, they will be nan-padded.
             * Information about the elements of each dimension: an ordered dictionary with (1) the group-column-name :
-            the group of each slice along this dimension, (2) the variable-column name : the variable of each slice
-            along this dimension, (3) 'timesteps' : a generator for the timesteps.
+            the group of each slice along this dimension, (2) 'timesteps' : a generator for the timesteps, and (2) the
+            variable-column name : the variable of each slice along this dimension.
             * The original start-date for each group.
         """
 
@@ -67,8 +68,8 @@ class ForecastPreprocessor(object):
         # create the 'dim_info' dict with information about each dimension:
         dim_info = OrderedDict()
         dim_info[self.group_col] = sorted(info_per_group.keys())  # sorted so we always know order later
-        dim_info[self.variable_col] = self.variables  # sorted in __init__ so "
         dim_info['timesteps'] = xrange(max_len)
+        dim_info[self.variable_col] = self.variables  # sorted in __init__ so we always know order later
 
         # preallocate numpy array:
         x = np.empty(shape=tuple([len(x) for x in dim_info.values()]))
@@ -88,7 +89,7 @@ class ForecastPreprocessor(object):
                 # after ts ends, no values will be filled, so nans will remain as padding:
                 end = len(this_var_info['values'])
                 # fill:
-                x[g_idx, v_idx, start:end] = this_var_info['values']
+                x[g_idx, start:end, v_idx] = this_var_info['values']
 
         return x, dim_info, start_dates
 
@@ -108,7 +109,7 @@ class ForecastPreprocessor(object):
         start_date = min([vi['start_date'] for vi in variable_info.values()])
         for var_name in self.variables:
             if var_name in variable_info.keys():
-                # TODO: divide by self.freq
+                # TODO: use self.freq
                 variable_info[var_name]['offset'] = (variable_info[var_name]['start_date'] - start_date).days
             else:
                 variable_info[var_name] = {'values': np.array([np.nan]), 'start_date': start_date, 'offset': 0}
@@ -143,7 +144,7 @@ class ForecastPreprocessor(object):
         :param start_dates: A list of start_dates output from `pd_to_array`.
         :param value_col: What should the column containing the actual values be named in the output pandas dataframe?
         By default this will be the original value-column, name, but you could rename it (e.g., to 'prediction').
-        :return: A pandas dataframe. The dataframe will be in a "tidy" format: a single value column contains the
+        :return: A pandas dataframe. The dataframe will be in a "long" format: a single value column contains the
         reshaped contents of `array`, a 'variable' column indicates which values belong to which variable within a
         group, and a 'group' column indicates which values belong to which group.
         """
@@ -162,7 +163,7 @@ class ForecastPreprocessor(object):
         row = 0
         for g_idx, group_name in enumerate(dim_info[self.group_col]):
             for v_idx, var_name in enumerate(dim_info[self.variable_col]):
-                values = array[g_idx, v_idx, :]
+                values = array[g_idx, :, v_idx]
                 row2 = row + len(values)
                 out[self.group_col][row:row2] = group_name
                 out[self.variable_col][row:row2] = var_name
