@@ -68,7 +68,7 @@ class ForecastPreprocessor(object):
         # create the 'dim_info' dict with information about each dimension:
         dim_info = OrderedDict()
         dim_info[self.group_col] = sorted(info_per_group.keys())  # sorted so we always know order later
-        dim_info['timesteps'] = xrange(max_len)
+        dim_info['timesteps'] = range(max_len)
         dim_info[self.variable_col] = self.variables  # sorted in __init__ so we always know order later
 
         # preallocate numpy array:

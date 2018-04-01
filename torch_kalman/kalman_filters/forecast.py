@@ -85,7 +85,7 @@ class Forecast(KalmanFilter):
             all_measurements.append(this_measurement)
 
         # correlation between measurement-errors (currently constrained to be positive)
-        num_corrs = ((self.num_variables + 1) * self.num_variables) / 2 - self.num_variables
+        num_corrs = int(((self.num_variables + 1) * self.num_variables) / 2 - self.num_variables)
         self.logit_measurement_corr = Parameter(torch.zeros(num_corrs))
         pidx = 0
         for idx1 in range(self.num_variables):

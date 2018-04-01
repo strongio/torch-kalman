@@ -29,7 +29,7 @@ def batch_transpose(x):
     :return: x transposed batchwise.
     """
     ns = x.data.shape[0]
-    return torch.stack([x[i].t() for i in xrange(ns)], 0)
+    return torch.stack([x[i].t() for i in range(ns)], 0)
 
 
 def quad_form_diag(std_devs, corr_mat):
