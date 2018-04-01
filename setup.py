@@ -1,12 +1,12 @@
 from setuptools import setup
 
-setup(name='kalman_pytorch',
+setup(name='torch-kalman',
       version='0.1',
       description='Kalman Filter using pytorch for parameter-estimation',
-      url='http://github.com/strongio/kalman_pytorch',
+      url='http://github.com/strongio/torch-kalman',
       author='Jacob Dink',
       author_email='jacob.dink@strong.io',
       license='MIT',
-      packages=['kalman_pytorch'],
+      packages=['torch-kalman'],
       zip_safe=False,
       install_requires=['torch', 'numpy'])

@@ -44,6 +44,8 @@ class KalmanFilter(torch.nn.Module):
         :param initial_std_dev: A Variable/Parameter that stores the initial std-deviation.
         :return: Initial values for mean, cov that match the shape of the batch (tens).
         """
+
+
         num_measurements, num_states = self.H.data.shape
         if len(initial_state) == num_states:
             # if the initial state is just as big as the number of states, then mapping is one-to-one

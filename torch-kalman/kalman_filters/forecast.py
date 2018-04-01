@@ -201,3 +201,6 @@ class Forecast(KalmanFilter):
         if (num_season_vars == 0) and (seasonal_period > 0):
             raise ValueError("There are no seasonal states, but you indicated a (non-null) seasonal period.")
         return seasonal_period
+
+
+
