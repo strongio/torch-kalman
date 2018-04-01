@@ -1,9 +1,9 @@
-from kalman_pytorch.design import Design
-from kalman_pytorch.design.process import ConstantVelocity
-from kalman_pytorch.design.measurement import Measurement
-from kalman_pytorch.kalman_filter import KalmanFilter
+from torch_kalman.design import Design
+from torch_kalman.design.process import ConstantVelocity
+from torch_kalman.design.measurement import Measurement
+from torch_kalman.kalman_filter import KalmanFilter
 
-from kalman_pytorch.design.lazy_parameter import LogLinked
+from torch_kalman.design.lazy_parameter import LogLinked
 
 import torch
 from torch.nn import Parameter

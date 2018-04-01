@@ -1,4 +1,4 @@
-from kalman_pytorch.design.state import State
+from torch_kalman.design.state import State
 
 
 def join(iterable, sep):

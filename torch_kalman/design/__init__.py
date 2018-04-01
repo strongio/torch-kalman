@@ -1,6 +1,6 @@
 import torch
 from torch.autograd import Variable
-from kalman_pytorch.utils.torch_utils import quad_form_diag
+from torch_kalman.utils.torch_utils import quad_form_diag
 
 
 # noinspection PyPep8Naming
@@ -65,7 +65,7 @@ class Design(object):
         for var in variables:
             idx = idx_per_var[var.id]
             std_devs[idx] = var.std_dev()
-            for id, corr in var.correlations.iteritems():
+            for id, corr in var.correlations.items():
                 idx2 = idx_per_var[id]
                 if (idx, idx2) not in visited_corr_idx:
                     corr_mat[idx, idx2] = corr()
@@ -82,7 +82,7 @@ class Design(object):
             idx_per_state = {state.id: idx for idx, state in enumerate(self.states)}
             for state in self.states:
                 from_idx = idx_per_state[state.id]
-                for transition_to_id, multiplier in state.transitions.iteritems():
+                for transition_to_id, multiplier in state.transitions.items():
                     to_idx = idx_per_state[transition_to_id]
                     F[to_idx, from_idx] = multiplier()
             self._F = F
@@ -96,7 +96,7 @@ class Design(object):
             idx_per_obs = {obs.id: idx for idx, obs in enumerate(self.measurements)}
             idx_per_state = {state.id: idx for idx, state in enumerate(self.states)}
             for measurement in self.measurements:
-                for state_id, multiplier in measurement.states.iteritems():
+                for state_id, multiplier in measurement.states.items():
                     obs_idx = idx_per_obs[measurement.id]
                     state_idx = idx_per_state[state_id]
                     H[obs_idx, state_idx] = multiplier()

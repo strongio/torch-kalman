@@ -63,7 +63,7 @@ class ForecastPreprocessor(object):
         # filter based on min_len_prop:
         max_len = max([i['length'] for i in info_per_group.values()])
         min_len = round(max_len * min_len_prop)
-        info_per_group = {g: i for g, i in info_per_group.iteritems() if i['length'] >= min_len}
+        info_per_group = {g: i for g, i in info_per_group.items() if i['length'] >= min_len}
 
         # create the 'dim_info' dict with information about each dimension:
         dim_info = OrderedDict()

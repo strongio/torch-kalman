@@ -3,7 +3,7 @@ from torch.autograd import Variable
 
 from warnings import warn
 
-from kalman_pytorch.utils.utils import make_callable
+from torch_kalman.utils.utils import make_callable
 
 
 class CovarianceElement(object):

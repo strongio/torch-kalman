@@ -1,7 +1,7 @@
 import torch
 from torch.autograd import Variable
 
-from kalman_pytorch.utils.torch_utils import expand, batch_transpose, quad_form_diag
+from torch_kalman.utils.torch_utils import expand, batch_transpose, quad_form_diag
 
 
 # noinspection PyPep8Naming
@@ -45,6 +45,7 @@ class KalmanFilter(torch.nn.Module):
         :return: Initial values for mean, cov that match the shape of the batch (tens).
         """
 
+        # TODO: make this a little less ad-hoc
 
         num_measurements, num_states = self.H.data.shape
         if len(initial_state) == num_states:

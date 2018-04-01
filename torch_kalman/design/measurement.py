@@ -1,5 +1,5 @@
-from kalman_pytorch.design.covariance_element import CovarianceElement
-from kalman_pytorch.utils.utils import make_callable
+from torch_kalman.design.covariance_element import CovarianceElement
+from torch_kalman.utils.utils import make_callable
 from torch import Tensor
 from torch.autograd import Variable
 

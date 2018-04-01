@@ -1,9 +1,9 @@
-from kalman_pytorch.design import Design
-from kalman_pytorch.design.process import NoVelocity, ConstantVelocity, Seasonal
-from kalman_pytorch.design.measurement import Measurement
-from kalman_pytorch.kalman_filter import KalmanFilter
+from torch_kalman.design import Design
+from torch_kalman.design.process import NoVelocity, ConstantVelocity, Seasonal
+from torch_kalman.design.measurement import Measurement
+from torch_kalman.kalman_filter import KalmanFilter
 
-from kalman_pytorch.design.lazy_parameter import LogLinked, LogitLinked
+from torch_kalman.design.lazy_parameter import LogLinked, LogitLinked
 
 import torch
 from torch.nn import Parameter
@@ -201,6 +201,67 @@ class Forecast(KalmanFilter):
         if (num_season_vars == 0) and (seasonal_period > 0):
             raise ValueError("There are no seasonal states, but you indicated a (non-null) seasonal period.")
         return seasonal_period
+
+
+
+from torch_kalman.utils.torch_utils import quad_form_diag, expand
+from torch.autograd import Variable
+
+class ForecastNN(Forecast):
+    def __init__(self,
+                 variables,
+                 seasonal_period,
+                 init_state_nn=None,
+                 measurement_nn=None,
+                 level_factors='both', trend_factors='common', season_factors='separate'):
+        super(ForecastNN, self).__init__(variables=variables,
+                                         seasonal_period=seasonal_period,
+                                         level_factors=level_factors,
+                                         trend_factors=trend_factors,
+                                         season_factors=season_factors)
+
+        # this should be all that's needed to register the parameters
+        self.measurement_nn = measurement_nn
+        self.init_state_nn = init_state_nn
+
+        """
+        TODO: for init_state_nn...
+        - need this set up so kf.forward can take args with possible interpretations (1) "i'm not specifying initial state,
+          use smart defaults," (2) "here are the covariates for a model of initial state", (3) "here's the actual initial
+          state"  
+        """
+
+        """
+        TODO: for measurement_nn...
+        - get output dim of measurement_nn. should be size of measurements, or size 1.
+        - need this many states. no transitions (and no process cov).
+        - 1->1 state->measurement (or 1->many if dim 1)
+        - refactor predict_ahead code so that measurement_nn forward is called before looping thru timesteps,
+          and on each iter in loop, the result is added to appropriate idx in state (error if ahead>1?)
+        """
+
+    def initializer(self, tens):
+        """
+        :param tens: A tensor of a batch observed values.
+        :param initial_state: A Variable/Parameter that stores the initial state.
+        :param initial_std_dev: A Variable/Parameter that stores the initial std-deviation.
+        :return: Initial values for mean, cov that match the shape of the batch (tens).
+        """
+        initial_mean = self.init_state_nn.forward(tens)
+        num_states = self.initial_std_dev.data.shape[0]
+        initial_cov = quad_form_diag(std_devs=self.initial_std_dev, corr_mat=Variable(torch.eye(num_states, num_states)))
+        bs = tens.data.shape[0]  # batch-size
+        return expand(initial_mean, bs), expand(initial_cov, bs)
+
+
+
+
+
+
+
+
+
+
 
 
 
