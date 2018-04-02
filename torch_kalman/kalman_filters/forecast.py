@@ -13,42 +13,38 @@ from warnings import warn
 
 class Forecast(KalmanFilter):
     def __init__(self,
-                 variables,
+                 measurements,
                  seasonal_period,
                  level_factors='both',
                  trend_factors='common',
                  season_factors='separate',
-                 forward_ahead=1):
+                 **kwargs):
         """
 
-        :param variables: A list of the names of variables being measured. Will be coerced to strings, so you can just
-         pass range([number-of-variables]) if the variables don't have/need meaningful names.
+        :param measurements: A list of the names of variables being measured. (Will be coerced to strings, so you can just
+         pass range([number-of-measurements]) if the measurements don't have/need meaningful names.)
         :param seasonal_period: The number of timesteps for a seasonal cycle. This is for relatively short seasonality,
-        (e.g., weekly) since it increases the size of the design-matrices quadratically.
-        :param level_factors: Is there a latent level that's separate for each variable, or common to all? Can pass 'separate',
-        'common', 'both', or None.
-        :param trend_factors: Is there a latent trend that's separate for each variable, or common to all? Can pass 'separate',
-        'common', 'both', or None. If 'common' is included, it will be included in 'level' as well.
-        :param season_factors: Is the latent seasonal cycle separate for each variable, or common to all? Can pass 'separate',
-        'common', 'both', or None.
-        :param forward_ahead: For the default N-step-ahead predictions (i.e., what's used by `forward`), what is N?
+        (e.g., weekly) since it increases the size of the design-matrices quadratically. (For long-term seasonality, consider
+        passing fourier series to measurement_nn).
+        :param level_factors: Is there a latent level that's separate for each variable, or one that's common to all? Can
+        pass 'separate', 'common', 'both', or None.
+        :param trend_factors: Is there a latent trend that's separate for each variable, or one that's common to all? Can
+        pass 'separate', 'common', 'both', or None. If 'common' is included, it will be included in 'level' as well.
+        :param season_factors: Is there a latent seasonal cycle that's separate for each variable, or one that's common to
+        all? Can pass 'separate', 'common', 'both', or None.
+        :param kwargs: Arguments passed to KalmanFilter's init, such as forward_ahead, initial_state_nn, and measurement_nn.
         """
-        super(Forecast, self).__init__(forward_ahead=forward_ahead)
+        super().__init__(**kwargs)
 
-        # variables:
-        self.num_variables = len(variables)
-        self.variables = [str(x) for x in variables]
+        # measurements:
+        self.measurements = [str(x) for x in measurements]
 
-        # which variables go where?
+        # which measurements go where?
         self.pos_only_vars, self.pos_and_vel_vars, self.season_vars = \
-            self.classify_variables(level_factors, trend_factors, season_factors)
+            self.classify_measurements(level_factors, trend_factors, season_factors)
 
         # seasonal period:
         self.seasonal_period = self.parse_seasonal_arg(seasonal_period)
-
-        # initial values ----
-        self.initial_state = Parameter(torch.zeros(self.num_variables))
-        self.initial_log_std = Parameter(torch.randn(self.num_states))
 
         # states ----
         self.log_core_process_std_dev = Parameter(torch.zeros(len(self.pos_or_vel_vars)))
@@ -69,9 +65,9 @@ class Forecast(KalmanFilter):
                                                          df_correction=varname in self.pos_or_vel_vars)
 
         # measurements ----
-        self.log_measurement_std_dev = Parameter(torch.zeros(self.num_variables))
+        self.log_measurement_std_dev = Parameter(torch.zeros(len(measurements)))
         all_measurements = []
-        for i, varname in enumerate(self.variables):
+        for i, varname in enumerate(self.measurements):
             this_measurement = Measurement(id=varname, std_dev=LogLinked(self.log_measurement_std_dev[i]))
 
             for state_name in (varname, 'common'):
@@ -85,18 +81,18 @@ class Forecast(KalmanFilter):
             all_measurements.append(this_measurement)
 
         # correlation between measurement-errors (currently constrained to be positive)
-        num_corrs = int(((self.num_variables + 1) * self.num_variables) / 2 - self.num_variables)
+        num_corrs = int(((len(measurements) + 1) * len(measurements)) / 2 - len(measurements))
         self.logit_measurement_corr = Parameter(torch.zeros(num_corrs))
         pidx = 0
-        for idx1 in range(self.num_variables):
-            for idx2 in range(idx1 + 1, self.num_variables):
+        for idx1 in range(len(measurements)):
+            for idx2 in range(idx1 + 1, len(measurements)):
                 all_measurements[idx1].add_correlation(all_measurements[idx2],
                                                        correlation=LogitLinked(self.logit_measurement_corr[pidx]))
                 pidx += 1
 
-        # put states in the same order as variables (with common last) ---
+        # put states in the same order as measurements (with common last) ---
         all_states = []
-        vars_plus_common = self.variables + ['common']
+        vars_plus_common = self.measurements + ['common']
         for varname in vars_plus_common:
             if varname in core_states_by_varname.keys():
                 all_states.extend(core_states_by_varname[varname].states)
@@ -108,11 +104,6 @@ class Forecast(KalmanFilter):
     @property
     def design(self):
         return self._design
-
-    def initializer(self, tens):
-        return self.default_initializer(tens=tens,
-                                        initial_state=self.initial_state,
-                                        initial_std_dev=torch.exp(self.initial_log_std))
 
     @property
     def num_season_states(self):
@@ -126,7 +117,7 @@ class Forecast(KalmanFilter):
     def num_states(self):
         return self.num_season_states + self.num_core_states
 
-    def classify_variables(self, level_factors, trend_factors, season_factors):
+    def classify_measurements(self, level_factors, trend_factors, season_factors):
         replacements = {'common': ('common',),
                         'separate': ('separate',),
                         'both': ('separate', 'common'),
@@ -151,13 +142,13 @@ class Forecast(KalmanFilter):
         pos_only_vars, pos_and_vel_vars, season_vars = [], [], []
 
         if 'separate' in trend:
-            pos_and_vel_vars.extend(self.variables)
+            pos_and_vel_vars.extend(self.measurements)
         elif 'separate' in level:
-            pos_only_vars.extend(self.variables)
+            pos_only_vars.extend(self.measurements)
         if 'separate' in season:
-            season_vars.extend(self.variables)
+            season_vars.extend(self.measurements)
 
-        if len(self.variables) == 1:
+        if len(self.measurements) == 1:
             warn("Univariate kalman-filter, so no 'common' factor will be used.")
         else:
             if 'common' in trend:
@@ -177,7 +168,7 @@ class Forecast(KalmanFilter):
     def variable_to_core_param_mapper(self):
         mapping = {}
         i = 0
-        for varname in self.variables + ['common']:  # keep variable ordering and put common last
+        for varname in self.measurements + ['common']:  # keep variable ordering and put common last
             if varname in self.pos_or_vel_vars:
                 mapping[varname] = i
                 i += 1
@@ -187,7 +178,7 @@ class Forecast(KalmanFilter):
     def variable_to_season_param_mapper(self):
         mapping = {}
         i = 0
-        for varname in self.variables + ['common']:  # keep variable ordering and put common last
+        for varname in self.measurements + ['common']:  # keep variable ordering and put common last
             if varname in self.season_vars:
                 mapping[varname] = i
                 i += 1
@@ -201,19 +192,3 @@ class Forecast(KalmanFilter):
         if (num_season_vars == 0) and (seasonal_period > 0):
             raise ValueError("There are no seasonal states, but you indicated a (non-null) seasonal period.")
         return seasonal_period
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

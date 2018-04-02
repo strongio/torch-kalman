@@ -49,10 +49,6 @@ class BoundingBox(KalmanFilter):
         self.log_y_measurement_std_dev = Parameter(torch.zeros(1))
         y_measurement_std_dev = LogLinked(self.log_y_measurement_std_dev)
 
-        num_states = 6 if velocity else 4
-        self.initial_state = Parameter(torch.zeros(len(ordering)))
-        self.initial_log_std = Parameter(torch.randn(num_states))
-
         # states ---
         process = ConstantVelocity if velocity else NoVelocity
         states = []
@@ -89,8 +85,3 @@ class BoundingBox(KalmanFilter):
     @property
     def design(self):
         return self._design
-
-    def initializer(self, tens):
-        return self.default_initializer(tens=tens,
-                                        initial_state=self.initial_state,
-                                        initial_std_dev=torch.exp(self.initial_log_std))

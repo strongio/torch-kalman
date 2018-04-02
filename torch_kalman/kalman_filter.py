@@ -1,14 +1,38 @@
 import torch
 from torch.autograd import Variable
 
+from torch.nn import Parameter
+
 from torch_kalman.utils.torch_utils import expand, batch_transpose, quad_form_diag
+
+from warnings import warn
 
 
 # noinspection PyPep8Naming
 class KalmanFilter(torch.nn.Module):
-    def __init__(self, forward_ahead=1):
+    def __init__(self, forward_ahead=1, initializer=None, measurement_nn=None):
+        """
+
+        :param forward_ahead: An integer indicating how many timesteps ahead predictions from `forward` should be for.
+        :param initializer: Optional. A callable (usually inheriting from torch.nn.Module, but can be any function) that
+        takes an 2D input (supplied in `forward` as 'initializer_input') and returns (initial_mean, initial_covariance) for
+        the kalman-filter. By default uses `KalmanFilter().default_initializer`.
+        :param measurement_nn: Optional. A callable (virtually always inheriting from torch.nn.Module) that takes the `input`
+        to `forward` and returns a 3D Variable (group * timestep * measurement). This will be added to the output of the
+        kalman-filtering to generate predictions in `forward`.
+        """
         super(KalmanFilter, self).__init__()
         self.forward_ahead = forward_ahead
+
+        # measurement neural network:
+        self.measurement_nn = measurement_nn
+
+        # initial-state neural network:
+        self.use_default_initializer = initializer is None
+        if self.use_default_initializer:
+            self._initial_state = None
+            self._initial_log_std_dev = None
+            self.initializer = self.default_initializer
 
     @property
     def num_states(self):
@@ -30,45 +54,55 @@ class KalmanFilter(torch.nn.Module):
     def design(self):
         raise NotImplementedError()
 
-    def initializer(self, tens):
-        """
-        :param tens: A tensor of observed values.
-        :return: Initial values for mean, cov that match the shape of the batch (tens).
-        """
-        raise NotImplementedError()
+    @property
+    def initial_state(self):
+        if not self.use_default_initializer:
+            raise NotImplementedError("Overwrite the `initial_state` property if the default initializer is not used.")
+        if self._initial_state is None:
+            self._initial_state = Parameter(torch.zeros(self.num_measurements))
+        return self._initial_state
 
-    def default_initializer(self, tens, initial_state, initial_std_dev):
+    @property
+    def initial_std_dev(self):
+        if not self.use_default_initializer:
+            raise NotImplementedError("Overwrite the `initial_std_dev` property if the default initializer is not used.")
+        if self._initial_log_std_dev is None:
+            self._initial_log_std_dev = Parameter(torch.ones(1)).expand(self.num_states)
+        return torch.exp(self._initial_log_std_dev)
+
+    def default_initializer(self, input):
         """
-        :param tens: A tensor of a batch observed values.
-        :param initial_state: A Variable/Parameter that stores the initial state.
-        :param initial_std_dev: A Variable/Parameter that stores the initial std-deviation.
-        :return: Initial values for mean, cov that match the shape of the batch (tens).
+        :param input: A 2D variable whose first dimension is batch-size. For most initializers this would be used
+        as an input to the nn, but for this default initializer it's simply used to get the batch-size.
+        :return: Initial state-means, Initial state-covariances. Dimensions of each match the batch-size (from input).
         """
+        bs = input.data.shape[0]  # batch-size
 
-        # TODO: make this a little less ad-hoc
+        out_mean = Variable(torch.zeros(self.num_states, 1))
+        for state_idx in range(self.num_states):
+            # for each state, check the measurements it contributes to:
+            measurements_in_this_state = self.H[:, state_idx].data.tolist()
+            if sum(measurements_in_this_state) == 1:
+                # if the state contributes to one and only one measurement, it gets an init-param
+                measurement_idx = measurements_in_this_state.index(1)
+                out_mean[state_idx, 0] = self.initial_state[measurement_idx]
+            # if state contributes to multiple or no measurements, it'll be init to zero
+        # (when multiple states go into the same measurement, they'll to init at same value)
 
-        num_measurements, num_states = self.H.data.shape
-        if len(initial_state) == num_states:
-            # if the initial state is just as big as the number of states, then mapping is one-to-one
-            initial_mean = initial_state[:, None]
-        elif len(initial_state) == num_measurements:
-            initial_mean = Variable(torch.zeros(num_states, 1))
-            for midx in range(num_measurements):
-                for sidx,include in enumerate(self.H[midx,:].data.tolist()):
-                    if include:
-                        initial_mean[sidx] = initial_state[midx] / torch.sum(self.H[midx,:])
-        else:
-            raise ValueError("The initial state is not a compatible size.")
+        # separate init-std-dev for each state, corr = 0
+        out_cov = quad_form_diag(std_devs=self.initial_std_dev,
+                                 corr_mat=Variable(torch.eye(self.num_states, self.num_states)))
 
-        initial_cov = quad_form_diag(std_devs=initial_std_dev, corr_mat=Variable(torch.eye(num_states, num_states)))
-        bs = tens.data.shape[0]  # batch-size
-        return expand(initial_mean, bs), expand(initial_cov, bs)
+        return expand(out_mean, bs), expand(out_cov, bs)
 
     # Main Forward-Pass Methods --------------------
-    def _filter(self, input, n_ahead):
+    def _filter(self, input, initial_state=None, initializer_input=None, n_ahead=None):
+        if n_ahead is None:
+            n_ahead = self.forward_ahead
 
-        num_series, num_timesteps, num_variables = input.data.shape
+        num_series, num_timesteps, num_measurements = input.data.shape
 
+        # add an extra n_ahead dimension b/c it's needed for k_*_next, but remember this so we can remove it later
         if n_ahead == 0:
             n_ahead_was_zero = True
             n_ahead = 1
@@ -76,11 +110,21 @@ class KalmanFilter(torch.nn.Module):
             n_ahead_was_zero = False
 
         # "preallocate"
-        mean_out = [[] for _ in range(n_ahead+1)]
-        cov_out = [[] for _ in range(n_ahead+1)]
+        mean_out = [[] for _ in range(n_ahead + 1)]
+        cov_out = [[] for _ in range(n_ahead + 1)]
 
         # initial values:
-        k_mean, k_cov = self.initializer(input)
+        if initial_state is None:
+            if initializer_input is None:
+                # we don't give a warning if not self.use_default_initializer, b/c initializer_input might not need inputs
+                initializer_input = Variable(torch.zeros((num_series, num_measurements)))
+            elif self.use_default_initializer:
+                warn("Passed `initializer_input`, even though no `initializer` was passed at `__init__`.")
+            k_mean, k_cov = self.initializer(initializer_input)
+        else:
+            if initializer_input is None:
+                warn("Both `initial_state` and `initializer_input` were passed, ignoring the latter.")
+            k_mean, k_cov = initial_state
 
         # run filter:
         for t in range(-self.forward_ahead, num_timesteps):
@@ -91,7 +135,7 @@ class KalmanFilter(torch.nn.Module):
                 k_mean, k_cov = self.kf_update(input[:, t, :], k_mean, k_cov)
 
             # predict
-            for nh in range(n_ahead+1):
+            for nh in range(n_ahead + 1):
                 if nh > 0:
                     # if ahead is in the future, need to predict. otherwise will just use posterior for the current time
                     k_mean, k_cov = self.kf_predict(k_mean, k_cov)
@@ -115,66 +159,49 @@ class KalmanFilter(torch.nn.Module):
         if n_ahead_was_zero:
             mean_out.pop()
             cov_out.pop()
-            # mean_out = mean_out[:, :, :, :, [0]]
-            # cov_out = cov_out[:, :, :, :, [0]]
 
         return mean_out, cov_out
 
-    def filter(self, input, n_ahead):
-        """
-        Get the n-step-ahead state mean and covariance.
-
-        :param input: A torch.autograd.Variable of size num_groups*num_timesteps*num_variables.
-        :param n_ahead: The number of timesteps ahead predictions are desired for. Each timestep under this will also
-        be included (e.g., n_ahead = 7 means the state for time N and the predictions for times N1 through N7).
-        :return: The mean and covariance. Each is a num_groups*num_timesteps*num_states*X*n_ahead
-        torch.autograd.Variable, where `X` is 1 for the mean and num_states for the covariance.
-        """
-        input = self.check_input(input)
-        mean_out, cov_out = self._filter(input=input, n_ahead=n_ahead)
-        # don't forget to pad if n_ahead > self.forward_ahead
-        raise NotImplementedError("")
-
-    def predict_ahead(self, input, n_ahead):
-        """
-        Get the n-step-ahead predictions for measurements -- i.e., the state mapped into measurement-space.
-
-        :param input:  A torch.autograd.Variable of size num_groups*num_timesteps*num_variables.
-        :param n_ahead: The number of timesteps ahead predictions are desired for. Each timestep under this will also
-        be included (e.g., n_ahead = 7 means the state for time N and the predictions for times N1 through N7).
-        :return: A num_groups*num_timesteps*num_variables*n_ahead torch.autograd.Variable, containing the predictions.
-        """
-        input = self.check_input(input)
-        mean_out, _ = self._filter(input=input, n_ahead=n_ahead)
-        # don't forget to pad if n_ahead > self.forward_ahead
-        raise NotImplementedError("")
-
-    def forward(self, input):
+    def forward(self, input, initial_state=None, initializer_input=None):
         """
         The forward pass.
 
-        :param input: A torch.autograd.Variable of size num_groups*num_timesteps*num_variables.
-        :return: A torch.autograd.Variable of size num_groups*num_timesteps*num_variables, containing the predictions
+        :param input: A 3D variable with group * timesteps * X. The first 0:num_measurements slices along the third dimension
+        will be passed to the kalman-filter. Any remaining
+        :return: A torch.autograd.Variable of size num_groups*num_timesteps*num_measurements, containing the predictions
         for time=self.forward_ahead.
         """
-        input = self.check_input(input)
-        num_series, num_timesteps, num_variables = input.data.shape
 
-        means_per_ahead, _ = self._filter(input=input, n_ahead=self.forward_ahead)
-        means = means_per_ahead[self.forward_ahead]
+        # filter takes the first num_measurements slices along the third axis. additional slices are allowed and will be used
+        # in the measurement_nn
+        input = self.validate_input(input)
+        kf_input = input[:, :, 0:self.num_measurements]
+        num_series, num_timesteps, num_measurements = kf_input.data.shape
 
-        # H_expanded = expand(self.H, num_series)
-        # out = torch.stack([torch.bmm(H_expanded, k_mean).squeeze(2) for k_mean in means], 1)
+        # run kalman-filter to get predicted state
+        means_per_ahead, _ = self._filter(input=kf_input,
+                                          initial_state=initial_state,
+                                          initializer_input=initializer_input,
+                                          n_ahead=self.forward_ahead)
+        means = torch.cat(means_per_ahead[self.forward_ahead], 0)
 
-        means = torch.cat(means, 0)
+        # run through the measurement matrix to get predicted measurements
         H_expanded = expand(self.H, means.data.shape[0])
+        filtered_long = torch.bmm(H_expanded, means)
+        filtered = filtered_long.view(num_timesteps, num_series, num_measurements).transpose(0, 1)
 
-        out_long = torch.bmm(H_expanded, means)
-        out = out_long.view(num_timesteps, num_series, num_variables).transpose(0, 1)
+        # the first num_measurements slices along the third axis were passed though the kalman-filter. if there's a
+        # measurement_nn, it will take the entire input
+        if self.measurement_nn is None:
+            if input.data.shape[2] > kf_input.data.shape[2]:
+                warn("There are extra slices along the 3rd dimension of `input` no `measurement_nn` to process them.")
+            return filtered
+        else:
+            measure_predictions = self.measurement_nn(input)
+            # the predictions are simply the kalman-filter plus the measurement-nn
+            return filtered + measure_predictions
 
-        return out
-
-    def check_input(self, input):
+    def validate_input(self, input):
         if len(input.data.shape) == 2 and self.num_measurements == 1:
             # if it's a univariate series, then 2D input is permitted.
             input = input[:, :, None]
@@ -224,7 +251,7 @@ class KalmanFilter(torch.nn.Module):
             return x, P
 
         # expand design-matrices to match batch-size:
-        bs_orig = obs.data.shape[0] # batch-size including missings
+        bs_orig = obs.data.shape[0]  # batch-size including missings
         bs = obs_nm.data.shape[0]  # batch-size
         H_expanded = expand(self.H, bs)
         R_expanded = expand(self.R, bs)

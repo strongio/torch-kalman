@@ -6,15 +6,15 @@ from torch_kalman.utils.utils import product
 
 
 class ForecastPreprocessor(object):
-    def __init__(self, variables, group_col, variable_col, value_col, date_col, freq='D'):
+    def __init__(self, measurements, group_col, measurement_col, value_col, date_col, freq='D'):
         """
         Create a preprocessor for multivariate time-series. This converts pandas dataframes into numpy arrays and
         vice-versa.
 
-        :param variables: A list naming the variables in the multivariate time-series.
+        :param measurements: A list naming the "measurements" (i.e., the dimensions in the multivariate time-series).
         :param group_col: The column in the pandas dataframe containing the group. Each group is a separate multivariate
         time-series
-        :param variable_col: The column in the pandas dataframe containing the variable.
+        :param measurement_col: The column in the pandas dataframe containing labels corresponding to `measurements`.
         :param value_col: The column in the pandas dataframe containing the actual values of the time-series.
         :param date_col: The column in the pandas dataframe containing the date.
         :param freq: The frequency for the date. Currently only daily data are supported.
@@ -22,9 +22,9 @@ class ForecastPreprocessor(object):
         if freq != 'D':
             raise Exception("Only data with freq='D' (daily) currently supported.")
         self.freq = freq
-        self.variables = sorted(variables)
+        self.measurements = sorted(measurements)
         self.group_col = group_col
-        self.variable_col = variable_col
+        self.measurement_col = measurement_col
         self.value_col = value_col
         self.date_col = date_col
 
@@ -35,19 +35,19 @@ class ForecastPreprocessor(object):
         information about that array.
 
         :param dataframe: A pandas dataframe. The dataframe should be in a "long" format: a single 'value' column
-        contains the actual values of the time-series, a 'variable' column indicates which values belong to which
-        variable within a group, and a 'group' column indicates which values belong to which group.
+        contains the actual values of the time-series, a 'measurement' column indicates which values belong to which
+        measurement within a group, and a 'group' column indicates which values belong to which group.
         :param min_len_prop: The longest group in the dataset will dictate the size of the array. If there are groups
         that have very little data and therefore will be mostly missing values in the array, they can be excluded. For
         example, if the longest group is 365, and you want to exclude any groups that are less than half of this length,
         Then set `min_len_prop = .50`.
         :return: A tuple with three elements:
             * A 3D numpy array. The first dimension is the group, the second is the timepoint, and the third is the
-            variable. All groups will have their first element corresponding to their first date. If one or more of the
-            variables for a group starts later than the first variable in that group, they will be nan-padded.
+            measurement. All groups will have their first element corresponding to their first date. If one or more of the
+            measurements for a group starts later than the first measurement in that group, they will be nan-padded.
             * Information about the elements of each dimension: an ordered dictionary with (1) the group-column-name :
             the group of each slice along this dimension, (2) 'timesteps' : a generator for the timesteps, and (2) the
-            variable-column name : the variable of each slice along this dimension.
+            measurement-column name : the measurement of each slice along this dimension.
             * The original start-date for each group.
         """
 
@@ -57,7 +57,7 @@ class ForecastPreprocessor(object):
             raise Exception("The date column (%s) is not of type np.datetime64" % self.date_col)
 
         # subsequent methods will assume data are sorted:
-        dataframe = dataframe.sort_values(by=[self.group_col, self.variable_col, self.date_col])
+        dataframe = dataframe.sort_values(by=[self.group_col, self.measurement_col, self.date_col])
 
         # get info per group:
         info_per_group = {g: self.get_group_info(df_g) for g, df_g in dataframe.groupby(self.group_col)}
@@ -71,7 +71,7 @@ class ForecastPreprocessor(object):
         dim_info = OrderedDict()
         dim_info[self.group_col] = sorted(info_per_group.keys())  # sorted so we always know order later
         dim_info['timesteps'] = range(max_len)
-        dim_info[self.variable_col] = self.variables  # sorted in __init__ so we always know order later
+        dim_info[self.measurement_col] = self.measurements  # sorted in __init__ so we always know order later
 
         # preallocate numpy array:
         x = np.empty(shape=tuple([len(x) for x in dim_info.values()]))
@@ -82,10 +82,10 @@ class ForecastPreprocessor(object):
         for g_idx, group_name in enumerate(dim_info[self.group_col]):
             # for each group...
             start_dates[group_name] = info_per_group[group_name]['start_date']
-            for v_idx, var_name in enumerate(self.variables):
-                # for each variable...
-                this_var_info = info_per_group[group_name]['variable_info'][var_name]
-                # whichever variable starts first determines the true start for this group. if any variables started
+            for v_idx, var_name in enumerate(self.measurements):
+                # for each measurement...
+                this_var_info = info_per_group[group_name]['measurement_info'][var_name]
+                # whichever measurement starts first determines the true start for this group. if any measurements started
                 # later, their start will be offset accordingly:
                 start = this_var_info['offset']
                 # after ts ends, no values will be filled, so nans will remain as padding:
@@ -98,37 +98,37 @@ class ForecastPreprocessor(object):
     def get_group_info(self, dataframe):
         """
         Helper function for `pd_to_array`. Given a dataframe with only a single group, get information about that groups
-        start-date, length, and variables.
+        start-date, length, and measurements.
         :param dataframe: A slice of the original dataframe passed to `pd_to_array` corresponding to one of its groups.
-        :return: A dictionary with start-date, length, and variables.
+        :return: A dictionary with start-date, length, and measurements.
         """
-        variable_info = {var: self.get_variable_info(df_gd) for var, df_gd in dataframe.groupby(self.variable_col)}
-        if not all([var in self.variables for var in variable_info.keys()]):
-            raise Exception("Some variables in this dataframe are not in self.variables.")
+        measurement_info = {var: self.get_measurement_info(df_gd) for var, df_gd in dataframe.groupby(self.measurement_col)}
+        if not all([var in self.measurements for var in measurement_info.keys()]):
+            raise Exception("Some measurements in this dataframe are not in self.measurements.")
 
-        # offset from groups start-date so all variables have sycn'd seasonality,
-        # also add nans for missing-variables
-        start_date = min([vi['start_date'] for vi in variable_info.values()])
-        for var_name in self.variables:
-            if var_name in variable_info.keys():
+        # offset from groups start-date so all measurements have sycn'd seasonality,
+        # also add nans for missing-measurements
+        start_date = min([vi['start_date'] for vi in measurement_info.values()])
+        for var_name in self.measurements:
+            if var_name in measurement_info.keys():
                 # TODO: use self.freq
-                variable_info[var_name]['offset'] = (variable_info[var_name]['start_date'] - start_date).days
+                measurement_info[var_name]['offset'] = (measurement_info[var_name]['start_date'] - start_date).days
             else:
-                variable_info[var_name] = {'values': np.array([np.nan]), 'start_date': start_date, 'offset': 0}
+                measurement_info[var_name] = {'values': np.array([np.nan]), 'start_date': start_date, 'offset': 0}
 
         group_info = {'start_date': start_date,
-                      'length': max([len(vi['values']) for vi in variable_info.values()]),
-                      'variable_info': variable_info}
+                      'length': max([len(vi['values']) for vi in measurement_info.values()]),
+                      'measurement_info': measurement_info}
 
         return group_info
 
-    def get_variable_info(self, dataframe):
+    def get_measurement_info(self, dataframe):
         """
-        Helper function for `pd_to_array`. Given a dataframe with only a single variable within a single group, get
+        Helper function for `pd_to_array`. Given a dataframe with only a single measurement within a single group, get
         the start-date and actual values.
 
         :param dataframe: A slice of the original dataframe passed to `pd_to_array` corresponding to one of the
-        variables within one of the groups.
+        measurements within one of the groups.
         :return: A dctionary with start-date and actual values.
         """
         # TODO: check w/self.freq (where self.freq is in days)
@@ -147,7 +147,7 @@ class ForecastPreprocessor(object):
         :param value_col: What should the column containing the actual values be named in the output pandas dataframe?
         By default this will be the original value-column, name, but you could rename it (e.g., to 'prediction').
         :return: A pandas dataframe. The dataframe will be in a "long" format: a single value column contains the
-        reshaped contents of `array`, a 'variable' column indicates which values belong to which variable within a
+        reshaped contents of `array`, a 'measurement' column indicates which values belong to which measurement within a
         group, and a 'group' column indicates which values belong to which group.
         """
         if value_col is None:
@@ -156,19 +156,19 @@ class ForecastPreprocessor(object):
         # make sure correct dtypes so joining to original can work:
         num_rows = product(len(val) for val in dim_info.values())
         group_dtype = np.array(dim_info[self.group_col]).dtype
-        var_dtype = np.array(dim_info[self.variable_col]).dtype
+        var_dtype = np.array(dim_info[self.measurement_col]).dtype
         out = {self.group_col: np.empty(shape=(num_rows,), dtype=group_dtype),
-               self.variable_col: np.empty(shape=(num_rows,), dtype=var_dtype),
+               self.measurement_col: np.empty(shape=(num_rows,), dtype=var_dtype),
                self.date_col: np.empty(shape=(num_rows,), dtype='datetime64[D]'),
                value_col: np.empty(shape=(num_rows,)) * np.nan}
 
         row = 0
         for g_idx, group_name in enumerate(dim_info[self.group_col]):
-            for v_idx, var_name in enumerate(dim_info[self.variable_col]):
+            for v_idx, var_name in enumerate(dim_info[self.measurement_col]):
                 values = array[g_idx, :, v_idx]
                 row2 = row + len(values)
                 out[self.group_col][row:row2] = group_name
-                out[self.variable_col][row:row2] = var_name
+                out[self.measurement_col][row:row2] = var_name
                 out[self.date_col][row:row2] = pd.date_range(start_dates[group_name],
                                                              periods=len(values), freq=self.freq)
                 out[value_col][row:row2] = values

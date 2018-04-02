@@ -27,9 +27,6 @@ class UnivariateWithVelocity(KalmanFilter):
         self.log_measurement_std_dev = Parameter(torch.zeros(1))
         measurement_std_dev = LogLinked(self.log_measurement_std_dev)
 
-        self.initial_state = Parameter(torch.zeros(1))
-        self.initial_log_std = Parameter(torch.zeros(2))
-
         # states ---
         process = ConstantVelocity(id_prefix=None, std_dev=process_std_dev)
 
@@ -42,8 +39,3 @@ class UnivariateWithVelocity(KalmanFilter):
     @property
     def design(self):
         return self._design
-
-    def initializer(self, tens):
-        return self.default_initializer(tens=tens,
-                                        initial_state=self.initial_state,
-                                        initial_std_dev=torch.exp(self.initial_log_std))
