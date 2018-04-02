@@ -48,6 +48,7 @@ class Forecast(KalmanFilter):
 
         # states ----
         self.log_core_process_std_dev = Parameter(torch.zeros(len(self.pos_or_vel_vars)))
+        self._variable_to_core_param_mapper = None
         core_states_by_varname = dict()
         for varname in self.pos_or_vel_vars:
             process = NoVelocity if varname in self.pos_only_vars else ConstantVelocity
@@ -56,6 +57,7 @@ class Forecast(KalmanFilter):
                                                       std_dev=LogLinked(self.log_core_process_std_dev[idx]))
 
         self.log_season_process_std_dev = Parameter(torch.zeros(len(self.season_vars)))
+        self._variable_to_season_param_mapper = None
         season_states_by_varname = dict()
         for varname in self.season_vars:
             idx = self.variable_to_season_param_mapper[varname]
@@ -166,23 +168,25 @@ class Forecast(KalmanFilter):
 
     @property
     def variable_to_core_param_mapper(self):
-        mapping = {}
-        i = 0
-        for varname in self.measurements + ['common']:  # keep variable ordering and put common last
-            if varname in self.pos_or_vel_vars:
-                mapping[varname] = i
-                i += 1
-        return mapping
+        if self._variable_to_core_param_mapper is None:
+            self._variable_to_core_param_mapper = {}
+            i = 0
+            for varname in self.measurements + ['common']:  # keep variable ordering and put common last
+                if varname in self.pos_or_vel_vars:
+                    self._variable_to_core_param_mapper[varname] = i
+                    i += 1
+        return self._variable_to_core_param_mapper
 
     @property
     def variable_to_season_param_mapper(self):
-        mapping = {}
-        i = 0
-        for varname in self.measurements + ['common']:  # keep variable ordering and put common last
-            if varname in self.season_vars:
-                mapping[varname] = i
-                i += 1
-        return mapping
+        if self._variable_to_season_param_mapper is None:
+            self._variable_to_season_param_mapper = {}
+            i = 0
+            for varname in self.measurements + ['common']:  # keep variable ordering and put common last
+                if varname in self.season_vars:
+                    self._variable_to_season_param_mapper[varname] = i
+                    i += 1
+        return self._variable_to_season_param_mapper
 
     def parse_seasonal_arg(self, seasonal_period):
         seasonal_period = 0 if seasonal_period is None else seasonal_period
