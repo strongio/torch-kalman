@@ -34,8 +34,5 @@ class UnivariateWithVelocity(KalmanFilter):
         pos_measurement = Measurement(id=1, std_dev=measurement_std_dev)
         pos_measurement.add_state(process.observable)
 
-        self._design = Design(states=process.states, measurements=[pos_measurement])
-
-    @property
-    def design(self):
-        return self._design
+        self.design = Design(states=process.states, measurements=[pos_measurement])
+        self.initializer_params = self.default_initializer_params()

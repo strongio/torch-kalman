@@ -30,8 +30,9 @@ class KalmanFilter(torch.nn.Module):
         # initial-state neural network:
         self.use_default_initializer = initializer is None
         if self.use_default_initializer:
-            self._initial_state = ParameterList()
-            self._initial_log_std_dev = ParameterList()
+            # need to wait to construct using `default_initializer_params`, because depends on self.num_measurements and
+            # self.num_states, which aren't available until the child initializes the "design"
+            self.initializer_params = None
             self.initializer = self.default_initializer
 
     @property
@@ -50,27 +51,26 @@ class KalmanFilter(torch.nn.Module):
     def measurement_ids(self):
         return (measurement.id for measurement in self.design.measurements)
 
-    @property
-    def design(self):
-        raise NotImplementedError()
+    def default_initializer_params(self):
+        return ParameterList([Parameter(torch.zeros(self.num_measurements)), Parameter(torch.randn(self.num_states))])
 
     @property
     def initial_state(self):
         if not self.use_default_initializer:
             raise NotImplementedError("Overwrite the `initial_state` property if the default initializer is not used.")
-        if len(self._initial_state) == 0:
-            for _ in range(self.num_measurements):
-                self._initial_state.append(Parameter(torch.zeros(1)))
-        return self._initial_state
+        if self.initializer_params is None:
+            raise ValueError("If this KalmanFilter permits the default initializer, must include the following in __init__:"
+                             "`self.initializer_params = self.default_initializer_params()`.")
+        return self.initializer_params[0]
 
     @property
     def initial_std_dev(self):
         if not self.use_default_initializer:
             raise NotImplementedError("Overwrite the `initial_std_dev` property if the default initializer is not used.")
-        if len(self._initial_log_std_dev) == 0:
-            for _ in range(self.num_states):
-                self._initial_log_std_dev.append(Parameter(torch.zeros(1)))
-        return [torch.exp(x) for x in self._initial_log_std_dev]
+        if self.initializer_params is None:
+            raise ValueError("If this KalmanFilter permits the default initializer, must include the following in __init__:"
+                             "`self.initializer_params = self.default_initializer_params()`.")
+        return torch.exp(self.initializer_params[1])
 
     def default_initializer(self, input):
         """
@@ -98,7 +98,7 @@ class KalmanFilter(torch.nn.Module):
         # (when multiple states go into the same measurement, they'll to init at same value)
 
         # separate init-std-dev for each state, corr = 0
-        out_cov = quad_form_diag(std_devs=torch.cat(self.initial_std_dev, 0),
+        out_cov = quad_form_diag(std_devs=self.initial_std_dev,
                                  corr_mat=Variable(torch.eye(self.num_states, self.num_states)))
 
         return expand(out_mean, bs), expand(out_cov, bs)

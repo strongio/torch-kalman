@@ -101,11 +101,8 @@ class Forecast(KalmanFilter):
             if varname in season_states_by_varname.keys():
                 all_states.extend(season_states_by_varname[varname].states)
 
-        self._design = Design(states=all_states, measurements=all_measurements)
-
-    @property
-    def design(self):
-        return self._design
+        self.design = Design(states=all_states, measurements=all_measurements)
+        self.initializer_params = self.default_initializer_params()
 
     @property
     def num_season_states(self):

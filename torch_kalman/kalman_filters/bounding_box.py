@@ -80,8 +80,5 @@ class BoundingBox(KalmanFilter):
         measurements['y_top'].add_state(states['height'], multiplier=-.5)
         measurements['y_bottom'].add_state(states['height'], multiplier=.5)
 
-        self._design = Design(states=states.values(), measurements=measurements.values())
-
-    @property
-    def design(self):
-        return self._design
+        self.design = Design(states=states.values(), measurements=measurements.values())
+        self.initializer_params = self.default_initializer_params()
