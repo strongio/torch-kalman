@@ -1,7 +1,7 @@
 import torch
 from torch.autograd import Variable
 
-from torch.nn import Parameter
+from torch.nn import Parameter, ParameterList
 
 from torch_kalman.utils.torch_utils import expand, batch_transpose, quad_form_diag
 
@@ -30,8 +30,8 @@ class KalmanFilter(torch.nn.Module):
         # initial-state neural network:
         self.use_default_initializer = initializer is None
         if self.use_default_initializer:
-            self._initial_state = None
-            self._initial_log_std_dev = None
+            self._initial_state = ParameterList()
+            self._initial_log_std_dev = ParameterList()
             self.initializer = self.default_initializer
 
     @property
@@ -58,20 +58,28 @@ class KalmanFilter(torch.nn.Module):
     def initial_state(self):
         if not self.use_default_initializer:
             raise NotImplementedError("Overwrite the `initial_state` property if the default initializer is not used.")
-        if self._initial_state is None:
-            self._initial_state = Parameter(torch.zeros(self.num_measurements))
+        if len(self._initial_state) == 0:
+            for _ in range(self.num_measurements):
+                self._initial_state.append(Parameter(torch.zeros(1)))
         return self._initial_state
 
     @property
     def initial_std_dev(self):
         if not self.use_default_initializer:
             raise NotImplementedError("Overwrite the `initial_std_dev` property if the default initializer is not used.")
-        if self._initial_log_std_dev is None:
-            self._initial_log_std_dev = Parameter(torch.ones(1)).expand(self.num_states)
-        return torch.exp(self._initial_log_std_dev)
+        if len(self._initial_log_std_dev) == 0:
+            for _ in range(self.num_states):
+                self._initial_log_std_dev.append(Parameter(torch.zeros(1)))
+        return [torch.exp(x) for x in self._initial_log_std_dev]
 
     def default_initializer(self, input):
         """
+        A default initializer for the kalman-filter, used when no initializer is passed. For this initializer:
+
+        * States share their intial means with other states that contribute to the same measurement. If a state doesn't
+        contribute to any measurements, or contributes to more than one, it is initialized to zero.
+        * Each state gets its own initial std-deviation. All correlations are initialized to zero.
+
         :param input: A 2D variable whose first dimension is batch-size. For most initializers this would be used
         as an input to the nn, but for this default initializer it's simply used to get the batch-size.
         :return: Initial state-means, Initial state-covariances. Dimensions of each match the batch-size (from input).
@@ -90,7 +98,7 @@ class KalmanFilter(torch.nn.Module):
         # (when multiple states go into the same measurement, they'll to init at same value)
 
         # separate init-std-dev for each state, corr = 0
-        out_cov = quad_form_diag(std_devs=self.initial_std_dev,
+        out_cov = quad_form_diag(std_devs=torch.cat(self.initial_std_dev, 0),
                                  corr_mat=Variable(torch.eye(self.num_states, self.num_states)))
 
         return expand(out_mean, bs), expand(out_cov, bs)
