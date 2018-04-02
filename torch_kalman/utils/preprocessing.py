@@ -2,6 +2,8 @@ from collections import OrderedDict
 import numpy as np
 import pandas as pd
 
+from torch_kalman.utils.utils import product
+
 
 class ForecastPreprocessor(object):
     def __init__(self, variables, group_col, variable_col, value_col, date_col, freq='D'):
@@ -152,7 +154,7 @@ class ForecastPreprocessor(object):
             value_col = self.value_col
 
         # make sure correct dtypes so joining to original can work:
-        num_rows = reduce(lambda x, y: x * y, [len(val) for val in dim_info.values()])
+        num_rows = product(len(val) for val in dim_info.values())
         group_dtype = np.array(dim_info[self.group_col]).dtype
         var_dtype = np.array(dim_info[self.variable_col]).dtype
         out = {self.group_col: np.empty(shape=(num_rows,), dtype=group_dtype),

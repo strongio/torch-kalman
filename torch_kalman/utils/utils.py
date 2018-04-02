@@ -1,4 +1,10 @@
 import numpy as np
+from operator import mul
+from functools import reduce
+
+
+def product(x):
+    return reduce(mul, x, 1)
 
 
 def cummean(A, axis):
