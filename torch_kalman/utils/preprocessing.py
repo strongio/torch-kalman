@@ -6,7 +6,7 @@ from torch_kalman.utils.utils import product
 
 
 class ForecastPreprocessor(object):
-    def __init__(self, measurements, group_col, measurement_col, value_col, date_col, freq='D'):
+    def __init__(self, measurements, group_col, measurement_col, value_col, date_col, freq):
         """
         Create a preprocessor for multivariate time-series. This converts pandas dataframes into numpy arrays and
         vice-versa.
@@ -17,10 +17,11 @@ class ForecastPreprocessor(object):
         :param measurement_col: The column in the pandas dataframe containing labels corresponding to `measurements`.
         :param value_col: The column in the pandas dataframe containing the actual values of the time-series.
         :param date_col: The column in the pandas dataframe containing the date.
-        :param freq: The frequency for the date. Currently only daily data are supported.
+        :param freq: The frequency for the date. Currently pandas.Timedeltas (but not TimeOffsets) are supported. Can pass a
+        string that can be interpreted by pandas.to_timedelta.
         """
-        if freq != 'D':
-            raise Exception("Only data with freq='D' (daily) currently supported.")
+        if not isinstance(freq, pd.Timedelta):
+            freq = pd.to_timedelta(freq)
         self.freq = freq
         self.measurements = sorted(measurements)
         self.group_col = group_col
@@ -54,7 +55,7 @@ class ForecastPreprocessor(object):
         # check date-col:
         date_cols = dataframe.select_dtypes(include=[np.datetime64]).columns.tolist()
         if self.date_col not in date_cols:
-            raise Exception("The date column (%s) is not of type np.datetime64" % self.date_col)
+            raise Exception("The date column ('{}') is not of type np.datetime64".format(self.date_col))
 
         # subsequent methods will assume data are sorted:
         dataframe = dataframe.sort_values(by=[self.group_col, self.measurement_col, self.date_col])
@@ -63,37 +64,47 @@ class ForecastPreprocessor(object):
         info_per_group = {g: self.get_group_info(df_g) for g, df_g in dataframe.groupby(self.group_col)}
 
         # filter based on min_len_prop:
-        max_len = max([i['length'] for i in info_per_group.values()])
-        min_len = round(max_len * min_len_prop)
-        info_per_group = {g: i for g, i in info_per_group.items() if i['length'] >= min_len}
+        longest_group_length = max(info['length'] for info in info_per_group.values())
+        group_length_min = round(longest_group_length * min_len_prop)
+        info_per_group = {g: info for g, info in info_per_group.items() if info['length'] >= group_length_min}
 
         # create the 'dim_info' dict with information about each dimension:
         dim_info = OrderedDict()
         dim_info[self.group_col] = sorted(info_per_group.keys())  # sorted so we always know order later
-        dim_info['timesteps'] = range(max_len)
+        dim_info['timesteps'] = [self.freq * i for i in range(longest_group_length + 1)]
         dim_info[self.measurement_col] = self.measurements  # sorted in __init__ so we always know order later
 
         # preallocate numpy array:
-        x = np.empty(shape=tuple([len(x) for x in dim_info.values()]))
+        x = np.empty(shape=[len(x) for x in dim_info.values()])
         x[:, :, :] = np.nan
 
         # fill array:
         start_dates = {}
-        for g_idx, group_name in enumerate(dim_info[self.group_col]):
+        for g_idx, group in enumerate(dim_info[self.group_col]):
             # for each group...
-            start_dates[group_name] = info_per_group[group_name]['start_date']
-            for v_idx, var_name in enumerate(self.measurements):
-                # for each measurement...
-                this_var_info = info_per_group[group_name]['measurement_info'][var_name]
-                # whichever measurement starts first determines the true start for this group. if any measurements started
-                # later, their start will be offset accordingly:
-                start = this_var_info['offset']
-                # after ts ends, no values will be filled, so nans will remain as padding:
-                end = len(this_var_info['values'])
-                # fill:
-                x[g_idx, start:end, v_idx] = this_var_info['values']
+            start_dates[group] = info_per_group[group]['start_date']
+            for m_idx, measure in enumerate(self.measurements):
+                this_var_info = info_per_group[group]['measurement_info'][measure]
+                # this_var_info['idx'] accounts for implicit missings due to date-gaps:
+                x[g_idx, this_var_info['idx'], m_idx] = this_var_info['values']
 
         return x, dim_info, start_dates
+
+    def timedelta_int(self, t1, t2):
+        """
+        Subtract t1 from t2, to get difference in integers where the units are self.freq.
+        :param t1: A datetime (or DateTimeIndex)
+        :param t2: A datetime (or DateTimeIndex)
+        :return: An integer.
+        """
+        diff = (t1 - t2) / self.freq
+        if isinstance(diff, float):
+            out = int(diff)
+        else:
+            out = diff.astype(int)
+        if not np.isclose(diff, out).all():
+            raise ValueError("Timedelta did not divide evenly into self.freq.")
+        return out
 
     def get_group_info(self, dataframe):
         """
@@ -108,16 +119,23 @@ class ForecastPreprocessor(object):
 
         # offset from groups start-date so all measurements have sycn'd seasonality,
         # also add nans for missing-measurements
-        start_date = min([vi['start_date'] for vi in measurement_info.values()])
-        for var_name in self.measurements:
-            if var_name in measurement_info.keys():
-                # TODO: use self.freq
-                measurement_info[var_name]['offset'] = (measurement_info[var_name]['start_date'] - start_date).days
+        start_date = min(vi['start_date'] for vi in measurement_info.values())
+        end_date = start_date # will find in loop:
+        for measure in self.measurements:
+            this_measurement = measurement_info.get(measure, None)
+            if this_measurement is None:
+                measurement_info[measure] = {'values': np.array([np.nan]), 'idx': np.zeros(1)}
             else:
-                measurement_info[var_name] = {'values': np.array([np.nan]), 'start_date': start_date, 'offset': 0}
+                # already obtained idx relative to measure start, offset that based on group start:
+                offset = self.timedelta_int(this_measurement['start_date'], start_date)
+                measurement_info[measure]['idx'] += offset
+                # keep track of end date:
+                if this_measurement['end_date'] > end_date:
+                    end_date = this_measurement['end_date']
 
         group_info = {'start_date': start_date,
-                      'length': max([len(vi['values']) for vi in measurement_info.values()]),
+                      'end_date': end_date,
+                      'length': self.timedelta_int(end_date, start_date),
                       'measurement_info': measurement_info}
 
         return group_info
@@ -131,9 +149,21 @@ class ForecastPreprocessor(object):
         measurements within one of the groups.
         :return: A dctionary with start-date and actual values.
         """
-        # TODO: check w/self.freq (where self.freq is in days)
-        return ({'start_date': dataframe[self.date_col].min(),
-                 'values': dataframe[self.value_col].values})
+        min_difftime = dataframe[self.date_col].diff().min()
+        if min_difftime == pd.Timedelta(days=0):
+            raise ValueError("One or more consecutive rows in the dataframe have the same date/datetime. This could be "
+                             "caused by mis-specification of groups/measures.")
+        if min_difftime < self.freq:
+            raise ValueError("One (or more) consecutive rows in the dataframe has a timedelta of {}, which is less than the"
+                             "`freq` passed at init ({}).".format(min_difftime, self.freq))
+
+        measurement_info = dict(start_date=dataframe[self.date_col].values.min(),
+                                end_date=dataframe[self.date_col].values.max(),
+                                values=dataframe[self.value_col].values)
+        measurement_info['idx'] = self.timedelta_int(dataframe[self.date_col].values,
+                                                     measurement_info['start_date'])
+
+        return measurement_info
 
     # Numpy to Pandas ------------------------------------------------------
     def array_to_pd(self, array, dim_info, start_dates, value_col=None):
@@ -159,16 +189,16 @@ class ForecastPreprocessor(object):
         var_dtype = np.array(dim_info[self.measurement_col]).dtype
         out = {self.group_col: np.empty(shape=(num_rows,), dtype=group_dtype),
                self.measurement_col: np.empty(shape=(num_rows,), dtype=var_dtype),
-               self.date_col: np.empty(shape=(num_rows,), dtype='datetime64[D]'),
+               self.date_col: np.empty(shape=(num_rows,), dtype='datetime64[ns]'),
                value_col: np.empty(shape=(num_rows,)) * np.nan}
 
         row = 0
         for g_idx, group_name in enumerate(dim_info[self.group_col]):
-            for v_idx, var_name in enumerate(dim_info[self.measurement_col]):
+            for v_idx, measure in enumerate(dim_info[self.measurement_col]):
                 values = array[g_idx, :, v_idx]
                 row2 = row + len(values)
                 out[self.group_col][row:row2] = group_name
-                out[self.measurement_col][row:row2] = var_name
+                out[self.measurement_col][row:row2] = measure
                 out[self.date_col][row:row2] = pd.date_range(start_dates[group_name],
                                                              periods=len(values), freq=self.freq)
                 out[value_col][row:row2] = values
