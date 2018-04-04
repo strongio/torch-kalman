@@ -148,7 +148,8 @@ class Forecast(KalmanFilter):
             season_vars.extend(self.measurements)
 
         if len(self.measurements) == 1:
-            warn("Univariate kalman-filter, so no 'common' factor will be used.")
+            if 'common' in (trend + level + season):
+                warn("Univariate kalman-filter, so no 'common' factor will be used.")
         else:
             if 'common' in trend:
                 pos_and_vel_vars.append('common')
