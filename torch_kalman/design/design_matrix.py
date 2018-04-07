@@ -71,18 +71,6 @@ class DesignMatrix(object):
 
         return quad_form_diag(std_devs, corr_mat)
 
-    @staticmethod
-    def check_nn_output(nn_output, batch_size):
-        if nn_output.data.shape[0] != batch_size:
-            raise ValueError("The `nn_module` returns an output whose first dimension size != the batch-size.")
-        if len(nn_output.data.shape) > 2:
-            raise ValueError("The `nn_module` returns an output with more than two dimensions.")
-        elif len(nn_output.data.shape) > 1:
-            if nn_output.data.shape[1] > 1:
-                raise ValueError("The `nn_module` returns a 2D output where the size of the 2nd dimension is > 1. If"
-                                 " there are multiple NNOutputs that need to be filled, your `nn_module` should "
-                                 "return a dictionary or list of tuples.")
-
     def create_for_batch(self, batch):
         """
         If nn_module was not provided at init, this simply replicates the template to match the batch dimensions. If
@@ -108,6 +96,40 @@ class DesignMatrix(object):
                 for key, (row, col) in self.nn_output_idx:
                     expanded[:, row, col] = nn_output[key]
         return expanded
+
+    @staticmethod
+    def check_nn_output(nn_output, batch_size):
+        if nn_output.data.shape[0] != batch_size:
+            raise ValueError("The `nn_module` returns an output whose first dimension size != the batch-size.")
+        if len(nn_output.data.shape) > 2:
+            raise ValueError("The `nn_module` returns an output with more than two dimensions.")
+        elif len(nn_output.data.shape) > 1:
+            if nn_output.data.shape[1] > 1:
+                raise ValueError("The `nn_module` returns a 2D output where the size of the 2nd dimension is > 1. If"
+                                 " there are multiple NNOutputs that need to be filled, your `nn_module` should "
+                                 "return a dictionary or list of tuples.")
+
+
+class InitialState(DesignMatrix):
+    def __init__(self, states, nn_module=None):
+        """
+        This isn't a true design-matrix-- it's just the initial state of the kalman-filter. But it shares many methods and
+        structural properties with the design-matrices, so it inherits from it.
+
+        :param states: The states.
+        :param nn_module: An (optional) callable such as a nn.module, that will be used to fill in initial-states.
+        """
+        self.states = states
+        super().__init__(nn_module=nn_module)
+
+    def register_template(self):
+        nn_output_idx = {}
+        initial_mean = Variable(torch.zeros(len(self.states), 1))
+        for i, (state_id, state) in enumerate(self.states.items()):
+            initial_mean[i] = state.initial_value()
+            if isinstance(state.initial_value, NNOutput):
+                nn_output_idx[state_id] = i
+        return initial_mean, nn_output_idx
 
 
 class F(DesignMatrix):
