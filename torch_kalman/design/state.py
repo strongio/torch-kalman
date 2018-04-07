@@ -6,15 +6,17 @@ from torch.autograd import Variable
 
 
 class State(CovarianceElement):
-    def __init__(self, id, std_dev):
+    def __init__(self, id, std_dev, initial_value=0.0):
         """
         A "state" in a kalman filter is an unobserved variable that generates the observed data. At each timestep,
         the state evolves according to transitions and "process-noise".
 
         :param id: A unique name for this state.
         :param std_dev: The standard-deviation (process-noise).
+        :param initial_value: The initial value for this state, before any measurements update it.
         """
         super(State, self).__init__(id=id, std_dev=std_dev)
+        self.initial_value = initial_value
         self.transitions = {}
 
     def add_transition(self, to_state, multiplier=1.0):
@@ -28,7 +30,32 @@ class State(CovarianceElement):
 
     def torchify(self):
         super(State, self).torchify()
+        # initial value:
+        if isinstance(self.initial_value, float):
+            self.initial_value = Variable(Tensor([self.initial_value]))
+            self.initial_value = make_callable(self.initial_value)
+
+        # transitions:
         for key in self.transitions.keys():
             if isinstance(self.transitions[key], float):
                 self.transitions[key] = Variable(Tensor([self.transitions[key]]))
             self.transitions[key] = make_callable(self.transitions[key])
+
+
+class NNState(State):
+    def __init__(self, id, initial_value=0.0):
+        """
+        A NN-state is a state whose value is determined, not by the kalman-filter algorithm, but by an external callable
+        that's called on each timestep. This callable (usually a nn.module) takes the batch as input and returns a Variable,
+        the elements of which fill the NNStates
+
+        :param id: A unique name for this state.
+        :param initial_value: The initial value for this state, before any measurements update it.
+        """
+        super().__init__(id=id, std_dev=0.0, initial_value=initial_value)
+
+    def add_transition(self, to_state, multiplier=1.0):
+        raise NotImplementedError("NNStates cannot have transitions.")
+
+    def add_correlation(self, obj, correlation):
+        raise NotImplementedError("NNStates cannot have process-covariance.")
