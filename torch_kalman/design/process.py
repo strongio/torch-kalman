@@ -96,9 +96,11 @@ class Seasonal(Process):
         period - 1 degrees of freedom (df_correction=True, the default).
         :param sep: The separator between parts of the id (defaults "_").
         """
+        pad_n = len(str(period))
         states = []
         for i in range(period):
-            this_state = State(id=join([id_prefix, 'season', str(i)], sep), std_dev=std_dev if i == 0 else 0.0)
+            season = str(i).rjust(width=pad_n)
+            this_state = State(id=join([id_prefix, 'season', season], sep), std_dev=std_dev if i == 0 else 0.0)
             states.append(this_state)
 
         if df_correction:
@@ -107,7 +109,7 @@ class Seasonal(Process):
                 states[i].add_transition(states[0], -1)
         else:
             for i in range(period):
-                if i == period - 1:
+                if i == (period - 1):
                     states[i].add_transition(to_state=states[0])
                 else:
                     states[i].add_transition(to_state=states[i + 1])
