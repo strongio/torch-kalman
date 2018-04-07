@@ -1,28 +1,22 @@
 import torch
 from torch.autograd import Variable
 
-from torch.nn import Parameter, ParameterList
+from torch_kalman.utils.torch_utils import expand
 
-from torch_kalman.utils.torch_utils import expand, batch_transpose, quad_form_diag
 
-from warnings import warn
-
+from IPython.core.debugger import Pdb
+pdb = Pdb()
 
 # noinspection PyPep8Naming
 class KalmanFilter(torch.nn.Module):
-    def __init__(self, forward_ahead=1):
+    def __init__(self, horizon=1):
         """
 
-        :param forward_ahead: An integer indicating how many timesteps ahead predictions from `forward` should be for.
-        :param initializer: Optional. A callable (usually inheriting from torch.nn.Module, but can be any function) that
-        takes an 2D input (supplied in `forward` as 'initializer_input') and returns (initial_mean, initial_covariance) for
-        the kalman-filter. By default uses `KalmanFilter().default_initializer`.
-        :param measurement_nn: Optional. A callable (virtually always inheriting from torch.nn.Module) that takes the `input`
-        to `forward` and returns a 3D Variable (group * timestep * measurement). This will be added to the output of the
-        kalman-filtering to generate predictions in `forward`.
+        :param horizon: An integer indicating how many timesteps ahead predictions from `forward` should be for.
         """
         super(KalmanFilter, self).__init__()
-        self.forward_ahead = forward_ahead
+        self.horizon = horizon
+        self.design = None
 
     @property
     def num_states(self):
@@ -41,9 +35,9 @@ class KalmanFilter(torch.nn.Module):
         return (measurement.id for measurement in self.design.measurements)
 
     # Main Forward-Pass Methods --------------------
-    def _filter(self, input, initial_state=None, initializer_input=None, n_ahead=None):
+    def _filter(self, input, initial_state=None, init_nn_input=None, n_ahead=None):
         if n_ahead is None:
-            n_ahead = self.forward_ahead
+            n_ahead = self.horizon
 
         num_series, num_timesteps, num_measurements = input.data.shape
 
@@ -54,37 +48,43 @@ class KalmanFilter(torch.nn.Module):
         else:
             n_ahead_was_zero = False
 
-        # "preallocate"
+        # preallocate
         mean_out = [[] for _ in range(n_ahead + 1)]
         cov_out = [[] for _ in range(n_ahead + 1)]
 
         # initial values:
-        k_mean, k_cov = initial_state
+        state_mean, state_cov = self.initialize_state(initial_state, init_nn_input, num_series, num_measurements)
 
         # run filter:
-        for t in range(-self.forward_ahead, num_timesteps):
-            # update
+        for t in range(-self.horizon, num_timesteps):
+            # update: incorporate observed data (and state-nn predictions)
             if t >= 0:
-                # the timestep for "initial" depends on self.forward_ahead.
-                # e.g., if self.forward_ahead is -1, then we start at -1, and update isn't called yet.
-                k_mean, k_cov = self.kf_update(input[:, t, :], k_mean, k_cov)
+                # if there's a nn module predicting certain components of the state, that is applied here:
+                state_mean = self.design.state_nn_update(input[:, t, :], state_mean)
+                # now do update step:
+                state_mean, state_cov = self.kf_update(input[:, t, :], state_mean, state_cov)
 
             # predict
             for nh in range(n_ahead + 1):
-                if nh > 0:
-                    # if ahead is in the future, need to predict. otherwise will just use posterior for the current time
-                    k_mean, k_cov = self.kf_predict(k_mean, k_cov)
-                if nh == 1:
-                    # if ahead is 1-step ahead, save it for the next iter
-                    k_mean_next, k_cov_next = k_mean, k_cov
-                if 0 <= (t + nh) < num_timesteps:
-                    # don't assign to the matrix unless there's a corresponding observation in the original data
-                    mean_out[nh].append(k_mean)
-                    cov_out[nh].append(k_cov)
+                assign_idx = t + nh
+                if assign_idx < num_timesteps:  # output only includes timepoints in original input
+
+                    if nh > 0:
+                        # if ahead is in the future, need to predict...
+                        state_mean, state_cov = self.kf_predict(input[:, assign_idx, :], state_mean, state_cov)
+                    # ...otherwise will just use posterior for the current time
+
+                    if nh == 1:
+                        # if ahead is 1-step ahead, save it for the next iter
+                        state_mean_next, state_cov_next = state_mean, state_cov
+
+                    if assign_idx >= 0:  # output only includes timepoints in original input
+                        mean_out[nh].append(state_mean)
+                        cov_out[nh].append(state_cov)
 
             # next timestep:
             # noinspection PyUnboundLocalVariable
-            k_mean, k_cov = k_mean_next, k_cov_next
+            state_mean, state_cov = state_mean_next, state_cov_next
 
         # forward-pass is done, so make sure design-mats will be re-instantiated next time:
         self.design.reset()
@@ -97,44 +97,35 @@ class KalmanFilter(torch.nn.Module):
 
         return mean_out, cov_out
 
-    def forward(self, input, initial_state=None, initializer_input=None):
-        """
-        The forward pass.
+    def initialize_state(self, initial_state, init_nn_input, num_series, num_measurements):
+        if initial_state is None:
+            if init_nn_input is None:
+                if self.design.Init.nn_module:
+                    raise ValueError("(Some of) the initial values in your kalman-filter are determined by the output of a "
+                                     "nn module, so you need to pass `init_nn_input` to forward.")
+                init_nn_input = Variable(torch.zeros((num_series, num_measurements)))
+            state_mean, state_cov = self.design.initialize_state(init_nn_input)
+        else:
+            state_mean, state_cov = initial_state
+        return state_mean, state_cov
 
-        :param input: A 3D variable with group * timesteps * X. The first 0:num_measurements slices along the third dimension
-        will be passed to the kalman-filter. Any remaining
-        :return: A torch.autograd.Variable of size num_groups*num_timesteps*num_measurements, containing the predictions
-        for time=self.forward_ahead.
-        """
-
-        # filter takes the first num_measurements slices along the third axis. additional slices are allowed and will be used
-        # in the measurement_nn
+    def forward(self, input, initial_state=None, init_nn_input=None):
         input = self.validate_input(input)
-        kf_input = input[:, :, 0:self.num_measurements]
-        num_series, num_timesteps, num_measurements = kf_input.data.shape
 
         # run kalman-filter to get predicted state
-        means_per_ahead, _ = self._filter(input=kf_input,
+        means_per_ahead, _ = self._filter(input=input,
                                           initial_state=initial_state,
-                                          initializer_input=initializer_input,
-                                          n_ahead=self.forward_ahead)
-        means = torch.cat(means_per_ahead[self.forward_ahead], 0)
+                                          init_nn_input=init_nn_input,
+                                          n_ahead=self.horizon)
+        means = means_per_ahead[self.horizon]
 
-        # run through the measurement matrix to get predicted measurements
-        H_expanded = expand(self.H, means.data.shape[0])
-        filtered_long = torch.bmm(H_expanded, means)
-        filtered = filtered_long.view(num_timesteps, num_series, num_measurements).transpose(0, 1)
+        # get predicted measurements from state
+        predicted_measurements = []
+        for t, mean in enumerate(means):
+            H_expanded = self.H.create_for_batch(input[:, t, :])
+            predicted_measurements.append(torch.bmm(H_expanded, mean))
 
-        # the first num_measurements slices along the third axis were passed though the kalman-filter. if there's a
-        # measurement_nn, it will take the entire input
-        if self.measurement_nn is None:
-            if input.data.shape[2] > kf_input.data.shape[2]:
-                warn("There are extra slices along the 3rd dimension of `input` no `measurement_nn` to process them.")
-            return filtered
-        else:
-            measure_predictions = self.measurement_nn(input)
-            # the predictions are simply the kalman-filter plus the measurement-nn
-            return filtered + measure_predictions
+        return torch.cat(predicted_measurements, 0)
 
     def validate_input(self, input):
         if len(input.data.shape) == 2 and self.num_measurements == 1:
@@ -151,123 +142,126 @@ class KalmanFilter(torch.nn.Module):
         return None
 
     # Main KF Steps -------------------------
-    def kf_predict(self, x, P):
+    def kf_predict(self, obs, state_mean, state_cov):
         """
-        The 'predict' step of the kalman filter. The F matrix dictates how the mean (x) and covariance (P) change.
+        The 'predict' step of the kalman filter.
 
-        :param x: Mean
-        :param P: Covariance
-        :return: The new (mean, covariance)
+        :param obs: The observed data for this timestep. Not needed for the predict computations themselves, but will be
+        passed to the `create_for_batch` methods of the design-matrices.
+        :param state_mean: The state mean (for each item in the batch).
+        :param state_cov: The state covariance (for each item in the batch).
+        :return: The update state_mean, state_cov.
         """
-        bs = P.data.shape[0]  # batch-size
+        # expand design-matrices for the batch
+        F_expanded = self.F.create_for_batch(obs)
+        Ft_expanded = F_expanded.permute(0, 2, 1)
+        Q_expanded = self.Q.create_for_batch(obs)
 
-        # expand design-matrices to match batch-size:
-        F_expanded = expand(self.F, bs)
-        Ft_expanded = expand(self.F.t(), bs)
-        Q_expanded = expand(self.Q, bs)
+        state_mean = torch.bmm(F_expanded, state_mean)
+        state_cov = torch.bmm(torch.bmm(F_expanded, state_cov), Ft_expanded) + Q_expanded
+        return state_mean, state_cov
 
-        x = torch.bmm(F_expanded, x)
-        P = torch.bmm(torch.bmm(F_expanded, P), Ft_expanded) + Q_expanded
-        return x, P
-
-    def kf_update(self, obs, x, P):
+    def kf_update(self, obs, state_mean, state_cov):
         """
         The 'update' step of the kalman filter.
 
         :param obs: The observations.
-        :param x: Mean
-        :param P: Covariance
+        :param state_mean: Mean
+        :param state_cov: Covariance
         :return: The new (mean, covariance)
         """
 
-        # handle missing values
-        obs_nm, x_nm, P_nm, is_nan_per_slice = self.nan_remove(obs, x, P)
-        if obs_nm is None:  # all missing
-            return x, P
+        # TODO: reimplement missing values
+        if (obs != obs).data.any():
+            raise NotImplementedError("Missing values are WIP.")
 
-        # expand design-matrices to match batch-size:
-        bs_orig = obs.data.shape[0]  # batch-size including missings
-        bs = obs_nm.data.shape[0]  # batch-size
-        H_expanded = expand(self.H, bs)
-        R_expanded = expand(self.R, bs)
+        # expand design-matrices for the batch:
+        H_expanded = self.H.create_for_batch(obs)
+        R_expanded = self.R.create_for_batch(obs)
+
+        # for the actual update, we only use the autoregressive part of the input:
+        kf_obs = obs[:, 0:self.design.num_measurements]
 
         # residual:
-        residual = obs_nm - torch.bmm(H_expanded, x_nm).squeeze(2)
+        residual = kf_obs - torch.bmm(H_expanded, state_mean).squeeze(2)
 
         # kalman-gain:
-        K = self.kalman_gain(P_nm, H_expanded, R_expanded)
+        K = self.kalman_gain(state_cov, H_expanded, R_expanded)
 
         # update mean and covariance:
-        x_new = x.clone()
-        # from group*one_for_all_states to group*state to group*state*1:
-        is_nan_slice_x = is_nan_per_slice[:, None].expand(bs_orig, self.num_states)[:, :, None]
-        x_new[is_nan_slice_x == 0] = x_nm + torch.bmm(K, residual.unsqueeze(2))
+        # x_new = state_mean.clone()
+        # # from group*one_for_all_states to group*state to group*state*1:
+        # is_nan_slice_x = is_nan_per_slice[:, None].expand(bs_orig, self.num_states)[:, :, None]
+        # x_new[is_nan_slice_x == 0] = x_nm + torch.bmm(K, residual.unsqueeze(2))
+        #
+        # P_new = state_cov.clone()
+        # # group*state*1 to group*state*state:
+        # is_nan_slice_P = is_nan_slice_x.expand(bs_orig, self.num_states, self.num_states)
+        # P_new[is_nan_slice_P == 0] = self.covariance_update(P_nm, K, H_expanded, R_expanded)
+        state_mean = state_mean + torch.bmm(K, residual.unsqueeze(2))
+        state_cov = self.covariance_update(state_cov, K, H_expanded, R_expanded)
 
-        P_new = P.clone()
-        # group*state*1 to group*state*state:
-        is_nan_slice_P = is_nan_slice_x.expand(bs_orig, self.num_states, self.num_states)
-        P_new[is_nan_slice_P == 0] = self.covariance_update(P_nm, K, H_expanded, R_expanded)
+        return state_mean, state_cov
 
-        return x_new, P_new
-
-    @staticmethod
-    def nan_remove(obs, x, P):
-        """
-        Remove group-slices from x and P where any variables in that slice are missing.
-
-        :param obs: The observed data, potentially with missing values.
-        :param x: Mean.
-        :param P: Covariance
-        :return: A tuple with four elements. The first three are the tensors originally passed as arguments, but without
-         any group-slices that have missing values. The fourth is a byte-tensor indicating which slices in the original
-         `obs` had missing-values.
-        """
-        bs = P.data.shape[0]  # batch-size including missings
-        rank = P.data.shape[1]
-        is_nan_el = (obs != obs)  # by element
-        if is_nan_el.data.all():
-            return None, None, None, None
-        if is_nan_el.data.any():
-            # get a list, one for each group, indicating 1 for nan (for *any* variable):
-            is_nan_list = (torch.sum(is_nan_el, 1) > 0).data.tolist()
-            # keep only the group-slices without nans:
-            obs_nm = torch.stack([obs[i] for i, is_nan in enumerate(is_nan_list) if is_nan == 0], 0)
-            x_nm = torch.stack([x[i] for i, is_nan in enumerate(is_nan_list) if is_nan == 0], 0)
-            P_nm = torch.stack([P[i] for i, is_nan in enumerate(is_nan_list) if is_nan == 0], 0)
-        else:
-            # don't need to do anything:
-            obs_nm, x_nm, P_nm = obs, x, P
-
-        # this will be used later for assigning to x/P _new.
-        is_nan_per_slice = (torch.sum(is_nan_el, 1) > 0)
-
-        return obs_nm, x_nm, P_nm, is_nan_per_slice
+    # @staticmethod
+    # def nan_remove(obs, x, P):
+    #     """
+    #     Remove group-slices from x and P where any variables in that slice are missing.
+    #
+    #     :param obs: The observed data, potentially with missing values.
+    #     :param x: Mean.
+    #     :param P: Covariance
+    #     :return: A tuple with four elements. The first three are the tensors originally passed as arguments, but without
+    #      any group-slices that have missing values. The fourth is a byte-tensor indicating which slices in the original
+    #      `obs` had missing-values.
+    #     """
+    #     bs = P.data.shape[0]  # batch-size including missings
+    #     rank = P.data.shape[1]
+    #     is_nan_el = (obs != obs)  # by element
+    #     if is_nan_el.data.all():
+    #         return None, None, None, None
+    #     if is_nan_el.data.any():
+    #         # get a list, one for each group, indicating 1 for nan (for *any* variable):
+    #         is_nan_list = (torch.sum(is_nan_el, 1) > 0).data.tolist()
+    #         # keep only the group-slices without nans:
+    #         obs_nm = torch.stack([obs[i] for i, is_nan in enumerate(is_nan_list) if is_nan == 0], 0)
+    #         x_nm = torch.stack([x[i] for i, is_nan in enumerate(is_nan_list) if is_nan == 0], 0)
+    #         P_nm = torch.stack([P[i] for i, is_nan in enumerate(is_nan_list) if is_nan == 0], 0)
+    #     else:
+    #         # don't need to do anything:
+    #         obs_nm, x_nm, P_nm = obs, x, P
+    #
+    #     # this will be used later for assigning to x/P _new.
+    #     is_nan_per_slice = (torch.sum(is_nan_el, 1) > 0)
+    #
+    #     return obs_nm, x_nm, P_nm, is_nan_per_slice
 
     @staticmethod
     def kalman_gain(P, H_expanded, R_expanded):
         bs = P.data.shape[0]  # batch-size
-        Ht_expanded = expand(H_expanded[0].t(), bs)
+        Ht_expanded = H_expanded.permute(0, 2, 1)
         S = torch.bmm(torch.bmm(H_expanded, P), Ht_expanded) + R_expanded  # total covariance
         Sinv = torch.cat([torch.inverse(S[i, :, :]).unsqueeze(0) for i in range(bs)], 0)  # invert, batchwise
         K = torch.bmm(torch.bmm(P, Ht_expanded), Sinv)  # kalman gain
         return K
 
     @staticmethod
-    def covariance_update(P, K, H_expanded, R_expanded):
+    def covariance_update(state_cov, K, H_expanded, R_expanded):
         """
         "Joseph stabilized" covariance correction.
 
-        :param P: Process covariance.
+        :param state_cov: State covariance (for each item in the batch).
         :param K: Kalman-gain.
         :param H_expanded: The H design-matrix, expanded for each batch.
         :param R_expanded: The R design-matrix, expanded for each batch.
         :return: The new process covariance.
         """
         rank = H_expanded.data.shape[2]
-        I = expand(Variable(torch.eye(rank, rank)), P.data.shape[0])
+        bs = state_cov.data.shape[0] # batch size
+        I = Variable(expand(torch.eye(rank, rank), bs))
         p1 = (I - torch.bmm(K, H_expanded))
-        p2 = torch.bmm(torch.bmm(p1, P), batch_transpose(p1))
-        p3 = torch.bmm(torch.bmm(K, R_expanded), batch_transpose(K))
+        p2 = torch.bmm(torch.bmm(p1, state_cov), p1.permute(0, 2, 1))
+        p3 = torch.bmm(torch.bmm(K, R_expanded), K.permute(0, 2, 1))
         return p2 + p3
 
     # Design-Matrices ---------------------------

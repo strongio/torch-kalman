@@ -1,9 +1,13 @@
 from collections import OrderedDict
 
-from torch_kalman.design.nn_output import NNOutput
-from torch_kalman.design.design_matrix import F, H, R, Q, B, InitialState
+from torch_kalman.design.nn_output import NNOutput, InitialState, NNStateApply
+from torch_kalman.design.design_matrix import F, H, R, Q, B
 
 from torch_kalman.utils.torch_utils import expand
+
+from IPython.core.debugger import Pdb
+
+pdb = Pdb()
 
 
 class Design(object):
@@ -19,8 +23,12 @@ class Design(object):
         These matrices are pytorch Variables, so if the std_dev or correlations passed to the States and Measurements
         are pytorch Parameters, you end up with design-matrices that can be optimized using pytorch's backwards method.
 
-        :param states: A list of States
-        :param measurements: A list of Measurements
+        :param states:
+        :param measurements:
+        :param transition_nn:
+        :param measurement_nn:
+        :param init_nn:
+        :param state_nn:
         """
 
         # states:
@@ -29,7 +37,7 @@ class Design(object):
             if state.id in self.states.keys():
                 raise ValueError("The state_id '{}' appears more than once.".format(state.id))
             else:
-                self.states[state.id] = states
+                self.states[state.id] = state
         # sort:
         self.states = OrderedDict((k, self.states[k]) for k in sorted(self.states.keys()))
         # convert any floats to Variables:
@@ -41,31 +49,38 @@ class Design(object):
             if measurement.id in self.measurements.keys():
                 raise ValueError("The measurement_id '{}' appears more than once.".format(measurement.id))
             else:
-                self.measurements[measurement.id] = measurements
+                self.measurements[measurement.id] = measurement
         # sort:
         self.measurements = OrderedDict((k, self.measurements[k]) for k in sorted(self.measurements.keys()))
         # convert any floats to Variables:
         [measurement.torchify() for measurement in self.measurements.values()]
 
         # design-mats:
-        # TODO: states/measurements are ordered-dicts or lists?
-        self.F = F(states=states, nn_module=transition_nn)
-        self.H = H(states=states, measurements=measurements, nn_module=measurement_nn)
-        self.Q = Q(states=states)
-        self.R = R(measurements=measurements)
+        self.F = F(states=self.states, nn_module=transition_nn)
+        self.H = H(states=self.states, measurements=self.measurements, nn_module=measurement_nn)
+        self.Q = Q(states=self.states)
+        self.R = R(measurements=self.measurements)
 
         # initial-values:
-        self.Init = InitialState(states, nn_module=init_nn)
+        self.Init = InitialState(self.states, nn_module=init_nn)
 
-        # if there are any NNStates:
-        self.state_nn = state_nn
+        # NNStates:
+        self.NNStateApply = NNStateApply(self.states, nn_module=state_nn)
+
+    @property
+    def num_measurements(self):
+        return len(self.measurements)
+
+    @property
+    def num_states(self):
+        return len(self.states)
 
     def nn_modules(self):
         """
         Return all of the nn-modules that should be registered in __init__ so their parameters can be tracked.
         :return: transition_nn, measurement_nn, init_nn, state_nn
         """
-        return self.F.nn_module, self.H.nn_module, self.Init.nn_module, self.state_nn
+        return self.F.nn_module, self.H.nn_module, self.Init.nn_module, self.NNStateApply.nn_module
 
     def reset(self):
         """
@@ -79,7 +94,7 @@ class Design(object):
         self.Q.reset()
         self.R.reset()
 
-    def initial_values(self, batch):
+    def initialize_state(self, batch):
         """
         Get the initial state and the initial covariance. The initial state is given by the initial values passed to each
         state, and the initial covariance is just the Q design matrix.
@@ -95,3 +110,6 @@ class Design(object):
         initial_cov_expanded = expand(initial_cov, bs)
 
         return initial_mean_expanded, initial_cov_expanded
+
+    def state_nn_update(self, batch, state_mean):
+        return self.NNStateApply.create_for_batch(batch, state_mean)

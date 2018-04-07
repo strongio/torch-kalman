@@ -18,18 +18,9 @@ def expand(x, ns):
     :param ns: Number of repeats
     :return: Tensor repeated into new dimension.
     """
-    return x.expand(ns, *x.data.shape)
-
-
-def batch_transpose(x):
-    """
-    Given a tensor whose first dimension is the batch, transpose each batch.
-
-    :param x: A tensor whose first dimension is the batch.
-    :return: x transposed batchwise.
-    """
-    ns = x.data.shape[0]
-    return torch.stack([x[i].t() for i in range(ns)], 0)
+        return x.expand(ns, *x.data.shape)
+    else:
+        return x.expand(ns, *x.shape)
 
 
 def quad_form_diag(std_devs, corr_mat):
