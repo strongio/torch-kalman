@@ -2,10 +2,8 @@ import torch
 from torch.autograd import Variable
 
 from torch_kalman.utils.torch_utils import expand
+from numpy import where
 
-
-from IPython.core.debugger import Pdb
-pdb = Pdb()
 
 # noinspection PyPep8Naming
 class KalmanFilter(torch.nn.Module):
@@ -59,8 +57,9 @@ class KalmanFilter(torch.nn.Module):
         for t in range(-self.horizon, num_timesteps):
             # update: incorporate observed data (and state-nn predictions)
             if t >= 0:
+                # TODO: remove any groups with all nan for this update (per-measure nans will be handled inside update)
                 # if there's a nn module predicting certain components of the state, that is applied here:
-                state_mean = self.design.state_nn_update(input[:, t, :], state_mean)
+                self.design.state_nn_update(state_mean, batch=input[:, t, :])
                 # now do update step:
                 state_mean, state_cov = self.kf_update(input[:, t, :], state_mean, state_cov)
 
@@ -125,7 +124,7 @@ class KalmanFilter(torch.nn.Module):
             H_expanded = self.H.create_for_batch(input[:, t, :])
             predicted_measurements.append(torch.bmm(H_expanded, mean))
 
-        return torch.cat(predicted_measurements, 0)
+        return torch.cat(predicted_measurements, 2).permute(0, 2, 1)
 
     def validate_input(self, input):
         if len(input.data.shape) == 2 and self.num_measurements == 1:
@@ -171,10 +170,6 @@ class KalmanFilter(torch.nn.Module):
         :return: The new (mean, covariance)
         """
 
-        # TODO: reimplement missing values
-        if (obs != obs).data.any():
-            raise NotImplementedError("Missing values are WIP.")
-
         # expand design-matrices for the batch:
         H_expanded = self.H.create_for_batch(obs)
         R_expanded = self.R.create_for_batch(obs)
@@ -188,53 +183,35 @@ class KalmanFilter(torch.nn.Module):
         # kalman-gain:
         K = self.kalman_gain(state_cov, H_expanded, R_expanded)
 
-        # update mean and covariance:
-        # x_new = state_mean.clone()
-        # # from group*one_for_all_states to group*state to group*state*1:
-        # is_nan_slice_x = is_nan_per_slice[:, None].expand(bs_orig, self.num_states)[:, :, None]
-        # x_new[is_nan_slice_x == 0] = x_nm + torch.bmm(K, residual.unsqueeze(2))
-        #
-        # P_new = state_cov.clone()
-        # # group*state*1 to group*state*state:
-        # is_nan_slice_P = is_nan_slice_x.expand(bs_orig, self.num_states, self.num_states)
-        # P_new[is_nan_slice_P == 0] = self.covariance_update(P_nm, K, H_expanded, R_expanded)
-        state_mean = state_mean + torch.bmm(K, residual.unsqueeze(2))
-        state_cov = self.covariance_update(state_cov, K, H_expanded, R_expanded)
+        # handle missing values:
+        state_mean_new, state_cov_new = state_mean.clone(), state_cov.clone()  # avoid 'var needed for grad modified inplace'
+        isnan = (residual != residual)
+        bs = obs.data.shape[0]
+        groups_with_nan = [i for i in range(bs) if isnan[i].data.any()]
+        for i in groups_with_nan:
+            this_isnan = isnan[i].data
+            if this_isnan.all():
+                # if all nan, just don't perform update
+                continue
+            else:
+                # for partial nan, perform partial update
+                valid_idx = where(this_isnan.numpy() == 0)[0].tolist()  # will clean up when pytorch 0.4 is released
+                # get the subset of measurements that are non-nan:
+                K_sub = K[i][:, valid_idx]
+                residual_sub = residual[i][valid_idx]
+                H_sub = H_expanded[i][valid_idx, :]
+                R_sub = R_expanded[i][valid_idx][:, valid_idx]  # will clean up when pytorch 0.4 is released
 
-        return state_mean, state_cov
+                # perform updates with subsetted matrices
+                state_mean_new[i] = state_mean[i] + torch.mm(K_sub, residual_sub.unsqueeze(1))
+                state_cov_new[i] = self.covariance_update(state_cov[[i]], K_sub[None, :, :], H_sub[None, :, :], R_sub[None, :, :])[0]
 
-    # @staticmethod
-    # def nan_remove(obs, x, P):
-    #     """
-    #     Remove group-slices from x and P where any variables in that slice are missing.
-    #
-    #     :param obs: The observed data, potentially with missing values.
-    #     :param x: Mean.
-    #     :param P: Covariance
-    #     :return: A tuple with four elements. The first three are the tensors originally passed as arguments, but without
-    #      any group-slices that have missing values. The fourth is a byte-tensor indicating which slices in the original
-    #      `obs` had missing-values.
-    #     """
-    #     bs = P.data.shape[0]  # batch-size including missings
-    #     rank = P.data.shape[1]
-    #     is_nan_el = (obs != obs)  # by element
-    #     if is_nan_el.data.all():
-    #         return None, None, None, None
-    #     if is_nan_el.data.any():
-    #         # get a list, one for each group, indicating 1 for nan (for *any* variable):
-    #         is_nan_list = (torch.sum(is_nan_el, 1) > 0).data.tolist()
-    #         # keep only the group-slices without nans:
-    #         obs_nm = torch.stack([obs[i] for i, is_nan in enumerate(is_nan_list) if is_nan == 0], 0)
-    #         x_nm = torch.stack([x[i] for i, is_nan in enumerate(is_nan_list) if is_nan == 0], 0)
-    #         P_nm = torch.stack([P[i] for i, is_nan in enumerate(is_nan_list) if is_nan == 0], 0)
-    #     else:
-    #         # don't need to do anything:
-    #         obs_nm, x_nm, P_nm = obs, x, P
-    #
-    #     # this will be used later for assigning to x/P _new.
-    #     is_nan_per_slice = (torch.sum(is_nan_el, 1) > 0)
-    #
-    #     return obs_nm, x_nm, P_nm, is_nan_per_slice
+        no_nan = [i for i in range(bs) if i not in groups_with_nan]
+        if len(no_nan) > 0:
+            state_mean_new[no_nan] = state_mean[no_nan] + torch.bmm(K[no_nan], residual[no_nan].unsqueeze(2))
+            state_cov_new[no_nan] = self.covariance_update(state_cov[no_nan], K[no_nan], H_expanded[no_nan], R_expanded[no_nan])
+
+        return state_mean_new, state_cov_new
 
     @staticmethod
     def kalman_gain(P, H_expanded, R_expanded):
@@ -257,7 +234,7 @@ class KalmanFilter(torch.nn.Module):
         :return: The new process covariance.
         """
         rank = H_expanded.data.shape[2]
-        bs = state_cov.data.shape[0] # batch size
+        bs = state_cov.data.shape[0]  # batch size
         I = Variable(expand(torch.eye(rank, rank), bs))
         p1 = (I - torch.bmm(K, H_expanded))
         p2 = torch.bmm(torch.bmm(p1, state_cov), p1.permute(0, 2, 1))
