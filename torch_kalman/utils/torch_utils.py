@@ -18,6 +18,7 @@ def expand(x, ns):
     :param ns: Number of repeats
     :return: Tensor repeated into new dimension.
     """
+    if isinstance(x, Variable):
         return x.expand(ns, *x.data.shape)
     else:
         return x.expand(ns, *x.shape)
