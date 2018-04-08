@@ -30,18 +30,6 @@ class NNOutputTracker(object):
     def register_variables(self):
         raise NotImplementedError()
 
-    @staticmethod
-    def check_nn_output(nn_output, batch_size):
-        if nn_output.data.shape[0] != batch_size:
-            raise ValueError("The `nn_module` returns an output whose first dimension size != the batch-size.")
-        if len(nn_output.data.shape) > 2:
-            raise ValueError("The `nn_module` returns an output with more than two dimensions.")
-        elif len(nn_output.data.shape) > 1:
-            if nn_output.data.shape[1] > 1:
-                raise ValueError("The `nn_module` returns a 2D output where the size of the 2nd dimension is > 1. If"
-                                 " there are multiple NNOutputs that need to be filled, your `nn_module` should "
-                                 "return a dictionary or list of tuples.")
-
     @property
     def template(self):
         """
@@ -75,20 +63,32 @@ class NNOutputTracker(object):
         bs = batch.data.shape[0]
         expanded = expand(self.template, bs)
         if self.nn_module:
-            nn_output = self.nn_module(batch)
-            if isinstance(nn_output, Variable):
-                # if it's a variable, must be a single value (for each item in the batch).
-                # then *all* NNOutputs will get that same value
-                self.check_nn_output(nn_output, bs)
-                for key, (row, col) in self.nn_output_idx:
-                    expanded[:, row, col] = nn_output
-            else:
-                # otherwise, should be (an object that's coercible to) a dictionary.
-                # they keys determine where each output goes
-                nn_output = dict(nn_output)
-                for key, (row, col) in self.nn_output_idx:
-                    expanded[:, row, col] = nn_output[key]
+            self.apply_nn_to_expanded(batch, expanded)
         return expanded
+
+    def apply_nn_to_expanded(self, batch, expanded):
+        nn_output = self.nn_module(batch)
+        if isinstance(nn_output, Variable):
+            # if it's a variable, must be a single value (for each item in the batch).
+            # then *all* NNOutputs will get that same value
+            if nn_output.data.shape[0] != batch.data.shape[0]:
+                raise ValueError("The `nn_module` returns an output whose first dimension size != the batch-size.")
+            if len(nn_output.data.shape) > 2:
+                raise ValueError("The `nn_module` returns an output with more than two dimensions.")
+            elif len(nn_output.data.shape) > 1:
+                if nn_output.data.shape[1] > 1:
+                    raise ValueError("The `nn_module` returns a 2D output where the size of the 2nd dimension is > 1. If"
+                                     " there are multiple NNOutputs that need to be filled, your `nn_module` should "
+                                     "return a dictionary or list of tuples.")
+
+            for key, (row, col) in self.nn_output_idx:
+                expanded[:, row, col] = nn_output
+        else:
+            # otherwise, should be (an object that's coercible to) a dictionary.
+            # they keys determine where each output goes
+            nn_output = dict(nn_output)
+            for key, (row, col) in self.nn_output_idx:
+                expanded[:, row, col] = nn_output[key]
 
 
 class InitialState(NNOutputTracker):
@@ -120,13 +120,6 @@ class NNStateApply(NNOutputTracker):
 
     def rebuild_template(self):
         pass
-
-    # noinspection PyMethodOverriding
-    def create_for_batch(self, batch, state_mean_prev):
-        if self.nn_output_idx:
-            raise NotImplementedError("TODO")
-        else:
-            return state_mean_prev
 
     def register_variables(self):
         nn_output_idx = {}

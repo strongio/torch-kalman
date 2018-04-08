@@ -1,5 +1,8 @@
 from collections import OrderedDict
 
+import torch
+from torch.autograd import Variable
+
 from torch_kalman.design.nn_output import NNOutput, InitialState, NNStateApply
 from torch_kalman.design.design_matrix import F, H, R, Q, B
 
@@ -106,10 +109,14 @@ class Design(object):
 
         initial_mean_expanded = self.Init.create_for_batch(batch)
 
-        initial_cov = self.Q.template.clone()
+        if self.Q.nn_module is None:
+            initial_cov = self.Q.template
+        else:  # at the time of writing, Q can't have an nn-module. if that changes, the above won't work.
+            raise NotImplementedError("Please report this error to the package maintainer")
         initial_cov_expanded = expand(initial_cov, bs)
 
         return initial_mean_expanded, initial_cov_expanded
 
-    def state_nn_update(self, batch, state_mean):
-        return self.NNStateApply.create_for_batch(batch, state_mean)
+    def state_nn_update(self, state_mean, batch):
+        if self.NNStateApply.nn_output_idx:
+            self.NNStateApply.apply_nn_to_expanded(batch, expanded=state_mean)
