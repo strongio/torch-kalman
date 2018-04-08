@@ -21,18 +21,18 @@ class UnivariateWithVelocity(KalmanFilter):
         super(UnivariateWithVelocity, self).__init__()
 
         # parameters ---
+        self.initial_position = Parameter(torch.zeros(1))
         self.log_process_std_dev = Parameter(torch.zeros(1))
         process_std_dev = LogLinked(self.log_process_std_dev)
 
-        self.log_measurement_std_dev = Parameter(torch.zeros(1))
+        self.log_measurement_std_dev = Parameter(torch.ones(1))
         measurement_std_dev = LogLinked(self.log_measurement_std_dev)
 
         # states ---
-        process = ConstantVelocity(id_prefix=None, std_dev=process_std_dev)
+        process = ConstantVelocity(id_prefix=None, std_dev=process_std_dev, initial_position=self.initial_position)
 
         # measurements ---
         pos_measurement = Measurement(id=1, std_dev=measurement_std_dev)
         pos_measurement.add_state(process.observable)
 
         self.design = Design(states=process.states, measurements=[pos_measurement])
-        self.initializer_params = self.default_initializer_params()
