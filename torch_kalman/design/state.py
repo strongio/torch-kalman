@@ -43,16 +43,21 @@ class State(CovarianceElement):
 
 
 class NNState(State):
-    def __init__(self, id, std_dev, initial_value=0.0):
+    def __init__(self, id, nn_module, nn_output_idx, std_dev, initial_value=0.0):
         """
         A NN-state is a state whose value is determined, not by the kalman-filter algorithm, but by an external callable
         that's called on each timestep. This callable (usually a nn.module) takes the batch as input and returns a Variable,
         the elements of which fill the NNStates
-
-        :param id: A unique name for this state.
-        :param std_dev: The standard-deviation (process-noise).
-        :param initial_value: The initial value for this state, before any measurements update it.
+        TODO: fill in
+        :param id:
+        :param nn_module:
+        :param nn_output_idx:
+        :param std_dev:
+        :param initial_value:
         """
+        self.nn_module = nn_module
+        self.nn_output_idx = nn_output_idx
+        self._design_mat_idx = None
         super().__init__(id=id, std_dev=std_dev, initial_value=initial_value)
 
     def add_transition(self, to_state, multiplier=1.0):
@@ -60,3 +65,15 @@ class NNState(State):
 
     def add_correlation(self, obj, correlation):
         raise NotImplementedError("NNStates cannot have process-covariance.")
+
+    def add_design_mat_idx(self, idx):
+        self._design_mat_idx = idx
+
+    @property
+    def design_mat_idx(self):
+        if self._design_mat_idx is None:
+            raise Exception("Need to `add_design_mat_idx` first.")
+        return self._design_mat_idx
+
+    def pluck_from_raw_output(self, nn_output_raw):
+        return nn_output_raw[self.nn_output_idx]

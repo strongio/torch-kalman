@@ -1,131 +1,125 @@
+from collections import defaultdict
+from warnings import warn
+
 import torch
 from torch import Tensor
 from numpy import nan
 from torch.autograd import Variable
+from torch.nn import ModuleList
 
 from torch_kalman.design.state import NNState
-from torch_kalman.utils.torch_utils import expand
 
 
 class NNOutput(object):
-    def __init__(self):
+    def __init__(self, nn_module, nn_output_idx):
         """
-        This is simply a placeholder that tells NNOutputTracker that a nn-module output will go here.
+        This is a placeholder that indicates a nn-module output will go here.
         """
         self.nan = Tensor([nan])
+        self.nn_module = nn_module
+        self.nn_output_idx = nn_output_idx
+        self._design_mat_idx = None
 
     def __call__(self, *args, **kwargs):
         return Variable(self.nan)
 
+    def add_design_mat_idx(self, idx):
+        self._design_mat_idx = idx
+
+    @property
+    def design_mat_idx(self):
+        if self._design_mat_idx is None:
+            raise Exception("Need to `add_design_mat_idx` first.")
+        return self._design_mat_idx
+
+    def pluck_from_raw_output(self, nn_output_raw):
+        return nn_output_raw[self.nn_output_idx]
+
 
 class NNOutputTracker(object):
-    def __init__(self, nn_module):
-        self.nn_module = nn_module
-        self._template = None
-        self.rebuild_template()
-        self.nn_output_idx = self.register_variables()
-        if self.nn_output_idx and not self.nn_module:
-            raise ValueError("Some elements contain NNOutputs, so must pass nn_module that will fill them.")
+    def __init__(self):
+        self.nn_outputs = None
+        self.nn_output_by_module = {}
+        self.nn_inputs_by_module = {}
+        self._nn_module = None
+        self.register_variables()
 
     def register_variables(self):
         raise NotImplementedError()
 
-    @property
-    def template(self):
-        """
-        The matrix itself. Any elements that are placeholder NNOutputs will be set to nan.
-        :return: A design-matrix.
-        """
-        if self._template is None:
-            self.rebuild_template()
-            self.register_variables()
-        return self._template
+    def add_nn_input(self, nn_module, input_name):
+        if self._nn_module is not None:
+            raise Exception("Already finalized module.")
+        if len(self.nn_outputs) == 0:
+            raise Exception("There aren't any NNOutputs.")
+        if nn_module in self.nn_inputs_by_module.keys():
+            raise Exception("This nn_module has already had its input registered.")
+        self.nn_inputs_by_module[nn_module] = input_name
 
-    def rebuild_template(self):
-        raise NotImplementedError()
+    def add_nn_inputs(self, modules_and_names):
+        for nn_module, input_name in modules_and_names:
+            self.add_nn_input(nn_module, input_name)
 
-    def reset(self):
-        """
-        Reset the 'template' property so the getter will be forced to recreate the template from scratch. This is needed
-        because pytorch by default doesn't retain the graph after a call to "backward".
-        :return:
-        """
-        self._template = None
+    def finalize_nn_module(self):
+        self.nn_output_by_module = defaultdict(list)
 
-    def create_for_batch(self, batch):
-        """
-        If nn_module was not provided at init, this simply replicates the template to match the batch dimensions. If
-        nn_module was provided, the batch is passed to that. Its output will be used to fill in the NNOutputs.
+        for nn_output in self.nn_outputs:
+            if nn_output.nn_module not in self.nn_inputs_by_module.keys():
+                raise Exception("One of the nn_modules ('{}'), didn't have its input registered with `add_nn_module_input`.")
+            self.nn_output_by_module[nn_output.nn_module].append(nn_output)
 
-        :param batch: A batch of input data.
-        :return: The design matrix expanded so that the first dimension matches the batch-size. Any NNOutputs will be filled.
-        """
-        bs = batch.data.shape[0]
-        expanded = expand(self.template, bs)
-        if self.nn_module:
-            self.apply_nn_to_expanded(batch, expanded)
-        return expanded
-
-    def apply_nn_to_expanded(self, batch, expanded):
-        nn_output = self.nn_module(batch)
-        if isinstance(nn_output, Variable):
-            # if it's a variable, must be a single value (for each item in the batch).
-            # then *all* NNOutputs will get that same value
-            if nn_output.data.shape[0] != batch.data.shape[0]:
-                raise ValueError("The `nn_module` returns an output whose first dimension size != the batch-size.")
-            if len(nn_output.data.shape) > 2:
-                raise ValueError("The `nn_module` returns an output with more than two dimensions.")
-            elif len(nn_output.data.shape) > 1:
-                if nn_output.data.shape[1] > 1:
-                    raise ValueError("The `nn_module` returns a 2D output where the size of the 2nd dimension is > 1. If"
-                                     " there are multiple NNOutputs that need to be filled, your `nn_module` should "
-                                     "return a dictionary or list of tuples.")
-
-            for key, (row, col) in self.nn_output_idx:
-                expanded[:, row, col] = nn_output
-        else:
-            # otherwise, should be (an object that's coercible to) a dictionary.
-            # they keys determine where each output goes
-            nn_output = dict(nn_output)
-            for key, (row, col) in self.nn_output_idx:
-                expanded[:, row, col] = nn_output[key]
-
-
-class InitialState(NNOutputTracker):
-    def __init__(self, states, nn_module=None):
-        self.states = states
-        super().__init__(nn_module=nn_module)
-
-    def rebuild_template(self):
-        num_states = len(self.states)
-        self._template = Variable(torch.zeros(num_states, 1))
-
-    def register_variables(self):
-        nn_output_idx = {}
-        for i, (state_id, state) in enumerate(self.states.items()):
-            self._template[i] = state.initial_value()
-            if isinstance(state.initial_value, NNOutput):
-                nn_output_idx[state_id] = i
-        return nn_output_idx
-
-
-class NNStateApply(NNOutputTracker):
-    def __init__(self, states, nn_module=None):
-        self.states = states
-        super().__init__(nn_module=nn_module)
+        modules = list(self.nn_inputs_by_module.keys())
+        self._nn_module = NNModuleConcatenator(modules=modules,
+                                               module_inputs=[self.nn_inputs_by_module[module] for module in modules],
+                                               module_outputs=[self.nn_output_by_module[module] for module in modules])
 
     @property
-    def template(self):
-        raise NotImplementedError("NNStateApply doesn't have a template.")
+    def nn_module(self):
+        if self._nn_module is None:
+            raise Exception("The nn_module hasn't been finalized yet with a call to `finalize_nn_module`.")
+        return self._nn_module
 
-    def rebuild_template(self):
-        pass
+    @property
+    def input_names(self):
+        if self._nn_module is None:
+            raise Exception("The nn_module hasn't been finalized yet with a call to `finalize_nn_module`.")
+        return set(self.nn_module.module_inputs)
+
+
+class NNModuleConcatenator(torch.nn.Module):
+    def __init__(self, modules, module_inputs, module_outputs):
+        super().__init__()
+        assert len(modules) == len(module_outputs)
+        assert len(modules) == len(module_outputs)
+        self.modules = ModuleList(modules)
+        self.module_inputs = module_inputs
+        self.module_outputs = module_outputs
+
+    def isnull(self):
+        return len(self.modules) == 0
+
+    def forward(self, **kwargs):
+        output_list = []
+        for i in range(len(self.modules)):
+            this_module = self.modules[i]
+            this_input_name = self.module_inputs[i]
+            this_input = kwargs[this_input_name]
+            this_nn_outputs = self.module_outputs[i]
+            module_output_raw = this_module(this_input)
+            for nn_output in this_nn_outputs:
+                output_list.append((nn_output.design_mat_idx, nn_output.pluck_from_raw_output(module_output_raw)))
+        return output_list
+
+
+class DynamicState(NNOutputTracker):
+    def __init__(self, states):
+        self.states = states
+        super().__init__()
 
     def register_variables(self):
-        nn_output_idx = {}
+        self.nn_outputs = []
 
         for idx, (state_id, state) in enumerate(self.states.items()):
             if isinstance(state, NNState):
-                nn_output_idx[state_id] = idx
-
-        return nn_output_idx
+                state.add_design_mat_idx((idx, 0))
+                self.nn_outputs.append(state)

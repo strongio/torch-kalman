@@ -7,14 +7,16 @@ from numpy import where
 
 # noinspection PyPep8Naming
 class KalmanFilter(torch.nn.Module):
-    def __init__(self, horizon=1):
+    def __init__(self, design, horizon=1):
         """
-
         :param horizon: An integer indicating how many timesteps ahead predictions from `forward` should be for.
         """
         super(KalmanFilter, self).__init__()
         self.horizon = horizon
-        self.design = None
+        self.design = design
+        if self.design.finalized:
+            raise Exception("Please pass the design to KalmanFilter *before* finalizing it, then finalize it in your "
+                            "child-module's __init__ method.")
 
     @property
     def num_states(self):
@@ -33,11 +35,11 @@ class KalmanFilter(torch.nn.Module):
         return (measurement.id for measurement in self.design.measurements)
 
     # Main Forward-Pass Methods --------------------
-    def _filter(self, input, initial_state=None, init_nn_input=None, n_ahead=None):
+    def _filter(self, initial_state=None, n_ahead=None, **kwargs):
         if n_ahead is None:
             n_ahead = self.horizon
 
-        num_series, num_timesteps, num_measurements = input.data.shape
+        num_series, num_timesteps, num_measurements = kwargs['kf_input'].data.shape
 
         # add an extra n_ahead dimension b/c it's needed for k_*_next, but remember this so we can remove it later
         if n_ahead == 0:
@@ -51,26 +53,27 @@ class KalmanFilter(torch.nn.Module):
         cov_out = [[] for _ in range(n_ahead + 1)]
 
         # initial values:
-        state_mean, state_cov = self.initialize_state(initial_state, init_nn_input, num_series, num_measurements)
+        if initial_state is None:
+            state_mean, state_cov = self.design.initialize_state(**kwargs)
+        else:
+            state_mean, state_cov = initial_state
 
         # run filter:
         for t in range(-self.horizon, num_timesteps):
             # update: incorporate observed data (and state-nn predictions)
             if t >= 0:
-                # TODO: remove any groups with all nan for this update (per-measure nans will be handled inside update)
                 # if there's a nn module predicting certain components of the state, that is applied here:
-                self.design.state_nn_update(state_mean, batch=input[:, t, :])
+                self.design.state_nn_update(state_mean, time=t, **kwargs)
                 # now do update step:
-                state_mean, state_cov = self.kf_update(input[:, t, :], state_mean, state_cov)
+                state_mean, state_cov = self.kf_update(state_mean, state_cov, time=t, **kwargs)
 
             # predict
             for nh in range(n_ahead + 1):
                 assign_idx = t + nh
                 if assign_idx < num_timesteps:  # output only includes timepoints in original input
-
                     if nh > 0:
                         # if ahead is in the future, need to predict...
-                        state_mean, state_cov = self.kf_predict(input[:, assign_idx, :], state_mean, state_cov)
+                        state_mean, state_cov = self.kf_predict(state_mean, state_cov, time=assign_idx, **kwargs)
                     # ...otherwise will just use posterior for the current time
 
                     if nh == 1:
@@ -96,43 +99,22 @@ class KalmanFilter(torch.nn.Module):
 
         return mean_out, cov_out
 
-    def initialize_state(self, initial_state, init_nn_input, num_series, num_measurements):
-        if initial_state is None:
-            if init_nn_input is None:
-                if self.design.Init.nn_module:
-                    raise ValueError("(Some of) the initial values in your kalman-filter are determined by the output of a "
-                                     "nn module, so you need to pass `init_nn_input` to forward.")
-                init_nn_input = Variable(torch.zeros((num_series, num_measurements)))
-            state_mean, state_cov = self.design.initialize_state(init_nn_input)
-        else:
-            state_mean, state_cov = initial_state
-        return state_mean, state_cov
-
-    def forward(self, input, initial_state=None, init_nn_input=None):
-        input = self.validate_input(input)
+    def forward(self, initial_state=None, **kwargs):
+        if len(kwargs['kf_input'].data.shape) != 3:
+            raise Exception("Unexpected shape for `kf_input`. If your data are univariate, add the singular third dimension "
+                            "with kf_input[:,:,None].")
 
         # run kalman-filter to get predicted state
-        means_per_ahead, _ = self._filter(input=input,
-                                          initial_state=initial_state,
-                                          init_nn_input=init_nn_input,
-                                          n_ahead=self.horizon)
+        means_per_ahead, _ = self._filter(initial_state=initial_state, n_ahead=self.horizon, **kwargs)
         means = means_per_ahead[self.horizon]
 
         # get predicted measurements from state
         predicted_measurements = []
         for t, mean in enumerate(means):
-            H_expanded = self.H.create_for_batch(input[:, t, :])
+            H_expanded = self.H.create_for_batch(time=t, **kwargs)
             predicted_measurements.append(torch.bmm(H_expanded, mean))
 
         return torch.cat(predicted_measurements, 2).permute(0, 2, 1)
-
-    def validate_input(self, input):
-        if len(input.data.shape) == 2 and self.num_measurements == 1:
-            # if it's a univariate series, then 2D input is permitted.
-            input = input[:, :, None]
-        elif len(input.data.shape) != 3:
-            raise ValueError("`input` should have three-dimensions: group*time*variable. ")
-        return input
 
     # Kalman-Smoother ------------------------------
     def smooth(self, input):
@@ -141,7 +123,7 @@ class KalmanFilter(torch.nn.Module):
         return None
 
     # Main KF Steps -------------------------
-    def kf_predict(self, obs, state_mean, state_cov):
+    def kf_predict(self, state_mean, state_cov, time, **kwargs):
         """
         The 'predict' step of the kalman filter.
 
@@ -152,30 +134,22 @@ class KalmanFilter(torch.nn.Module):
         :return: The update state_mean, state_cov.
         """
         # expand design-matrices for the batch
-        F_expanded = self.F.create_for_batch(obs)
+        F_expanded = self.F.create_for_batch(time=time, **kwargs)
         Ft_expanded = F_expanded.permute(0, 2, 1)
-        Q_expanded = self.Q.create_for_batch(obs)
+        Q_expanded = self.Q.create_for_batch(time=time, **kwargs)
 
         state_mean = torch.bmm(F_expanded, state_mean)
         state_cov = torch.bmm(torch.bmm(F_expanded, state_cov), Ft_expanded) + Q_expanded
         return state_mean, state_cov
 
-    def kf_update(self, obs, state_mean, state_cov):
-        """
-        The 'update' step of the kalman filter.
-
-        :param obs: The observations.
-        :param state_mean: Mean
-        :param state_cov: Covariance
-        :return: The new (mean, covariance)
-        """
+    def kf_update(self, state_mean, state_cov, time, **kwargs):
 
         # expand design-matrices for the batch:
-        H_expanded = self.H.create_for_batch(obs)
-        R_expanded = self.R.create_for_batch(obs)
+        H_expanded = self.H.create_for_batch(time=time, **kwargs)
+        R_expanded = self.R.create_for_batch(time=time, **kwargs)
 
         # for the actual update, we only use the autoregressive part of the input:
-        kf_obs = obs[:, 0:self.design.num_measurements]
+        kf_obs = kwargs['kf_input'][:, time, :]
 
         # residual:
         residual = kf_obs - torch.bmm(H_expanded, state_mean).squeeze(2)
@@ -186,7 +160,7 @@ class KalmanFilter(torch.nn.Module):
         # handle missing values:
         state_mean_new, state_cov_new = state_mean.clone(), state_cov.clone()  # avoid 'var needed for grad modified inplace'
         isnan = (residual != residual)
-        bs = obs.data.shape[0]
+        bs = kf_obs.data.shape[0]
         groups_with_nan = [i for i in range(bs) if isnan[i].data.any()]
         for i in groups_with_nan:
             this_isnan = isnan[i].data
