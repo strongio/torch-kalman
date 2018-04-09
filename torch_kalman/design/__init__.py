@@ -2,6 +2,7 @@ from collections import OrderedDict, defaultdict
 
 import torch
 from torch.autograd import Variable
+from torch.nn import ModuleList
 
 from torch_kalman.design.nn_output import NNOutput, DynamicState
 from torch_kalman.design.design_matrix import F, H, R, Q, B, InitialState
@@ -22,15 +23,19 @@ class Design(object):
                                state={},
                                initial_state={})
 
+        self.additional_modules = ModuleList()
+
         self.Q, self.F, self.R, self.H = None, None, None, None
         self.InitialState, self.NNState = None, None
 
-    def add_nn_module(self, nn_module, type, input_name):
+    def add_nn_module(self, nn_module, type, input_name, known_to_super):
         if self.finalized:
             raise Exception("Can't add nn_module to design, it's been finalized already.")
         if nn_module in self.nn_modules[type].keys():
             raise Exception("This nn-module was already registered for '{}'.".format(type))
         self.nn_modules[type][nn_module] = input_name
+        if not known_to_super:
+            self.additional_modules.append(nn_module)
 
     def add_state(self, state):
         if self.finalized:
@@ -115,7 +120,7 @@ class Design(object):
         Reset the design matrices. For efficiency, the code to generate these matrices isn't executed every time
         they are called; instead, it's executed once then the results are saved. But calling pytorch's backward method
         will clear the graph and so these matrices will need to be re-generated. So this function is called at the end
-        of the forward pass computations, so that the matrices will be rebuild next time it's called.
+        of the forward pass computations, so that the matrices will be rebuilt next time it's called.
         """
         self.F.reset()
         self.H.reset()

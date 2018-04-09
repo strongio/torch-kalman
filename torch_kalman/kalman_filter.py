@@ -18,6 +18,12 @@ class KalmanFilter(torch.nn.Module):
             raise Exception("Please pass the design to KalmanFilter *before* finalizing it, then finalize it in your "
                             "child-module's __init__ method.")
 
+        # when people call design.add_nn_module, if they didn't assign that module to self, they indicate
+        # known_to_super=False. when they do that, it's added to this list, and so its guaranteed pytorch will know about it.
+        # (useful so that Processes can get added to design and do all the work of adding their nn_modules)
+        self.additional_modules = self.design.additional_modules
+
+
     @property
     def num_states(self):
         return len(self.design.states)
@@ -25,14 +31,6 @@ class KalmanFilter(torch.nn.Module):
     @property
     def num_measurements(self):
         return len(self.design.measurements)
-
-    @property
-    def state_ids(self):
-        return (state.id for state in self.design.states)
-
-    @property
-    def measurement_ids(self):
-        return (measurement.id for measurement in self.design.measurements)
 
     # Main Forward-Pass Methods --------------------
     def _filter(self, initial_state=None, n_ahead=None, **kwargs):
@@ -164,10 +162,7 @@ class KalmanFilter(torch.nn.Module):
         groups_with_nan = [i for i in range(bs) if isnan[i].data.any()]
         for i in groups_with_nan:
             this_isnan = isnan[i].data
-            if this_isnan.all():
-                # if all nan, just don't perform update
-                continue
-            else:
+            if not this_isnan.all(): # if all nan, just don't perform update
                 # for partial nan, perform partial update
                 valid_idx = where(this_isnan.numpy() == 0)[0].tolist()  # will clean up when pytorch 0.4 is released
                 # get the subset of measurements that are non-nan:
