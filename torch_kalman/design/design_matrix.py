@@ -206,7 +206,7 @@ class Q(CovarianceMatrix):
         return len(self.states)
 
     def register_variables(self):
-        return self.register_covariance(self.states)
+        return self.register_covariance(self.states.values())
 
 
 class R(CovarianceMatrix):
@@ -219,7 +219,7 @@ class R(CovarianceMatrix):
         return len(self.measurements)
 
     def register_variables(self):
-        return self.register_covariance(self.measurements)
+        return self.register_covariance(self.measurements.values())
 
 
 class B(DesignMatrix):
