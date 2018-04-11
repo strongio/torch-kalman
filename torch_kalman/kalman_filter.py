@@ -2,7 +2,7 @@ import torch
 from torch.autograd import Variable
 
 from torch_kalman.utils.torch_utils import expand
-from numpy import where
+from numpy import where, nan
 
 
 # noinspection PyPep8Naming
@@ -46,9 +46,11 @@ class KalmanFilter(torch.nn.Module):
         else:
             n_ahead_was_zero = False
 
-        # preallocate
-        mean_out = [[] for _ in range(n_ahead + 1)]
-        cov_out = [[] for _ in range(n_ahead + 1)]
+        # preallocate for clarity
+        mean_out, cov_out = {}, {}
+        for nh in range(n_ahead + 1):
+            mean_out[nh] = dict.fromkeys(range(num_timesteps))
+            cov_out[nh] = dict.fromkeys(range(num_timesteps))
 
         # initial values:
         if initial_state is None:
@@ -57,7 +59,7 @@ class KalmanFilter(torch.nn.Module):
             state_mean, state_cov = initial_state
 
         # run filter:
-        for t in range(-self.horizon, num_timesteps):
+        for t in range(num_timesteps):
             # update: incorporate observed data (and state-nn predictions)
             if t >= 0:
                 # if there's a nn module predicting certain components of the state, that is applied here:
@@ -67,20 +69,21 @@ class KalmanFilter(torch.nn.Module):
 
             # predict
             for nh in range(n_ahead + 1):
-                assign_idx = t + nh
-                if assign_idx < num_timesteps:  # output only includes timepoints in original input
+                t_pred = t + nh
+                if t_pred < num_timesteps:  # output only includes timepoints in original input
                     if nh > 0:
                         # if ahead is in the future, need to predict...
-                        state_mean, state_cov = self.kf_predict(state_mean, state_cov, time=assign_idx, **kwargs)
+                        state_mean, state_cov = self.kf_predict(state_mean, state_cov, time=t_pred, **kwargs)
                     # ...otherwise will just use posterior for the current time
 
                     if nh == 1:
                         # if ahead is 1-step ahead, save it for the next iter
-                        state_mean_next, state_cov_next = state_mean, state_cov
+                        state_mean_next, state_cov_next = state_mean.clone(), state_cov.clone()
 
-                    if assign_idx >= 0:  # output only includes timepoints in original input
-                        mean_out[nh].append(state_mean)
-                        cov_out[nh].append(state_cov)
+                    # output only includes timepoints in original input
+                    if t_pred >= 0:
+                        mean_out[nh][t_pred] = state_mean
+                        cov_out[nh][t_pred] = state_cov
 
             # next timestep:
             # noinspection PyUnboundLocalVariable
@@ -92,25 +95,31 @@ class KalmanFilter(torch.nn.Module):
         # we added an extra n_ahead dimension b/c it was needed for k_*_next. but they didn't ask for that, so remove
         # from final output:
         if n_ahead_was_zero:
-            mean_out.pop()
-            cov_out.pop()
+            mean_out.pop(1)
+            cov_out.pop(1)
 
         return mean_out, cov_out
 
-    def forward(self, initial_state=None, **kwargs):
-        if len(kwargs['kf_input'].data.shape) != 3:
+    def forward(self, kf_input, initial_state=None, **kwargs):
+        if len(kf_input.data.shape) != 3:
             raise Exception("Unexpected shape for `kf_input`. If your data are univariate, add the singular third dimension "
                             "with kf_input[:,:,None].")
+        kwargs['kf_input'] = kf_input
 
         # run kalman-filter to get predicted state
         means_per_ahead, _ = self._filter(initial_state=initial_state, n_ahead=self.horizon, **kwargs)
         means = means_per_ahead[self.horizon]
 
         # get predicted measurements from state
+        nan_pad = Variable(torch.zeros(kf_input.data.shape[0], self.num_measurements, 1))
+        nan_pad[:, :, :] = nan
         predicted_measurements = []
-        for t, mean in enumerate(means):
-            H_expanded = self.H.create_for_batch(time=t, **kwargs)
-            predicted_measurements.append(torch.bmm(H_expanded, mean))
+        for t, mean in means.items():
+            if mean is None:
+                predicted_measurements.append(nan_pad)
+            else:
+                H_expanded = self.H.create_for_batch(time=t, **kwargs)
+                predicted_measurements.append(torch.bmm(H_expanded, mean))
 
         return torch.cat(predicted_measurements, 2).permute(0, 2, 1)
 
