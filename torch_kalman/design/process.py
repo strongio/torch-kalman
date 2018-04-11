@@ -127,7 +127,7 @@ class Seasonal(Process):
         pad_n = len(str(period))
         states = []
         for i in range(period):
-            season = str(i).rjust(pad_n)
+            season = str(i).rjust(pad_n, "0")
             initial_value = 0. if i == 0 and df_correction else initial_values[i - df_correction]
             this_state = State(id=join([id_prefix, 'season', season], sep),
                                std_dev=std_dev if i == 0 else 0.0,
