@@ -44,12 +44,20 @@ class Design(object):
             raise Exception("State with the same ID already in design.")
         self.states[state.id] = state
 
+    def add_states(self, states):
+        for state in states:
+            self.add_state(state)
+
     def add_measurement(self, measurement):
         if self.finalized:
             raise Exception("Can't add measurement to design, it's been finalized already.")
         if measurement.id in self.measurements.keys():
             raise Exception("Measurement with the same ID already in design.")
         self.measurements[measurement.id] = measurement
+
+    def add_measurements(self, measurements):
+        for measurement in measurements:
+            self.add_measurement(measurement)
 
     def add_process(self, process):
         raise NotImplementedError()
