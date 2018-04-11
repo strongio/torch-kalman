@@ -38,7 +38,7 @@ class NNOutput(object):
 
 class NNOutputTracker(object):
     def __init__(self):
-        self.nn_outputs = None
+        self.nn_outputs = []
         self.nn_output_by_module = {}
         self.nn_inputs_by_module = {}
         self._nn_module = None
