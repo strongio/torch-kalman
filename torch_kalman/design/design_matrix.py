@@ -12,6 +12,20 @@ class DesignMatrix(NNOutputTracker):
         super().__init__()
 
     @property
+    def state_idx(self):
+        if self._state_idx is None:
+            # noinspection PyAttributeOutsideInit
+            self._state_idx = {state_id: idx for idx, state_id in enumerate(self.states.keys())}
+        return self._state_idx
+
+    @property
+    def measure_idx(self):
+        if self._measure_idx is None:
+            # noinspection PyAttributeOutsideInit
+            self._measure_idx = {measure_id: idx for idx, measure_id in enumerate(self.measures.keys())}
+        return self._measure_idx
+
+    @property
     def template(self):
         raise NotImplementedError()
 
@@ -81,6 +95,7 @@ class InitialState(DesignMatrix):
 class F(DesignMatrix):
     def __init__(self, states):
         self.states = states
+        self._state_idx = None
         self.transitions = {}
         super().__init__()
 
@@ -96,11 +111,10 @@ class F(DesignMatrix):
     def register_variables(self):
         self.nn_outputs = []
 
-        idx_per_state = {state_id: idx for idx, state_id in enumerate(self.states.keys())}
         for state_id, state in self.states.items():
-            from_idx = idx_per_state[state.id]
+            from_idx = self.state_idx[state.id]
             for transition_to_id, multiplier in state.transitions.items():
-                to_idx = idx_per_state[transition_to_id]
+                to_idx = self.state_idx[transition_to_id]
                 self.transitions[(to_idx, from_idx)] = multiplier
                 if isinstance(multiplier, NNOutput):
                     multiplier.add_design_mat_idx((to_idx, from_idx))
@@ -108,17 +122,19 @@ class F(DesignMatrix):
 
 
 class H(DesignMatrix):
-    def __init__(self, states, measurements):
+    def __init__(self, states, measures):
         self.states = states
-        self.measurements = measurements
+        self.measures = measures
         self.state_to_measures = {}
+        self._state_idx = None
+        self._measure_idx = None
         super().__init__()
 
     @property
     def template(self):
         if self._template is None:
-            num_measurements, num_states = len(self.measurements), len(self.states)
-            self._template = Variable(torch.zeros((num_measurements, num_states)))
+            num_measures, num_states = len(self.measures), len(self.states)
+            self._template = Variable(torch.zeros((num_measures, num_states)))
             for (row, col), multiplier in self.state_to_measures.items():
                 self._template[row, col] = multiplier()
         return self._template
@@ -127,13 +143,10 @@ class H(DesignMatrix):
         self.nn_outputs = []
         self.nn_modules = []
 
-        idx_per_measure = {measure_id: idx for idx, measure_id in enumerate(self.measurements.keys())}
-        idx_per_state = {state_id: idx for idx, state_id in enumerate(self.states.keys())}
-
-        for measurement in self.measurements.values():
-            for state_id, multiplier in measurement.states.items():
-                measure_idx = idx_per_measure[measurement.id]
-                state_idx = idx_per_state[state_id]
+        for measure in self.measures.values():
+            for state_id, multiplier in measure.states.items():
+                measure_idx = self.measure_idx[measure.id]
+                state_idx = self.state_idx[state_id]
                 self.state_to_measures.update({(measure_idx, state_idx): multiplier})
                 if isinstance(multiplier, NNOutput):
                     multiplier.add_design_mat_idx((measure_idx, state_idx))
@@ -173,9 +186,9 @@ class CovarianceMatrix(DesignMatrix):
 
     def register_covariance(self, variables):
         """
-        Take a list of states or measurements, and generate a covariance matrix.
+        Take a list of states or measures, and generate a covariance matrix.
 
-        :param variables: A list of states or measurements.
+        :param variables: A list of states or measures.
         :return: A covariance Matrix, as a pytorch Variable.
         """
 
@@ -199,6 +212,7 @@ class CovarianceMatrix(DesignMatrix):
 class Q(CovarianceMatrix):
     def __init__(self, states):
         self.states = states
+        self._state_idx = None
         super().__init__()
 
     @property
@@ -210,16 +224,17 @@ class Q(CovarianceMatrix):
 
 
 class R(CovarianceMatrix):
-    def __init__(self, measurements):
-        self.measurements = measurements
+    def __init__(self, measures):
+        self.measures = measures
+        self._measure_idx = None
         super().__init__()
 
     @property
     def num_vars(self):
-        return len(self.measurements)
+        return len(self.measures)
 
     def register_variables(self):
-        return self.register_covariance(self.measurements.values())
+        return self.register_covariance(self.measures.values())
 
 
 class B(DesignMatrix):

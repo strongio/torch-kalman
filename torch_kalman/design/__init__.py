@@ -17,9 +17,9 @@ pdb = Pdb()
 class Design(object):
     def __init__(self):
         self.states = {}
-        self.measurements = {}
+        self.measures = {}
         self.nn_modules = dict(transition={},
-                               measurement={},
+                               measure={},
                                state={},
                                initial_state={})
 
@@ -48,16 +48,16 @@ class Design(object):
         for state in states:
             self.add_state(state)
 
-    def add_measurement(self, measurement):
+    def add_measure(self, measure):
         if self.finalized:
-            raise Exception("Can't add measurement to design, it's been finalized already.")
-        if measurement.id in self.measurements.keys():
+            raise Exception("Can't add measure to design, it's been finalized already.")
+        if measure.id in self.measures.keys():
             raise Exception("Measurement with the same ID already in design.")
-        self.measurements[measurement.id] = measurement
+        self.measures[measure.id] = measure
 
-    def add_measurements(self, measurements):
-        for measurement in measurements:
-            self.add_measurement(measurement)
+    def add_measures(self, measures):
+        for measure in measures:
+            self.add_measure(measure)
 
     def add_process(self, process):
         raise NotImplementedError()
@@ -75,11 +75,11 @@ class Design(object):
         if self.finalized:
             raise Exception("Design was already finalized.")
 
-        # organize the states/measurements:
+        # organize the states/measures:
         self.states = OrderedDict((k, self.states[k]) for k in sorted(self.states.keys()))
         [state.torchify() for state in self.states.values()]
-        self.measurements = OrderedDict((k, self.measurements[k]) for k in sorted(self.measurements.keys()))
-        [measurement.torchify() for measurement in self.measurements.values()]
+        self.measures = OrderedDict((k, self.measures[k]) for k in sorted(self.measures.keys()))
+        [measure.torchify() for measure in self.measures.values()]
 
         # initial-values:
         self.InitialState = InitialState(self.states)
@@ -92,15 +92,15 @@ class Design(object):
         self.F.finalize_nn_module()
         self.check_for_input_name_collision(self.F.input_names)
 
-        self.H = H(states=self.states, measurements=self.measurements)
-        self.H.add_nn_inputs(self.nn_modules['measurement'].items())
+        self.H = H(states=self.states, measures=self.measures)
+        self.H.add_nn_inputs(self.nn_modules['measure'].items())
         self.H.finalize_nn_module()
         self.check_for_input_name_collision(self.H.input_names)
 
         self.Q = Q(states=self.states)
         self.Q.finalize_nn_module()  # currently null
 
-        self.R = R(measurements=self.measurements)
+        self.R = R(measures=self.measures)
         self.R.finalize_nn_module()  # currently null
 
         # NNStates:
@@ -116,8 +116,8 @@ class Design(object):
                                 "used for other nn_modules.".format(input_name))
 
     @property
-    def num_measurements(self):
-        return len(self.measurements)
+    def num_measures(self):
+        return len(self.measures)
 
     @property
     def num_states(self):

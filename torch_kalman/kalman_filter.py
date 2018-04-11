@@ -29,8 +29,8 @@ class KalmanFilter(torch.nn.Module):
         return len(self.design.states)
 
     @property
-    def num_measurements(self):
-        return len(self.design.measurements)
+    def num_measures(self):
+        return len(self.design.measures)
 
     # Main Forward-Pass Methods --------------------
     def _filter(self, initial_state=None, n_ahead=None, **kwargs):
@@ -110,18 +110,18 @@ class KalmanFilter(torch.nn.Module):
         means_per_ahead, _ = self._filter(initial_state=initial_state, n_ahead=self.horizon, **kwargs)
         means = means_per_ahead[self.horizon]
 
-        # get predicted measurements from state
-        nan_pad = Variable(torch.zeros(kf_input.data.shape[0], self.num_measurements, 1))
+        # get predicted measures from state
+        nan_pad = Variable(torch.zeros(kf_input.data.shape[0], self.num_measures, 1))
         nan_pad[:, :, :] = nan
-        predicted_measurements = []
+        predicted_measures = []
         for t, mean in means.items():
             if mean is None:
-                predicted_measurements.append(nan_pad)
+                predicted_measures.append(nan_pad)
             else:
                 H_expanded = self.H.create_for_batch(time=t, **kwargs)
-                predicted_measurements.append(torch.bmm(H_expanded, mean))
+                predicted_measures.append(torch.bmm(H_expanded, mean))
 
-        return torch.cat(predicted_measurements, 2).permute(0, 2, 1)
+        return torch.cat(predicted_measures, 2).permute(0, 2, 1)
 
     # Kalman-Smoother ------------------------------
     def smooth(self, input):
@@ -174,7 +174,7 @@ class KalmanFilter(torch.nn.Module):
             if not this_isnan.all(): # if all nan, just don't perform update
                 # for partial nan, perform partial update
                 valid_idx = where(this_isnan.numpy() == 0)[0].tolist()  # will clean up when pytorch 0.4 is released
-                # get the subset of measurements that are non-nan:
+                # get the subset of measures that are non-nan:
                 K_sub = K[i][:, valid_idx]
                 residual_sub = residual[i][valid_idx]
                 H_sub = H_expanded[i][valid_idx, :]

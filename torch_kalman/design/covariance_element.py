@@ -9,10 +9,10 @@ from torch_kalman.utils.utils import make_callable
 class CovarianceElement(object):
     def __init__(self, id, std_dev):
         """
-        The element of a covariance matrix. This is probably either an measurement or a state.
+        The element of a covariance matrix. This is probably either an measure or a state.
 
-        :param id: A unique ID/name for this state/measurement.
-        :param std_dev: The standard-deviation (process-noise/measurement-noise). This is typically a pytorch
+        :param id: A unique ID/name for this state/measure.
+        :param std_dev: The standard-deviation (process-noise/measure-noise). This is typically a pytorch
         Parameter.
         """
         self.id = id
@@ -53,9 +53,9 @@ class CovarianceElement(object):
 
     def add_correlation(self, obj, correlation):
         """
-        Add a correlation between this state/measurement and another. This will modify both self and the passed obj.
+        Add a correlation between this state/measure and another. This will modify both self and the passed obj.
 
-        :param obj: A state or measurement.
+        :param obj: A state or measure.
         :param correlation: The correlation coefficient. Can be a float, Tensor, Variable, or Parameter.
         """
         # check that classes match:

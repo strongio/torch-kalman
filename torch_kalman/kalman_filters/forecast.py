@@ -1,6 +1,6 @@
 from torch_kalman.design import Design
 from torch_kalman.design.process import NoVelocity, Seasonal, DampenedVelocity
-from torch_kalman.design.measurement import Measurement
+from torch_kalman.design.measure import Measure
 from torch_kalman.kalman_filter import KalmanFilter
 
 from torch_kalman.design.lazy_parameter import LogLinked, LogitLinked
@@ -86,24 +86,24 @@ class Forecast(KalmanFilter):
 
         for i, measure_name in enumerate(self.measures):
 
-            # create measurement:
+            # create measure:
             self.measure_std_params.append(Param0())
-            this_measure = Measurement(id=measure_name,
-                                       std_dev=LogLinked(self.measure_std_params[-1]))
+            this_measure = Measure(id=measure_name,
+                                   std_dev=LogLinked(self.measure_std_params[-1]))
 
-            # specify the states that go into this measurement:
+            # specify the states that go into this measure:
             for name in (measure_name, 'common'):
                 for process in self.processes_per_dim.get(name, []):
                     this_measure.add_state(process.observable)
 
             # add to design:
-            self.design.add_measurement(this_measure)
+            self.design.add_measure(this_measure)
 
-        # correlation between measurement-errors (currently constrained to be positive)
+        # correlation between measure-errors (currently constrained to be positive)
         for row in range(self.num_measures):
             for col in range(row + 1, self.num_measures):
-                m1 = self.design.measurements[self.measures[row]]
-                m2 = self.design.measurements[self.measures[col]]
+                m1 = self.design.measures[self.measures[row]]
+                m2 = self.design.measures[self.measures[col]]
                 self.measure_corr_params.append(Param0())
                 m1.add_correlation(m2, correlation=LogitLinked(self.measure_corr_params[-1]))
 
