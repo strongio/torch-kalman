@@ -1,5 +1,6 @@
 import torch
 from torch.autograd import Variable
+from torch.nn import Parameter
 
 
 def log_std_to_var(log_std):
@@ -37,3 +38,15 @@ def quad_form_diag(std_devs, corr_mat):
     for i in range(n):
         variance_diag[i, i] = torch.pow(std_devs[i], 2)
     return torch.mm(torch.mm(variance_diag, corr_mat), variance_diag)
+
+
+def Param0(*sizes):
+    if len(sizes) == 0:
+        sizes = (1,)
+    return Parameter(torch.zeros(*sizes))
+
+
+def ParamRand(*sizes):
+    if len(sizes) == 0:
+        sizes = (1,)
+    return Parameter(torch.randn(*sizes))
