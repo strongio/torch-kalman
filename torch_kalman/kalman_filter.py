@@ -37,7 +37,7 @@ class KalmanFilter(torch.nn.Module):
         if n_ahead is None:
             n_ahead = self.horizon
 
-        num_series, num_timesteps, num_measurements = kwargs['kf_input'].data.shape
+        num_series, num_timesteps, num_measures = kwargs['kf_input'].data.shape
 
         # add an extra n_ahead dimension b/c it's needed for k_*_next, but remember this so we can remove it later
         if n_ahead == 0:
