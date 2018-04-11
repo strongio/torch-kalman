@@ -142,4 +142,4 @@ class Design(object):
         return initial_mean_expanded, initial_cov_expanded
 
     def state_nn_update(self, state_mean, time, **kwargs):
-        raise NotImplementedError()
+        self.NNState.update_state_mean(state_mean=state_mean, time=time, **kwargs)
