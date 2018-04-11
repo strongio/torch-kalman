@@ -123,3 +123,11 @@ class DynamicState(NNOutputTracker):
             if isinstance(state, NNState):
                 state.add_design_mat_idx((idx, 0))
                 self.nn_outputs.append(state)
+
+    def update_state_mean(self, state_mean, time, **kwargs):
+        if not self.nn_module.isnull:
+            nn_module_kwargs = {argname: kwargs[argname][:, time, :] for argname in self.input_names}
+            nn_output = self.nn_module(**nn_module_kwargs)
+            for (row, col), output in nn_output:
+                state_mean[:, row, col] = output
+        return state_mean
