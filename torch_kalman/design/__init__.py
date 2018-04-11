@@ -132,7 +132,7 @@ class Design(object):
 
         initial_mean_expanded = self.InitialState.create_for_batch(time=0, **kwargs)
 
-        if self.Q.nn_module is None:
+        if self.Q.nn_module.isnull:
             initial_cov = self.Q.template
         else:  # at the time of writing, Q can't have an nn-module. if that changes, the above won't work.
             raise NotImplementedError("Please report this error to the package maintainer")
