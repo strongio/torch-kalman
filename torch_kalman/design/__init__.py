@@ -27,6 +27,8 @@ class Design(object):
 
         self.Q, self.F, self.R, self.H = None, None, None, None
         self.InitialState, self.NNState = None, None
+        self._state_idx, self._measure_idx = None, None
+        self._measurable_states = None
 
     def add_nn_module(self, nn_module, type, input_name, known_to_super):
         if self.finalized:
@@ -123,6 +125,16 @@ class Design(object):
     def num_states(self):
         return len(self.states)
 
+    @property
+    def measurable_states(self):
+        assert self.finalized
+        if self._measurable_states is None:
+            is_observable = (torch.sum(self.H.template, 0) > 0).data.tolist()
+            state_keys = list(self.states.keys())
+            self._measurable_states = [self.states[state_keys[i]] for i, observable in enumerate(is_observable)
+                                       if observable == 1]
+        return self._measurable_states
+
     def reset(self):
         """
         Reset the design matrices. For efficiency, the code to generate these matrices isn't executed every time
@@ -151,3 +163,17 @@ class Design(object):
 
     def state_nn_update(self, state_mean, time, **kwargs):
         self.NNState.update_state_mean(state_mean=state_mean, time=time, **kwargs)
+
+    @property
+    def state_idx(self):
+        assert self.finalized
+        if self._state_idx is None:
+            self._state_idx = {state_id: idx for idx, state_id in enumerate(self.states.keys())}
+        return self._state_idx
+
+    @property
+    def measure_idx(self):
+        assert self.finalized
+        if self._measure_idx is None:
+            self._measure_idx = {measure_id: idx for idx, measure_id in enumerate(self.measures.keys())}
+        return self._measure_idx

@@ -12,20 +12,6 @@ class DesignMatrix(NNOutputTracker):
         super().__init__()
 
     @property
-    def state_idx(self):
-        if self._state_idx is None:
-            # noinspection PyAttributeOutsideInit
-            self._state_idx = {state_id: idx for idx, state_id in enumerate(self.states.keys())}
-        return self._state_idx
-
-    @property
-    def measure_idx(self):
-        if self._measure_idx is None:
-            # noinspection PyAttributeOutsideInit
-            self._measure_idx = {measure_id: idx for idx, measure_id in enumerate(self.measures.keys())}
-        return self._measure_idx
-
-    @property
     def template(self):
         raise NotImplementedError()
 
@@ -95,7 +81,6 @@ class InitialState(DesignMatrix):
 class F(DesignMatrix):
     def __init__(self, states):
         self.states = states
-        self._state_idx = None
         self.transitions = {}
         super().__init__()
 
@@ -110,11 +95,12 @@ class F(DesignMatrix):
 
     def register_variables(self):
         self.nn_outputs = []
+        state_idx = {state_id: idx for idx, state_id in enumerate(self.states.keys())}
 
         for state_id, state in self.states.items():
-            from_idx = self.state_idx[state.id]
+            from_idx = state_idx[state.id]
             for transition_to_id, multiplier in state.transitions.items():
-                to_idx = self.state_idx[transition_to_id]
+                to_idx = state_idx[transition_to_id]
                 self.transitions[(to_idx, from_idx)] = multiplier
                 if isinstance(multiplier, NNOutput):
                     multiplier.add_design_mat_idx((to_idx, from_idx))
@@ -126,8 +112,6 @@ class H(DesignMatrix):
         self.states = states
         self.measures = measures
         self.state_to_measures = {}
-        self._state_idx = None
-        self._measure_idx = None
         super().__init__()
 
     @property
@@ -143,13 +127,16 @@ class H(DesignMatrix):
         self.nn_outputs = []
         self.nn_modules = []
 
+        state_idx = {state_id: idx for idx, state_id in enumerate(self.states.keys())}
+        measure_idx = {measure_id: idx for idx, measure_id in enumerate(self.measures.keys())}
+
         for measure in self.measures.values():
             for state_id, multiplier in measure.states.items():
-                measure_idx = self.measure_idx[measure.id]
-                state_idx = self.state_idx[state_id]
-                self.state_to_measures.update({(measure_idx, state_idx): multiplier})
+                this_measure_idx = measure_idx[measure.id]
+                this_state_idx = state_idx[state_id]
+                self.state_to_measures.update({(this_measure_idx, this_state_idx): multiplier})
                 if isinstance(multiplier, NNOutput):
-                    multiplier.add_design_mat_idx((measure_idx, state_idx))
+                    multiplier.add_design_mat_idx((this_measure_idx, this_state_idx))
                     self.nn_outputs.append(multiplier)
 
 
@@ -212,7 +199,6 @@ class CovarianceMatrix(DesignMatrix):
 class Q(CovarianceMatrix):
     def __init__(self, states):
         self.states = states
-        self._state_idx = None
         super().__init__()
 
     @property
@@ -226,7 +212,6 @@ class Q(CovarianceMatrix):
 class R(CovarianceMatrix):
     def __init__(self, measures):
         self.measures = measures
-        self._measure_idx = None
         super().__init__()
 
     @property

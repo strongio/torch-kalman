@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import torch
 from torch.autograd import Variable
 
@@ -99,6 +101,33 @@ class KalmanFilter(torch.nn.Module):
             cov_out.pop(1)
 
         return mean_out, cov_out
+
+    def components(self, kf_input, initial_state=None, horizon=None, **kwargs):
+        if len(kf_input.data.shape) != 3:
+            raise Exception("Unexpected shape for `kf_input`. If your data are univariate, add the singular third dimension "
+                            "with kf_input[:,:,None].")
+        kwargs['kf_input'] = kf_input
+
+        # run kalman-filter to get predicted state
+        horizon = horizon or self.horizon
+        means_per_ahead, _ = self._filter(initial_state=initial_state, n_ahead=horizon, **kwargs)
+        means = means_per_ahead[horizon]
+
+        # get the observable states:
+        nan_pad = Variable(torch.zeros(kf_input.data.shape[0], 1, self.num_measures))
+        nan_pad[:, :, :] = nan
+        observable_states = {state.id: self.design.state_idx[state.id] for state in self.design.measurable_states}
+        components = defaultdict(list)
+        for t, mean in means.items():
+            if mean is None:
+                for state_id in observable_states.keys():
+                    components[state_id].append(nan_pad)
+            else:
+                for state_id, idx in observable_states.items():
+                    components[state_id].append(mean[:, [idx], :])
+
+        return {name: torch.cat(component, 1) for name, component in components.items()}
+
 
     def forward(self, kf_input, initial_state=None, **kwargs):
         if len(kf_input.data.shape) != 3:
