@@ -8,10 +8,6 @@ from torch_kalman.design.design_matrix import F, H, R, Q, B, InitialState
 
 from torch_kalman.utils.torch_utils import expand
 
-from IPython.core.debugger import Pdb
-
-pdb = Pdb()
-
 
 class Design(object):
     def __init__(self):
@@ -29,12 +25,12 @@ class Design(object):
         self._state_idx, self._measure_idx = None, None
         self._measurable_states = None
 
-    def add_nn_module(self, nn_module, type, input_name, known_to_super):
+    def add_nn_module(self, type, nn_module, nn_input, known_to_super):
         if self.finalized:
             raise Exception("Can't add nn_module to design, it's been finalized already.")
         if nn_module in self.nn_modules[type].keys():
             raise Exception("This nn-module was already registered for '{}'.".format(type))
-        self.nn_modules[type][nn_module] = input_name
+        self.nn_modules[type][nn_module] = nn_input
         if not known_to_super:
             self.additional_modules.append(nn_module)
 

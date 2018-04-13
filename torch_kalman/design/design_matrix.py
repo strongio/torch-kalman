@@ -26,8 +26,8 @@ class DesignMatrix(NNOutputTracker):
         expanded = expand(self.template, bs)
 
         if not self.nn_module.isnull:
-            nn_module_kwargs = {argname: kwargs[argname][:, time, :] for argname in self.input_names}
-            nn_output = self.nn_module(**nn_module_kwargs)
+            nn_module_kwargs = {argname: kwargs[argname] for argname in self.input_names}
+            nn_output = self.nn_module(time=time, **nn_module_kwargs)
             for (row, col), output in nn_output:
                 expanded[:, row, col] = output
 
@@ -72,7 +72,7 @@ class InitialState(DesignMatrix):
 
         if not self.nn_module.isnull:
             nn_module_kwargs = {argname: kwargs[argname] for argname in self.input_names}
-            nn_output = self.nn_module(**nn_module_kwargs)
+            nn_output = self.nn_module(time=time, **nn_module_kwargs)
             for (row, col), output in nn_output:
                 expanded[:, row, col] = output
         return expanded

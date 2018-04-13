@@ -47,18 +47,18 @@ class NNOutputTracker(object):
     def register_variables(self):
         raise NotImplementedError()
 
-    def add_nn_input(self, nn_module, input_name):
+    def add_nn_input(self, nn_module, nn_input):
         if self._nn_module is not None:
             raise Exception("Already finalized module.")
         if len(self.nn_outputs) == 0:
             raise Exception("There aren't any NNOutputs.")
         if nn_module in self.nn_inputs_by_module.keys():
             raise Exception("This nn_module has already had its input registered.")
-        self.nn_inputs_by_module[nn_module] = input_name
+        self.nn_inputs_by_module[nn_module] = nn_input
 
     def add_nn_inputs(self, modules_and_names):
-        for nn_module, input_name in modules_and_names:
-            self.add_nn_input(nn_module, input_name)
+        for nn_module, nn_input in modules_and_names:
+            self.add_nn_input(nn_module, nn_input)
 
     def finalize_nn_module(self):
         self.nn_output_by_module = defaultdict(list)
@@ -83,7 +83,7 @@ class NNOutputTracker(object):
     def input_names(self):
         if self._nn_module is None:
             raise Exception("The nn_module hasn't been finalized yet with a call to `finalize_nn_module`.")
-        return set(self.nn_module.module_inputs)
+        return set(input.name for input in self.nn_module.module_inputs)
 
 
 class NNModuleConcatenator(torch.nn.Module):
@@ -98,14 +98,14 @@ class NNModuleConcatenator(torch.nn.Module):
     def isnull(self):
         return len(self.modules) == 0
 
-    def forward(self, **kwargs):
+    def forward(self, time, **kwargs):
         output_list = []
         for i in range(len(self.modules)):
             this_module = self.modules[i]
-            this_input_name = self.module_inputs[i]
-            this_input = kwargs[this_input_name]
+            this_nn_input = self.module_inputs[i]
+            this_input_tens = this_nn_input.slice(kwargs[this_nn_input.name], time=time)
             this_nn_outputs = self.module_outputs[i]
-            module_output_raw = this_module(this_input)
+            module_output_raw = this_module(this_input_tens)
             for nn_output in this_nn_outputs:
                 output_list.append((nn_output.design_mat_idx, nn_output.pluck_from_raw_output(module_output_raw)))
         return output_list
