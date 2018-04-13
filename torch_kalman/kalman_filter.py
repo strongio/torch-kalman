@@ -114,7 +114,7 @@ class KalmanFilter(torch.nn.Module):
         means = means_per_ahead[horizon]
 
         # get the observable states:
-        nan_pad = Variable(torch.zeros(kf_input.data.shape[0], 1, self.num_measures))
+        nan_pad = Variable(torch.zeros(kf_input.data.shape[0], 1, 1))
         nan_pad[:, :, :] = nan
         observable_states = {state.id: self.design.state_idx[state.id] for state in self.design.measurable_states}
         components = defaultdict(list)
@@ -127,7 +127,6 @@ class KalmanFilter(torch.nn.Module):
                     components[state_id].append(mean[:, [idx], :])
 
         return {name: torch.cat(component, 1) for name, component in components.items()}
-
 
     def forward(self, kf_input, initial_state=None, **kwargs):
         if len(kf_input.data.shape) != 3:

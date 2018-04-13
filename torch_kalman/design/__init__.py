@@ -1,7 +1,6 @@
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 
 import torch
-from torch.autograd import Variable
 from torch.nn import ModuleList
 
 from torch_kalman.design.nn_output import NNOutput, DynamicState
