@@ -40,6 +40,9 @@ class KalmanFilter(torch.nn.Module):
             n_ahead = self.horizon
 
         num_series, num_timesteps, num_measures = kwargs['kf_input'].data.shape
+        if num_measures != self.num_measures:
+            raise ValueError("`kf_input`'s size along the third dimension ({}) does not match the number of measures in the "
+                             "design ({}).".format(num_measures, self.num_measures))
 
         # add an extra n_ahead dimension b/c it's needed for k_*_next, but remember this so we can remove it later
         if n_ahead == 0:
@@ -199,7 +202,7 @@ class KalmanFilter(torch.nn.Module):
         groups_with_nan = [i for i in range(bs) if isnan[i].data.any()]
         for i in groups_with_nan:
             this_isnan = isnan[i].data
-            if not this_isnan.all(): # if all nan, just don't perform update
+            if not this_isnan.all():  # if all nan, just don't perform update
                 # for partial nan, perform partial update
                 valid_idx = where(this_isnan.numpy() == 0)[0].tolist()  # will clean up when pytorch 0.4 is released
                 # get the subset of measures that are non-nan:
