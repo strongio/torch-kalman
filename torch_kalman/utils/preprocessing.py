@@ -139,12 +139,14 @@ class ForecastPreprocessor(object):
         row = 0
         for g_idx, group_name in enumerate(dim_info[self.group_col]):
             row2 = row + len(dim_info['timestep'])
+            # assign each variable:
             for v_idx, variable_col in enumerate(dim_info['variable']):
                 values = array[g_idx, :, v_idx]
                 out[variable_col][row:row2] = values
                 out[self.group_col][row:row2] = group_name
                 out[self.date_col][row:row2] = pd.date_range(start_dates[group_name],
                                                              periods=len(values), freq=self.freq)
-                row = row2
+            # next group:
+            row = row2
 
         return pd.DataFrame(out)
