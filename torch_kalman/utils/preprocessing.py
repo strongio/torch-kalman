@@ -24,7 +24,7 @@ class ForecastPreprocessor(object):
         self.date_col = date_col
 
     # Pandas to Numpy ------------------------------------------------------
-    def pd_to_array(self, dataframe, value_cols, min_len_prop):
+    def pd_to_array(self, dataframe, value_cols, min_len_prop=0.0):
         """
         Convert a dataframe into an array (that's suitable for passing to KalmanFilters), additionally returning
         information about that array.

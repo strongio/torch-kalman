@@ -1,16 +1,16 @@
 from torch_kalman.design import Design
-from torch_kalman.design.process import NoVelocity, Seasonal, DampenedVelocity
+from torch_kalman.design.process.seasonal import Seasonal
+from torch_kalman.design.process.velocity import NoVelocity, DampenedVelocity
 from torch_kalman.design.measure import Measure
 from torch_kalman.kalman_filter import KalmanFilter
 
 from torch_kalman.design.lazy_parameter import LogLinked, LogitLinked
 
-import torch
-from torch.nn import Parameter, ParameterList
+from torch.nn import ParameterList
 
 from warnings import warn
 
-from torch_kalman.utils.torch_utils import Param0, ParamRand
+from torch_kalman.utils.torch_utils import Param0
 
 
 class Forecast(KalmanFilter):
@@ -65,20 +65,17 @@ class Forecast(KalmanFilter):
             self.add_process(measure_name, process)
 
     def add_season(self, measures, period, duration):
-        if duration != 1:
-            raise NotImplementedError()
-
         for measure_name in measures:
             self.process_params.append(Param0())
-            self.init_params.append(Param0(period-1))
 
             process = Seasonal(id_prefix=measure_name,
                                period=period,
                                std_dev=LogLinked(self.process_params[-1]),
-                               df_correction=True,
-                               initial_values=self.init_params[-1])
+                               duration=duration,
+                               time_input_name='timestep_abs')
 
             self.add_process(measure_name, process)
+            process.add_modules_to_design(self.design, known_to_super=False)
 
     def finalize(self):
         if sum(len(x) for x in self.processes_per_dim.values()) == 0:

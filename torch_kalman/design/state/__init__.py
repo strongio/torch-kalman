@@ -76,4 +76,4 @@ class NNState(State):
         return self._design_mat_idx
 
     def pluck_from_raw_output(self, nn_output_raw):
-        return nn_output_raw[self.nn_output_idx]
+        return nn_output_raw[:, self.nn_output_idx]

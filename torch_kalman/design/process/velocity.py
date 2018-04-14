@@ -1,21 +1,7 @@
-import random
-
 from torch_kalman.design.lazy_parameter import LazyParameter
+from torch_kalman.design.process import Process
+from torch_kalman.utils.utils import nonejoin
 from torch_kalman.design.state import State
-
-
-def join(iterable, sep):
-    """
-    :param iterable: An iterable of strings.
-    :param sep: A separator.
-    :return: `iterable`, with any Nones removed, joined by `sep`.
-    """
-    return sep.join(el for el in iterable if el is not None)
-
-
-class Process(object):
-    def __init__(self, states):
-        self.states = tuple(states)
 
 
 class NoVelocity(Process):
@@ -27,7 +13,7 @@ class NoVelocity(Process):
         :param std_dev: Standard deviation (process-noise).
         :param sep: The separator between id_prefix and the state name (defaults "_").
         """
-        pos = State(id=join([id_prefix, 'position'], sep), std_dev=std_dev, initial_value=initial_value)
+        pos = State(id=nonejoin([id_prefix, 'position'], sep), std_dev=std_dev, initial_value=initial_value)
         pos.add_transition(pos)
         super(NoVelocity, self).__init__(states=(pos,))
 
@@ -51,10 +37,10 @@ class DampenedVelocity(Process):
         """
 
         # position and velocity:
-        position = State(id=join([id_prefix, 'position'], sep),
+        position = State(id=nonejoin([id_prefix, 'position'], sep),
                          std_dev=std_devs[0],
                          initial_value=initial_position)
-        velocity = State(id=join([id_prefix, 'velocity'], sep),
+        velocity = State(id=nonejoin([id_prefix, 'velocity'], sep),
                          std_dev=std_devs[1])
         position.add_correlation(velocity, correlation=corr)
 
@@ -108,45 +94,3 @@ class PhysicsVelocity(DampenedVelocity):
 
         super().__init__(id_prefix=id_prefix, std_devs=std_devs, corr=1.0,
                          initial_position=initial_position, damp_multi=damp_multi, sep=sep)
-
-
-class Seasonal(Process):
-    def __init__(self, id_prefix, std_dev, period, initial_values, df_correction=True, sep="_"):
-        """
-        A seasonal process.
-
-        :param id_prefix: A prefix that will be added to the ids ('season[0-period]'), or can be None.
-        :param std_dev: Standard deviation (process-noise).
-        :param period: The period for the season (e.g., for daily data, period=7 would be a weekly season).
-        :param df_correction: Correct the degrees of freedom? In most contexts this is being used, we also have a process
-        that captures the general (non seasonal) level/trend. In that case, we'd want the seasonal process to have
-        period - 1 degrees of freedom (df_correction=True, the default).
-        :param sep: The separator between parts of the id (defaults "_").
-        """
-        assert len(initial_values) == (period - df_correction)
-        pad_n = len(str(period))
-        states = []
-        for i in range(period):
-            season = str(i).rjust(pad_n, "0")
-            initial_value = 0. if i == 0 and df_correction else initial_values[i - df_correction]
-            this_state = State(id=join([id_prefix, 'season', season], sep),
-                               std_dev=std_dev if i == 0 else 0.0,
-                               initial_value=initial_value)
-            states.append(this_state)
-
-        if df_correction:
-            for i in range(period - 1):
-                states[i].add_transition(to_state=states[i + 1], multiplier=1.)
-                states[i].add_transition(to_state=states[0], multiplier=-1.)
-        else:
-            for i in range(period):
-                if i == (period - 1):
-                    states[i].add_transition(to_state=states[0])
-                else:
-                    states[i].add_transition(to_state=states[i + 1])
-
-        super(Seasonal, self).__init__(states)
-
-    @property
-    def observable(self):
-        return self.states[0]

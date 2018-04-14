@@ -3,7 +3,7 @@ from collections import OrderedDict
 import torch
 from torch.nn import ModuleList
 
-from torch_kalman.design.nn_output import NNOutput, DynamicState
+from torch_kalman.design.nn_output import DynamicState
 from torch_kalman.design.design_matrix import F, H, R, Q, B, InitialState
 
 from torch_kalman.utils.torch_utils import expand
@@ -87,12 +87,10 @@ class Design(object):
         self.F = F(states=self.states)
         self.F.add_nn_inputs(self.nn_modules['transition'].items())
         self.F.finalize_nn_module()
-        self.check_for_input_name_collision(self.F.input_names)
 
         self.H = H(states=self.states, measures=self.measures)
         self.H.add_nn_inputs(self.nn_modules['measure'].items())
         self.H.finalize_nn_module()
-        self.check_for_input_name_collision(self.H.input_names)
 
         self.Q = Q(states=self.states)
         self.Q.finalize_nn_module()  # currently null
@@ -104,13 +102,6 @@ class Design(object):
         self.NNState = DynamicState(self.states)
         self.NNState.add_nn_inputs(self.nn_modules['state'].items())
         self.NNState.finalize_nn_module()
-        self.check_for_input_name_collision(self.NNState.input_names)
-
-    def check_for_input_name_collision(self, input_names):
-        for input_name in input_names:
-            if input_name in self.InitialState.input_names:
-                raise Exception("The input_name '{}' was used for an input to the `initial_state` nn_module, so it can't be "
-                                "used for other nn_modules.".format(input_name))
 
     @property
     def num_measures(self):

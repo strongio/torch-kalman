@@ -1,5 +1,5 @@
 from torch_kalman.design import Design
-from torch_kalman.design.process import ConstantVelocity
+from torch_kalman.design.process.velocity import ConstantVelocity
 from torch_kalman.design.measure import Measure
 from torch_kalman.kalman_filter import KalmanFilter
 
@@ -7,7 +7,6 @@ from torch_kalman.design.lazy_parameter import LogLinked
 
 import torch
 from torch.nn import Parameter
-from torch.autograd import Variable
 
 
 class UnivariateWithVelocity(KalmanFilter):

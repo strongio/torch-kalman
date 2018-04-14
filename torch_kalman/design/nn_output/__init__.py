@@ -1,5 +1,4 @@
 from collections import defaultdict
-from warnings import warn
 
 import torch
 from torch import Tensor
@@ -32,8 +31,16 @@ class NNOutput(object):
             raise Exception("Need to `add_design_mat_idx` first.")
         return self._design_mat_idx
 
-    def pluck_from_raw_output(self, nn_output_raw):
-        return nn_output_raw[self.nn_output_idx]
+    def slice_from_raw(self, raw):
+        return raw[:, self.nn_output_idx]
+
+
+class NNDictOutput(NNOutput):
+    def __init__(self, nn_module, nn_output_name):
+        super().__init__(nn_module=nn_module, nn_output_idx=nn_output_name)
+
+    def slice_from_raw(self, raw):
+        return raw[self.nn_output_idx]
 
 
 class NNOutputTracker(object):
@@ -91,24 +98,22 @@ class NNModuleConcatenator(torch.nn.Module):
         super().__init__()
         assert len(modules) == len(module_outputs)
         assert len(modules) == len(module_outputs)
-        self.modules = ModuleList(modules)
+        self.concat_modules = ModuleList(modules)
         self.module_inputs = module_inputs
         self.module_outputs = module_outputs
 
+    @property
     def isnull(self):
-        return len(self.modules) == 0
+        return len(self.module_inputs) == 0
 
     def forward(self, time, **kwargs):
-        output_list = []
-        for i in range(len(self.modules)):
-            this_module = self.modules[i]
+        for i, this_module in enumerate(self.concat_modules):
             this_nn_input = self.module_inputs[i]
             this_input_tens = this_nn_input.slice(kwargs[this_nn_input.name], time=time)
             this_nn_outputs = self.module_outputs[i]
             module_output_raw = this_module(this_input_tens)
             for nn_output in this_nn_outputs:
-                output_list.append((nn_output.design_mat_idx, nn_output.pluck_from_raw_output(module_output_raw)))
-        return output_list
+                yield (nn_output.design_mat_idx, nn_output.slice_from_raw(module_output_raw))
 
 
 class DynamicState(NNOutputTracker):

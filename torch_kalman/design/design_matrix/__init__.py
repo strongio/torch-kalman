@@ -1,14 +1,14 @@
 import torch
 from torch.autograd import Variable
 
-from torch_kalman.design import NNOutput
-from torch_kalman.design.nn_output import NNOutputTracker
+from torch_kalman.design.nn_output import NNOutput, NNOutputTracker
 from torch_kalman.utils.torch_utils import quad_form_diag, expand
 
 
 class DesignMatrix(NNOutputTracker):
     def __init__(self):
         self._template = None
+        self.batch_cache = {}
         super().__init__()
 
     @property
@@ -19,19 +19,32 @@ class DesignMatrix(NNOutputTracker):
         raise NotImplementedError()
 
     def reset(self):
+        # TODO: what if they terminate the forward-pass partway through?
         self._template = None
+        self.batch_cache = {}
 
     def create_for_batch(self, time, **kwargs):
-        bs = kwargs['kf_input'].data.shape[0]
-        expanded = expand(self.template, bs)
+        if time not in self.batch_cache.keys():
+            bs = kwargs['kf_input'].data.shape[0]
 
-        if not self.nn_module.isnull:
-            nn_module_kwargs = {argname: kwargs[argname] for argname in self.input_names}
-            nn_output = self.nn_module(time=time, **nn_module_kwargs)
-            for (row, col), output in nn_output:
-                expanded[:, row, col] = output
+            if self.nn_module.isnull:
+                self.batch_cache[time] = expand(self.template, bs)
+            else:
+                # check kwargs:
+                missing_kwargs = self.input_names - set(kwargs.keys())
+                if len(missing_kwargs) == 0:
+                    nn_module_kwargs = {argname: kwargs[argname] for argname in self.input_names}
+                else:
+                    raise TypeError("missing {} required arguments: {}".format(len(missing_kwargs), missing_kwargs))
 
-        return expanded
+                # expand, replacing NNOutput placeholders:
+                nn_outputs = self.nn_module(time=time, **nn_module_kwargs)
+                expanded = expand(self.template, bs).clone()
+                for (row, col), output in nn_outputs:
+                    expanded[:, row, col] = output
+                self.batch_cache[time] = expanded
+
+        return self.batch_cache[time]
 
 
 class InitialState(DesignMatrix):
@@ -67,15 +80,7 @@ class InitialState(DesignMatrix):
         if time != 0:
             raise Exception("InitialState is for time-zero only.")
 
-        bs = kwargs['kf_input'].data.shape[0]
-        expanded = expand(self.template, bs)
-
-        if not self.nn_module.isnull:
-            nn_module_kwargs = {argname: kwargs[argname] for argname in self.input_names}
-            nn_output = self.nn_module(time=time, **nn_module_kwargs)
-            for (row, col), output in nn_output:
-                expanded[:, row, col] = output
-        return expanded
+        return super().create_for_batch(time=time, **kwargs)
 
 
 class F(DesignMatrix):
