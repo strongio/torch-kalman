@@ -6,6 +6,8 @@ from torch.autograd import Variable
 from torch_kalman.utils.torch_utils import expand
 from numpy import where, nan
 
+from torch_kalman.design import reset_design_on_exit
+
 
 # noinspection PyPep8Naming
 class KalmanFilter(torch.nn.Module):
@@ -35,6 +37,7 @@ class KalmanFilter(torch.nn.Module):
         return len(self.design.measures)
 
     # Main Forward-Pass Methods --------------------
+    @reset_design_on_exit
     def _filter(self, initial_state=None, n_ahead=None, **kwargs):
         if n_ahead is None:
             n_ahead = self.horizon
@@ -105,6 +108,7 @@ class KalmanFilter(torch.nn.Module):
 
         return mean_out, cov_out
 
+    @reset_design_on_exit
     def components(self, kf_input, initial_state=None, horizon=None, **kwargs):
         if len(kf_input.data.shape) != 3:
             raise Exception("Unexpected shape for `kf_input`. If your data are univariate, add the singular third dimension "
@@ -131,6 +135,7 @@ class KalmanFilter(torch.nn.Module):
 
         return {name: torch.cat(component, 1) for name, component in components.items()}
 
+    @reset_design_on_exit
     def forward(self, kf_input, initial_state=None, **kwargs):
         if len(kf_input.data.shape) != 3:
             raise Exception("Unexpected shape for `kf_input`. If your data are univariate, add the singular third dimension "

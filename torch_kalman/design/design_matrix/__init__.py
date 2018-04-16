@@ -19,7 +19,6 @@ class DesignMatrix(NNOutputTracker):
         raise NotImplementedError()
 
     def reset(self):
-        # TODO: what if they terminate the forward-pass partway through?
         self._template = None
         self.batch_cache = {}
 

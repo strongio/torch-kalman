@@ -163,3 +163,14 @@ class Design(object):
         if self._measure_idx is None:
             self._measure_idx = {measure_id: idx for idx, measure_id in enumerate(self.measures.keys())}
         return self._measure_idx
+def reset_design_on_exit(func):
+    def _decorator(self, *args, **kwargs):
+        try:
+            out = func(self, *args, **kwargs)
+            self.design.reset()
+            return out
+        except:
+            self.design.reset()
+            raise
+
+    return _decorator
