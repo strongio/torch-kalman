@@ -64,7 +64,7 @@ class Forecast(KalmanFilter):
 
             self.add_process(measure_name, process)
 
-    def add_season(self, measures, period, duration):
+    def add_season(self, measures, period, duration, season_start):
         for measure_name in measures:
             self.process_params.append(Param0())
 
@@ -72,6 +72,7 @@ class Forecast(KalmanFilter):
                                period=period,
                                std_dev=LogLinked(self.process_params[-1]),
                                duration=duration,
+                               season_start=season_start,
                                time_input_name='timestep_abs')
 
             self.add_process(measure_name, process)

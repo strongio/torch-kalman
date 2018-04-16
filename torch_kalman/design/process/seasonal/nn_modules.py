@@ -32,51 +32,50 @@ class SeasonNN(torch.nn.Module):
 
 class InitialSeasonStateNN(SeasonNN):
     def __init__(self, period, duration):
-        super().__init__(period, duration)
+        super().__init__(period=period, duration=duration)
         # if we have N seasons, we have N-1 degrees of freedom. the first is always constrained to zero
         self.initial_state_params = Param0(period - 1)
 
     def forward(self, time):
         time = self.check_input(time)
+        bs = time.data.shape[0]
 
-        # the last season doesn't get a parameter:
+        # the first season is constrained to be -sum(the-rest) s.t. the seasons sum to zero
         initial_states = Variable(torch.zeros(self.period))
-        initial_states[:-1] = self.initial_state_params
+        initial_states[1:] = self.initial_state_params
+        initial_states[0] = -torch.sum(initial_states[1:])
 
-        out = []
-        for init_time in time.data.tolist():
-            # convert time each group starts on to season each group starts on:
+        out = Variable(torch.zeros(bs, self.period))
+        for i, init_time in enumerate(time.data.tolist()):
+            # start-time => start-season
             init_season = int(floor(init_time / self.duration))
-            # add a sequence for the remaining seasons, using modulus operator:
-            idx = [x % self.period for x in range(init_season, init_season + self.period)]
-            # index initial states:
-            out.append(initial_states[idx][None, :])
 
-        return torch.cat(out, 0)
+            # season-indices for start-season thru period:
+            idx = [x % self.period for x in range(init_season, init_season + self.period)]
+
+            # the first season is simply -sum(the_rest)
+            out[i, :] = initial_states[idx]
+
+        return out
 
 
 class SeasonDurationNN(SeasonNN):
-    def __init__(self, period, duration):
-        super().__init__(period, duration)
+    def __init__(self, period, duration, season_start):
+        super().__init__(period=period, duration=duration)
+        if isinstance(season_start, float):
+            assert season_start.is_integer()
+        self.season_start = season_start
 
     def forward(self, time):
         time = self.check_input(time)
         bs = time.data.shape[0]
 
         out = {key: torch.zeros(bs) for key in ('to_self', 'to_first', 'to_next', 'from_first_to_first')}
-
-        for i, t in enumerate(time.data.tolist()):
-            if (t % self.duration) == 0:
-                # transition:
-                out['to_self'][i] = 0.
-                out['to_first'][i] = -1.
-                out['to_next'][i] = 1.
-                out['from_first_to_first'][i] = -1
-            else:
-                # inside a season:
-                out['to_self'][i] = 1.
-                out['to_first'][i] = 0.
-                out['to_next'][i] = 0.
-                out['from_first_to_first'][i] = 1.
+        in_transition = (torch.fmod(time, self.duration) == self.season_start).data
+        out['to_self'][~in_transition] = 1.
+        out['to_first'][in_transition] = -1.
+        out['to_next'][in_transition] = 1.
+        out['from_first_to_first'][in_transition] = -1.
+        out['from_first_to_first'][~in_transition] = 1.
 
         return {k: Variable(v) for k, v in out.items()}

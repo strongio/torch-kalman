@@ -7,16 +7,7 @@ from torch_kalman.design.state import State
 
 
 class Seasonal(Process):
-    def __init__(self, id_prefix, std_dev, period, duration, time_input_name, sep="_"):
-        """
-        A seasonal process.
-
-        :param id_prefix: A prefix that will be added to the ids ('season[0-period]'), or can be None.
-        :param std_dev: Standard deviation (process-noise).
-        :param period: The period for the season (e.g., for daily data, period=7 would be a weekly season).
-        :param sep: The separator between parts of the id (defaults "_").
-        """
-
+    def __init__(self, id_prefix, std_dev, period, duration, season_start, time_input_name, sep="_"):
         # input:
         self.nn_input = CurrentTime(name=time_input_name, num_dims=3)
 
@@ -32,7 +23,7 @@ class Seasonal(Process):
             states.append(this_state)
 
         # define transitions:
-        self.nn_module_season_duration = SeasonDurationNN(period=period, duration=duration)
+        self.nn_module_season_duration = SeasonDurationNN(period=period, duration=duration, season_start=season_start)
         # for the first state, only need to define two transitions:
         states[0].add_transition(to_state=states[1],
                                  multiplier=NNDictOutput(self.nn_module_season_duration, nn_output_name='to_next'))
