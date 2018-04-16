@@ -7,7 +7,13 @@ from torch_kalman.design.state import State
 
 
 class Seasonal(Process):
-    def __init__(self, id_prefix, std_dev, period, duration, season_start, time_input_name, sep="_"):
+    def __init__(self, id_prefix, std_dev, period, duration, time_input_name, season_start=None, sep="_"):
+        if (duration == 1) != (not season_start):
+            if duration == 1:
+                raise ValueError("If duration == 1, then do not supply `season_start`.")
+            else:
+                raise ValueError("If duration > 1, must supply `season_start")
+
         # input:
         self.nn_input = CurrentTime(name=time_input_name, num_dims=3)
 
@@ -23,26 +29,30 @@ class Seasonal(Process):
             states.append(this_state)
 
         # define transitions:
-        self.nn_module_season_duration = SeasonDurationNN(period=period, duration=duration, season_start=season_start)
+        if duration > 1:
+            self.nn_module_season_duration = SeasonDurationNN(period=period, duration=duration, season_start=season_start)
+            multipliers = {'to_next': NNDictOutput(self.nn_module_season_duration, nn_output_name='to_next'),
+                           'from_first_to_first': NNDictOutput(self.nn_module_season_duration,
+                                                               nn_output_name='from_first_to_first'),
+                           'to_first': NNDictOutput(self.nn_module_season_duration, nn_output_name='to_first'),
+                           'to_self': NNDictOutput(self.nn_module_season_duration, nn_output_name='to_self')}
+        else:
+            self.nn_module_season_duration = None
+            multipliers = {'to_next': 1., 'to_first': -1., 'from_first_to_first': -1., 'to_self': 0.}
+
         # for the first state, only need to define two transitions:
-        states[0].add_transition(to_state=states[1],
-                                 multiplier=NNDictOutput(self.nn_module_season_duration, nn_output_name='to_next'))
-        states[0].add_transition(to_state=states[0],
-                                 multiplier=NNDictOutput(self.nn_module_season_duration,
-                                                         nn_output_name='from_first_to_first'))
+        states[0].add_transition(to_state=states[1], multiplier=multipliers['to_next'])
+        states[0].add_transition(to_state=states[0], multiplier=multipliers['from_first_to_first'])
 
         # for the rest, need to define three transitions:
         for i in range(1, period):
             if (i + 1) < period:
                 # when transitioning:
-                states[i].add_transition(to_state=states[i + 1],
-                                         multiplier=NNDictOutput(self.nn_module_season_duration, nn_output_name='to_next'))
-                states[i].add_transition(to_state=states[0],
-                                         multiplier=NNDictOutput(self.nn_module_season_duration, nn_output_name='to_first'))
+                states[i].add_transition(to_state=states[i + 1], multiplier=multipliers['to_next'])
+                states[i].add_transition(to_state=states[0], multiplier=multipliers['to_first'])
 
             # when not transitioning:
-            states[i].add_transition(to_state=states[i],
-                                     multiplier=NNDictOutput(self.nn_module_season_duration, nn_output_name='to_self'))
+            states[i].add_transition(to_state=states[i], multiplier=multipliers['to_self'])
 
         super(Seasonal, self).__init__(states)
 
@@ -51,10 +61,11 @@ class Seasonal(Process):
                              nn_module=self.nn_module_initial,
                              nn_input=self.nn_input,
                              known_to_super=known_to_super)
-        design.add_nn_module(type='transition',
-                             nn_module=self.nn_module_season_duration,
-                             nn_input=self.nn_input,
-                             known_to_super=known_to_super)
+        if self.nn_module_season_duration is not None:
+            design.add_nn_module(type='transition',
+                                 nn_module=self.nn_module_season_duration,
+                                 nn_input=self.nn_input,
+                                 known_to_super=known_to_super)
 
     @property
     def observable(self):
