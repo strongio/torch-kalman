@@ -25,6 +25,7 @@ class Forecast(KalmanFilter):
         self.process_params = ParameterList()
         self.measure_std_params = ParameterList()
         self.measure_corr_params = ParameterList()
+        self.state_to_measure_params = ParameterList()
         self.processes_per_dim = {measure_name: list() for measure_name in self.measures_and_common}
 
     def add_process(self, measure_name, process):
@@ -41,42 +42,67 @@ class Forecast(KalmanFilter):
 
         measure_processes.append(process)
 
-    def add_level(self, measures):
-        for measure_name in measures:
-            self.process_params.append(Param0())
-            self.init_params.append(Param0())
+    def add_common(self, type, measures=None, **kwargs):
+        """
+        Later the class will be set-up to accept arbitrary joining of measures into "common" levels. That functionality isn't
+        present yet, but didn't want to have to make a backwards-incompatible API change.
 
-            process = NoVelocity(id_prefix=measure_name,
-                                 std_dev=LogLinked(self.process_params[-1]),
-                                 initial_value=self.init_params[-1])
+        :param type: "Level", "trend", or "season".
+        :param measures: The measures that will have a common state underlying them.
+        :param kwargs: Kwargs passed to the add_* method.
+        """
+        measures = measures or self.measures  # default
+        if set(measures) != set(self.measures):
+            raise ValueError("Currently `common` only supported if it applies to all measures.")
 
-            self.add_process(measure_name, process)
+        if type == 'level':
+            self.add_level(measure_name='common')
+        elif type == 'trend':
+            self.add_trend(measure_name='common')
+        elif type == 'season':
+            self.add_season(measure_name='common', **kwargs)
+        else:
+            raise ValueError("Unrecognized type.")
 
-    def add_trend(self, measures):
-        for measure_name in measures:
-            self.process_params.append(Param0(2))
-            self.init_params.append(Param0())
+    def add_level(self, measure_name):
+        assert isinstance(measure_name, str)
 
-            process = DampenedVelocity(id_prefix=measure_name,
-                                       std_devs=LogLinked(self.process_params[-1]),
-                                       initial_position=self.init_params[-1],
-                                       damp_multi=LogitLinked(self.vel_dampening))
+        self.process_params.append(Param0())
+        self.init_params.append(Param0())
 
-            self.add_process(measure_name, process)
+        process = NoVelocity(id_prefix=measure_name,
+                             std_dev=LogLinked(self.process_params[-1]),
+                             initial_value=self.init_params[-1])
 
-    def add_season(self, measures, period, duration, season_start):
-        for measure_name in measures:
-            self.process_params.append(Param0())
+        self.add_process(measure_name, process)
 
-            process = Seasonal(id_prefix=measure_name,
-                               period=period,
-                               std_dev=LogLinked(self.process_params[-1]),
-                               duration=duration,
-                               season_start=season_start,
-                               time_input_name='timestep_abs')
+    def add_trend(self, measure_name):
+        assert isinstance(measure_name, str)
 
-            self.add_process(measure_name, process)
-            process.add_modules_to_design(self.design, known_to_super=False)
+        self.process_params.append(Param0(2))
+        self.init_params.append(Param0())
+
+        process = DampenedVelocity(id_prefix=measure_name,
+                                   std_devs=LogLinked(self.process_params[-1]),
+                                   initial_position=self.init_params[-1],
+                                   damp_multi=LogitLinked(self.vel_dampening))
+
+        self.add_process(measure_name, process)
+
+    def add_season(self, measure_name, period, duration, season_start=None, time_input_name='timestep_abs'):
+        assert isinstance(measure_name, str)
+        self.process_params.append(Param0())
+
+        process = Seasonal(id_prefix=measure_name,
+                           period=period,
+                           std_dev=LogLinked(self.process_params[-1]),
+                           duration=duration,
+                           season_start=season_start,
+                           time_input_name=time_input_name)
+
+        self.add_process(measure_name, process)
+
+        process.add_modules_to_design(self.design, known_to_super=False)
 
     def finalize(self):
         if sum(len(x) for x in self.processes_per_dim.values()) == 0:
@@ -92,7 +118,8 @@ class Forecast(KalmanFilter):
             # specify the states that go into this measure:
             for name in (measure_name, 'common'):
                 for process in self.processes_per_dim.get(name, []):
-                    this_measure.add_state(process.observable)
+                    multiplier = 1.0
+                    this_measure.add_state(process.observable, multiplier=multiplier)
 
             # add to design:
             self.design.add_measure(this_measure)
