@@ -1,3 +1,5 @@
+from warnings import warn
+
 from torch_kalman.design.covariance_element import CovarianceElement
 from torch_kalman.utils.utils import make_callable
 from torch import Tensor
@@ -23,6 +25,8 @@ class Measure(CovarianceElement):
         :param state: A State.
         :param multiplier: The multipler for linking the state to the measure. Typically 1.0.
         """
+        if state.id in self.states.keys():
+            warn("This measure ('{}') is already linked to state '{}'. Will overwrite.".format(self.id, state.id))
         self.states.update({state.id: multiplier})
 
     def torchify(self):

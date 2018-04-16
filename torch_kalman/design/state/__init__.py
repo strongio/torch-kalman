@@ -4,6 +4,8 @@ from torch import Tensor
 
 from torch.autograd import Variable
 
+from warnings import warn
+
 
 class State(CovarianceElement):
     def __init__(self, id, std_dev, initial_value=0.0):
@@ -26,6 +28,8 @@ class State(CovarianceElement):
         :param to_state: The state that this state links to.
         :param multiplier: The multiplier for the transition (e.g., multipier of .5 means T_n+1 = .5*T_n)
         """
+        if to_state.id in self.transitions.keys():
+            warn("This state ('{}') already has a transition to '{}' recorded. Will overwrite.".format(self.id, to_state.id))
         self.transitions.update({to_state.id: multiplier})
 
     def torchify(self):
