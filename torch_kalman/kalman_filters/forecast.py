@@ -15,6 +15,10 @@ from torch_kalman.utils.torch_utils import Param0
 
 class Forecast(KalmanFilter):
     def __init__(self, measures, horizon):
+        """
+        :param measures: The measurable dimensions that will be forecasted.
+        :param horizon: The forecast horizon used by "forward".
+        """
 
         super().__init__(horizon=horizon, design=Design())
         self.measures = [str(x) for x in measures]
@@ -28,23 +32,77 @@ class Forecast(KalmanFilter):
         self.state_to_measure_params = ParameterList()
         self.processes_per_dim = {measure_name: list() for measure_name in self.measures_and_common}
 
-    def add_process(self, measure_name, process):
-        # add process to design:
-        self.design.add_states(process.states)
-
-        # keep track of the measure it belongs to:
-        measure_processes = self.processes_per_dim[measure_name]
-
-        process_name = process.__class__.__name__
-        if process_name != 'Seasonal':
-            if process_name in set(x.__class__.__name__ for x in measure_processes):
-                warn("Already added process '{}' to measure '{}'.".format(process_name, measure_name))
-
-        measure_processes.append(process)
-
-    def add_common(self, type, measures=None, **kwargs):
+    def add_level(self, measure_name):
         """
-        Later the class will be set-up to accept arbitrary joining of measures into "common" levels. That functionality isn't
+        Add a "no-velocity" process to `measure_name`. This is a process that assumes that the underlying state that
+        generates the measurement does not have any velocity, so its expected value at the next timepoint is the same as its
+        current value.
+
+        :param measure_name: The name of the measure.
+        """
+        assert isinstance(measure_name, str)
+
+        self.process_params.append(Param0())
+        self.init_params.append(Param0())
+
+        process = NoVelocity(id_prefix=measure_name,
+                             std_dev=LogLinked(self.process_params[-1]),
+                             initial_value=self.init_params[-1])
+
+        self.add_process(measure_name, process)
+
+    def add_trend(self, measure_name):
+        """
+        Add a "constant-velocity" process to `measure_name`. This is a process that assumes that the underlying state that
+        generates the measurement has a velocity. As measurements accumulate, the latent position and velocity will be jointly
+        estimated, and predictions will be made by combining them.
+
+        :param measure_name: The name of the measure.
+        """
+        assert isinstance(measure_name, str)
+
+        self.process_params.append(Param0(2))
+        self.init_params.append(Param0())
+
+        process = DampenedVelocity(id_prefix=measure_name,
+                                   std_devs=LogLinked(self.process_params[-1]),
+                                   initial_position=self.init_params[-1],
+                                   damp_multi=LogitLinked(self.vel_dampening))
+
+        self.add_process(measure_name, process)
+
+    def add_season(self, measure_name, period, duration, season_start=None, time_input_name='timestep_abs'):
+        """
+        Add a seasonal process to `measure_name`.
+
+        :param measure_name: The name of the measure.
+        :param period: The period of the seasonality (i.e., how many seasons pass before we return to the first season).
+        :param duration: The duration of the seasonality (i.e., how many timesteps pass before the season changes). For
+        example, if we wanted to indicate week-in-year seasonality for daily data, we'd specify period=52, duration=7.
+        :param season_start: The timestep on which the season-starts. This value is in the same units as those given by
+        the time-argument (the argument that will be passed via `time_input_name`).
+        :param time_input_name: When `forward` is called, you need to provide an argument with this name, specifying the
+        *absolute* timestep for each group X time. Default is "timestep_abs".
+        """
+        assert isinstance(measure_name, str)
+        self.process_params.append(Param0())
+
+        process = Seasonal(id_prefix=measure_name,
+                           period=period,
+                           std_dev=LogLinked(self.process_params[-1]),
+                           duration=duration,
+                           season_start=season_start,
+                           time_input_name=time_input_name)
+
+        self.add_process(measure_name, process)
+
+        process.add_modules_to_design(self.design, known_to_super=False)
+
+    def add_common(self, type, measures, **kwargs):
+        """
+        Add a process that is common to several or all measures.
+
+        Later Forecast will be set-up to accept arbitrary joining of measures into "common" levels. That functionality isn't
         present yet, but didn't want to have to make a backwards-incompatible API change.
 
         :param type: "Level", "trend", or "season".
@@ -64,47 +122,37 @@ class Forecast(KalmanFilter):
         else:
             raise ValueError("Unrecognized type.")
 
-    def add_level(self, measure_name):
-        assert isinstance(measure_name, str)
+    def add_process(self, measure_name, process):
+        """
+        Helper for the add_* methods.
 
-        self.process_params.append(Param0())
-        self.init_params.append(Param0())
+        :param measure_name: The measure-name
+        :param process: The Process class.
+        """
+        if self.finalized:
+            raise Exception("Cannot add processes to finalized design.")
 
-        process = NoVelocity(id_prefix=measure_name,
-                             std_dev=LogLinked(self.process_params[-1]),
-                             initial_value=self.init_params[-1])
+        # add process to design:
+        self.design.add_states(process.states)
 
-        self.add_process(measure_name, process)
+        # keep track of the measure it belongs to:
+        measure_processes = self.processes_per_dim[measure_name]
 
-    def add_trend(self, measure_name):
-        assert isinstance(measure_name, str)
+        process_name = process.__class__.__name__
+        if process_name != 'Seasonal':
+            if process_name in set(x.__class__.__name__ for x in measure_processes):
+                warn("Already added process '{}' to measure '{}'.".format(process_name, measure_name))
 
-        self.process_params.append(Param0(2))
-        self.init_params.append(Param0())
-
-        process = DampenedVelocity(id_prefix=measure_name,
-                                   std_devs=LogLinked(self.process_params[-1]),
-                                   initial_position=self.init_params[-1],
-                                   damp_multi=LogitLinked(self.vel_dampening))
-
-        self.add_process(measure_name, process)
-
-    def add_season(self, measure_name, period, duration, season_start=None, time_input_name='timestep_abs'):
-        assert isinstance(measure_name, str)
-        self.process_params.append(Param0())
-
-        process = Seasonal(id_prefix=measure_name,
-                           period=period,
-                           std_dev=LogLinked(self.process_params[-1]),
-                           duration=duration,
-                           season_start=season_start,
-                           time_input_name=time_input_name)
-
-        self.add_process(measure_name, process)
-
-        process.add_modules_to_design(self.design, known_to_super=False)
+        measure_processes.append(process)
 
     def finalize(self):
+        """
+        Finalize this Forecast so it can be used. Will be called automatically by `nn.module().parameters` (so typically when
+         the optimizer is created).
+        """
+        if self.finalized:
+            raise Exception("Already finalized.")
+
         if sum(len(x) for x in self.processes_per_dim.values()) == 0:
             raise ValueError("Need to add at least one process (level/trend/season).")
 
@@ -135,8 +183,16 @@ class Forecast(KalmanFilter):
         # finalize design:
         self.design.finalize()
 
+    @property
+    def finalized(self):
+        return self.design.finalized
+
     def parameters(self):
-        if not self.design.finalized:
+        """
+        Make sure the Forecast is finalized before it's used.
+        :return: A generator of parameters.
+        """
+        if not self.finalized:
             self.finalize()
         return super().parameters()
 
