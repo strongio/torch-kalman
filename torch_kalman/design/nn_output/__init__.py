@@ -23,6 +23,11 @@ class NNOutput(object):
         return Variable(self.nan)
 
     def add_design_mat_idx(self, idx):
+        if self._design_mat_idx is not None:
+            raise Exception("Tried to add the target-index in the design-mat to a NNOutput, but it already has one. This can"
+                            " happen if the same NNOutput instance was accidentally re-used on more than one element of the "
+                            "design-mat. You can indicate that multiple targets in the design-mat should be filled with the "
+                            "same nn-module's output by creating separate NNOutput instances.")
         self._design_mat_idx = idx
 
     @property
