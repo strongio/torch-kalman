@@ -98,7 +98,7 @@ class Forecast(KalmanFilter):
 
         process.add_modules_to_design(self.design, known_to_super=False)
 
-    def add_common(self, type, measures, **kwargs):
+    def add_common(self, type, measures=None, **kwargs):
         """
         Add a process that is common to several or all measures.
 
