@@ -39,3 +39,12 @@ def make_callable(x):
         return x
     else:
         return lambda: x
+
+
+def nonejoin(iterable, sep):
+    """
+    :param iterable: An iterable of strings.
+    :param sep: A separator.
+    :return: `iterable`, with any Nones removed, joined by `sep`.
+    """
+    return sep.join(el for el in iterable if el is not None)

@@ -1,5 +1,6 @@
 import torch
 from torch.autograd import Variable
+from torch.nn import Parameter
 
 
 def log_std_to_var(log_std):
@@ -18,18 +19,10 @@ def expand(x, ns):
     :param ns: Number of repeats
     :return: Tensor repeated into new dimension.
     """
-    return x.expand(ns, *x.data.shape)
-
-
-def batch_transpose(x):
-    """
-    Given a tensor whose first dimension is the batch, transpose each batch.
-
-    :param x: A tensor whose first dimension is the batch.
-    :return: x transposed batchwise.
-    """
-    ns = x.data.shape[0]
-    return torch.stack([x[i].t() for i in range(ns)], 0)
+    if isinstance(x, Variable):
+        return x.expand(ns, *x.data.shape)
+    else:
+        return x.expand(ns, *x.shape)
 
 
 def quad_form_diag(std_devs, corr_mat):
@@ -45,3 +38,15 @@ def quad_form_diag(std_devs, corr_mat):
     for i in range(n):
         variance_diag[i, i] = torch.pow(std_devs[i], 2)
     return torch.mm(torch.mm(variance_diag, corr_mat), variance_diag)
+
+
+def Param0(*sizes):
+    if len(sizes) == 0:
+        sizes = (1,)
+    return Parameter(torch.zeros(*sizes))
+
+
+def ParamRand(*sizes):
+    if len(sizes) == 0:
+        sizes = (1,)
+    return Parameter(torch.randn(*sizes))

@@ -1,196 +1,215 @@
 from torch_kalman.design import Design
-from torch_kalman.design.process import NoVelocity, ConstantVelocity, Seasonal
-from torch_kalman.design.measurement import Measurement
+from torch_kalman.design.process.seasonal import Seasonal
+from torch_kalman.design.process.velocity import NoVelocity, DampenedVelocity
+from torch_kalman.design.measure import Measure
 from torch_kalman.kalman_filter import KalmanFilter
 
 from torch_kalman.design.lazy_parameter import LogLinked, LogitLinked
 
-import torch
-from torch.nn import Parameter
+from torch.nn import ParameterList
 
 from warnings import warn
 
+from torch_kalman.utils.torch_utils import Param0
+
 
 class Forecast(KalmanFilter):
-    def __init__(self,
-                 measurements,
-                 seasonal_period,
-                 level_factors='both',
-                 trend_factors='common',
-                 season_factors='separate',
-                 **kwargs):
+    def __init__(self, measures, horizon):
+        """
+        :param measures: The measurable dimensions that will be forecasted.
+        :param horizon: The forecast horizon used by "forward".
         """
 
-        :param measurements: A list of the names of variables being measured. (Will be coerced to strings, so you can just
-         pass range([number-of-measurements]) if the measurements don't have/need meaningful names.)
-        :param seasonal_period: The number of timesteps for a seasonal cycle. This is for relatively short seasonality,
-        (e.g., weekly) since it increases the size of the design-matrices quadratically. (For long-term seasonality, consider
-        passing fourier series to measurement_nn).
-        :param level_factors: Is there a latent level that's separate for each variable, or one that's common to all? Can
-        pass 'separate', 'common', 'both', or None.
-        :param trend_factors: Is there a latent trend that's separate for each variable, or one that's common to all? Can
-        pass 'separate', 'common', 'both', or None. If 'common' is included, it will be included in 'level' as well.
-        :param season_factors: Is there a latent seasonal cycle that's separate for each variable, or one that's common to
-        all? Can pass 'separate', 'common', 'both', or None.
-        :param kwargs: Arguments passed to KalmanFilter's init, such as forward_ahead, initial_state_nn, and measurement_nn.
+        super().__init__(horizon=horizon, design=Design())
+        self.measures = [str(x) for x in measures]
+        if 'common' in self.measures:
+            raise ValueError("'common' is a reserved name, and can't be a measure-name.")
+        self._vel_dampening = None
+        self.init_params = ParameterList()
+        self.process_params = ParameterList()
+        self.measure_std_params = ParameterList()
+        self.measure_corr_params = ParameterList()
+        self.state_to_measure_params = ParameterList()
+        self.processes_per_dim = {measure_name: list() for measure_name in self.measures_and_common}
+
+    def add_level(self, measure_name):
         """
-        super().__init__(**kwargs)
+        Add a "no-velocity" process to `measure_name`. This is a process that assumes that the underlying state that
+        generates the measurement does not have any velocity, so its expected value at the next timepoint is the same as its
+        current value.
 
-        # measurements:
-        self.measurements = [str(x) for x in measurements]
+        :param measure_name: The name of the measure.
+        """
+        assert isinstance(measure_name, str)
 
-        # which measurements go where?
-        self.pos_only_vars, self.pos_and_vel_vars, self.season_vars = \
-            self.classify_measurements(level_factors, trend_factors, season_factors)
+        self.process_params.append(Param0())
+        self.init_params.append(Param0())
 
-        # seasonal period:
-        self.seasonal_period = self.parse_seasonal_arg(seasonal_period)
+        process = NoVelocity(id_prefix=measure_name,
+                             std_dev=LogLinked(self.process_params[-1]),
+                             initial_value=self.init_params[-1])
 
-        # states ----
-        self.log_core_process_std_dev = Parameter(torch.zeros(len(self.pos_or_vel_vars)))
-        self._variable_to_core_param_mapper = None
-        core_states_by_varname = dict()
-        for varname in self.pos_or_vel_vars:
-            process = NoVelocity if varname in self.pos_only_vars else ConstantVelocity
-            idx = self.variable_to_core_param_mapper[varname]
-            core_states_by_varname[varname] = process(id_prefix=varname,
-                                                      std_dev=LogLinked(self.log_core_process_std_dev[idx]))
+        self.add_process(measure_name, process)
 
-        self.log_season_process_std_dev = Parameter(torch.zeros(len(self.season_vars)))
-        self._variable_to_season_param_mapper = None
-        season_states_by_varname = dict()
-        for varname in self.season_vars:
-            idx = self.variable_to_season_param_mapper[varname]
-            season_states_by_varname[varname] = Seasonal(id_prefix=varname,
-                                                         std_dev=LogLinked(self.log_season_process_std_dev[idx]),
-                                                         period=self.seasonal_period,
-                                                         df_correction=varname in self.pos_or_vel_vars)
+    def add_trend(self, measure_name):
+        """
+        Add a "constant-velocity" process to `measure_name`. This is a process that assumes that the underlying state that
+        generates the measurement has a velocity. As measurements accumulate, the latent position and velocity will be jointly
+        estimated, and predictions will be made by combining them.
 
-        # measurements ----
-        self.log_measurement_std_dev = Parameter(torch.zeros(len(measurements)))
-        all_measurements = []
-        for i, varname in enumerate(self.measurements):
-            this_measurement = Measurement(id=varname, std_dev=LogLinked(self.log_measurement_std_dev[i]))
+        :param measure_name: The name of the measure.
+        """
+        assert isinstance(measure_name, str)
 
-            for state_name in (varname, 'common'):
-                core_state = core_states_by_varname.get(state_name)
-                if core_state is not None:
-                    this_measurement.add_state(core_state.observable)
-                season_state = season_states_by_varname.get(state_name)
-                if season_state is not None:
-                    this_measurement.add_state(season_state.observable)
+        self.process_params.append(Param0(2))
+        self.init_params.append(Param0())
 
-            all_measurements.append(this_measurement)
+        process = DampenedVelocity(id_prefix=measure_name,
+                                   std_devs=LogLinked(self.process_params[-1]),
+                                   initial_position=self.init_params[-1],
+                                   damp_multi=LogitLinked(self.vel_dampening))
 
-        # correlation between measurement-errors (currently constrained to be positive)
-        num_corrs = int(((len(measurements) + 1) * len(measurements)) / 2 - len(measurements))
-        self.logit_measurement_corr = Parameter(torch.zeros(num_corrs))
-        pidx = 0
-        for idx1 in range(len(measurements)):
-            for idx2 in range(idx1 + 1, len(measurements)):
-                all_measurements[idx1].add_correlation(all_measurements[idx2],
-                                                       correlation=LogitLinked(self.logit_measurement_corr[pidx]))
-                pidx += 1
+        self.add_process(measure_name, process)
 
-        # put states in the same order as measurements (with common last) ---
-        all_states = []
-        vars_plus_common = self.measurements + ['common']
-        for varname in vars_plus_common:
-            if varname in core_states_by_varname.keys():
-                all_states.extend(core_states_by_varname[varname].states)
-            if varname in season_states_by_varname.keys():
-                all_states.extend(season_states_by_varname[varname].states)
+    def add_season(self, measure_name, period, duration, season_start=None, time_input_name='timestep_abs'):
+        """
+        Add a seasonal process to `measure_name`.
 
-        self.design = Design(states=all_states, measurements=all_measurements)
-        self.initializer_params = self.default_initializer_params()
+        :param measure_name: The name of the measure.
+        :param period: The period of the seasonality (i.e., how many seasons pass before we return to the first season).
+        :param duration: The duration of the seasonality (i.e., how many timesteps pass before the season changes). For
+        example, if we wanted to indicate week-in-year seasonality for daily data, we'd specify period=52, duration=7.
+        :param season_start: The timestep on which the season-starts. This value is in the same units as those given by
+        the time-argument (the argument that will be passed via `time_input_name`).
+        :param time_input_name: When `forward` is called, you need to provide an argument with this name, specifying the
+        *absolute* timestep for each group X time. Default is "timestep_abs".
+        """
+        assert isinstance(measure_name, str)
+        self.process_params.append(Param0())
 
-    @property
-    def num_season_states(self):
-        return len(self.season_vars) * self.seasonal_period
+        process = Seasonal(id_prefix=measure_name,
+                           period=period,
+                           std_dev=LogLinked(self.process_params[-1]),
+                           duration=duration,
+                           season_start=season_start,
+                           time_input_name=time_input_name)
 
-    @property
-    def num_core_states(self):
-        return len(self.pos_only_vars) + 2 * len(self.pos_and_vel_vars)
+        self.add_process(measure_name, process)
 
-    @property
-    def num_states(self):
-        return self.num_season_states + self.num_core_states
+        process.add_modules_to_design(self.design, known_to_super=False)
 
-    def classify_measurements(self, level_factors, trend_factors, season_factors):
-        replacements = {'common': ('common',),
-                        'separate': ('separate',),
-                        'both': ('separate', 'common'),
-                        None: ()}
+    def add_common(self, type, measures=None, **kwargs):
+        """
+        Add a process that is common to several or all measures.
 
-        try:
-            season = replacements[None if season_factors is None else season_factors.lower()]
-            trend = replacements[None if trend_factors is None else trend_factors.lower()]
-            level = replacements[None if level_factors is None else level_factors.lower()]
-        except KeyError:
-            raise ValueError("Unexpected values passed to season, trend and/or level; should be one of ('common', "
-                             "'separate', 'both').")
+        Later Forecast will be set-up to accept arbitrary joining of measures into "common" levels. That functionality isn't
+        present yet, but didn't want to have to make a backwards-incompatible API change.
 
-        for arg in ('common', 'separate'):
-            if arg in trend and arg not in level:
-                warn("Since '%s' is in 'trend', it will be added to 'level'." % arg)
-                level = list(level) + [arg]
+        :param type: "Level", "trend", or "season".
+        :param measures: The measures that will have a common state underlying them.
+        :param kwargs: Kwargs passed to the add_* method.
+        """
+        measures = measures or self.measures  # default
+        if set(measures) != set(self.measures):
+            raise ValueError("Currently `common` only supported if it applies to all measures.")
 
-        if len(season) + len(trend) + len(level) == 0:
-            raise ValueError("All state arguments passed None, so this kalman-filter has no state.")
-
-        pos_only_vars, pos_and_vel_vars, season_vars = [], [], []
-
-        if 'separate' in trend:
-            pos_and_vel_vars.extend(self.measurements)
-        elif 'separate' in level:
-            pos_only_vars.extend(self.measurements)
-        if 'separate' in season:
-            season_vars.extend(self.measurements)
-
-        if len(self.measurements) == 1:
-            if 'common' in (trend + level + season):
-                warn("Univariate kalman-filter, so no 'common' factor will be used.")
+        if type == 'level':
+            self.add_level(measure_name='common')
+        elif type == 'trend':
+            self.add_trend(measure_name='common')
+        elif type == 'season':
+            self.add_season(measure_name='common', **kwargs)
         else:
-            if 'common' in trend:
-                pos_and_vel_vars.append('common')
-            elif 'common' in level:
-                pos_only_vars.append('common')
-            if 'common' in season:
-                season_vars.append('common')
+            raise ValueError("Unrecognized type.")
 
-        return tuple(pos_only_vars), tuple(pos_and_vel_vars), tuple(season_vars)
+    def add_process(self, measure_name, process):
+        """
+        Helper for the add_* methods.
+
+        :param measure_name: The measure-name
+        :param process: The Process class.
+        """
+        if self.finalized:
+            raise Exception("Cannot add processes to finalized design.")
+
+        # add process to design:
+        self.design.add_states(process.states)
+
+        # keep track of the measure it belongs to:
+        measure_processes = self.processes_per_dim[measure_name]
+
+        process_name = process.__class__.__name__
+        if process_name != 'Seasonal':
+            if process_name in set(x.__class__.__name__ for x in measure_processes):
+                warn("Already added process '{}' to measure '{}'.".format(process_name, measure_name))
+
+        measure_processes.append(process)
+
+    def finalize(self):
+        """
+        Finalize this Forecast so it can be used. Will be called automatically by `nn.module().parameters` (so typically when
+         the optimizer is created).
+        """
+        if self.finalized:
+            raise Exception("Already finalized.")
+
+        if sum(len(x) for x in self.processes_per_dim.values()) == 0:
+            raise ValueError("Need to add at least one process (level/trend/season).")
+
+        for i, measure_name in enumerate(self.measures):
+
+            # create measure:
+            self.measure_std_params.append(Param0())
+            this_measure = Measure(id=measure_name,
+                                   std_dev=LogLinked(self.measure_std_params[-1]))
+
+            # specify the states that go into this measure:
+            for name in (measure_name, 'common'):
+                for process in self.processes_per_dim.get(name, []):
+                    multiplier = 1.0
+                    this_measure.add_state(process.observable, multiplier=multiplier)
+
+            # add to design:
+            self.design.add_measure(this_measure)
+
+        # correlation between measure-errors (currently constrained to be positive)
+        for row in range(self.num_measures):
+            for col in range(row + 1, self.num_measures):
+                m1 = self.design.measures[self.measures[row]]
+                m2 = self.design.measures[self.measures[col]]
+                self.measure_corr_params.append(Param0())
+                m1.add_correlation(m2, correlation=LogitLinked(self.measure_corr_params[-1]))
+
+        # finalize design:
+        self.design.finalize()
 
     @property
-    def pos_or_vel_vars(self):
-        return tuple(list(self.pos_only_vars) + list(self.pos_and_vel_vars))
+    def finalized(self):
+        return self.design.finalized
+
+    def parameters(self):
+        """
+        Make sure the Forecast is finalized before it's used.
+        :return: A generator of parameters.
+        """
+        if not self.finalized:
+            self.finalize()
+        return super().parameters()
 
     @property
-    def variable_to_core_param_mapper(self):
-        if self._variable_to_core_param_mapper is None:
-            self._variable_to_core_param_mapper = {}
-            i = 0
-            for varname in self.measurements + ['common']:  # keep variable ordering and put common last
-                if varname in self.pos_or_vel_vars:
-                    self._variable_to_core_param_mapper[varname] = i
-                    i += 1
-        return self._variable_to_core_param_mapper
+    def measures_and_common(self):
+        return self.measures + ['common']
 
     @property
-    def variable_to_season_param_mapper(self):
-        if self._variable_to_season_param_mapper is None:
-            self._variable_to_season_param_mapper = {}
-            i = 0
-            for varname in self.measurements + ['common']:  # keep variable ordering and put common last
-                if varname in self.season_vars:
-                    self._variable_to_season_param_mapper[varname] = i
-                    i += 1
-        return self._variable_to_season_param_mapper
+    def vel_dampening(self):
+        if self._vel_dampening is None:
+            self._vel_dampening = Param0()
+        return self._vel_dampening
 
-    def parse_seasonal_arg(self, seasonal_period):
-        seasonal_period = 0 if seasonal_period is None else seasonal_period
-        num_season_vars = len(self.season_vars)
-        if (num_season_vars > 0) and (seasonal_period == 0):
-            raise ValueError("There are seasonal states, but you haven't indicated a (non-null) seasonal period.")
-        if (num_season_vars == 0) and (seasonal_period > 0):
-            raise ValueError("There are no seasonal states, but you indicated a (non-null) seasonal period.")
-        return seasonal_period
+    @property
+    def num_measures(self):
+        return len(self.measures)
+
+    @property
+    def num_correlations(self):
+        return int(((len(self.measures) + 1) * len(self.measures)) / 2 - len(self.measures))

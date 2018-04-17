@@ -1,116 +1,176 @@
+from collections import OrderedDict
+
 import torch
-from torch.autograd import Variable
-from torch_kalman.utils.torch_utils import quad_form_diag
+from torch.nn import ModuleList
+
+from torch_kalman.design.nn_output import DynamicState
+from torch_kalman.design.design_matrix import F, H, R, Q, B, InitialState
+
+from torch_kalman.utils.torch_utils import expand
 
 
-# noinspection PyPep8Naming
 class Design(object):
-    def __init__(self, states, measurements):
-        """
-        This creates the four design-matrices needed for a kalman filter:
-        * R - This is a covariance matrix for the measurement noise. It's generated from the list of measurements.
-        * Q - This is a covariance matrix for the process noise. It's generated from the list of states.
-        * F - This is a matrix which takes the states at T_n and generates the states at T_n+1. It's generated from the
-              `transitions` attribute of the states.
-        * H - This is a matrix which takes the states and converts them into the observable data.
+    def __init__(self):
+        self.states = {}
+        self.measures = {}
+        self.nn_modules = dict(transition={},
+                               measure={},
+                               state={},
+                               initial_state={})
 
-        These matrices are pytorch Variables, so if the std_dev or correlations passed to the States and Measurements
-        are pytorch Parameters, you end up with design-matrices that can be optimized using pytorch's backwards method.
+        self.additional_modules = ModuleList()
 
-        :param states: A list of States
-        :param measurements: A list of Measurements
-        """
-        state_ids = [state.id for state in states]
-        if len(state_ids) > len(set(state_ids)):
-            raise ValueError("State IDs are not unique.")
-        self.states = states
-        [state.torchify() for state in self.states]
+        self.Q, self.F, self.R, self.H = None, None, None, None
+        self.InitialState, self.NNState = None, None
+        self._state_idx, self._measure_idx = None, None
+        self._measurable_states = None
 
-        measurement_ids = [measurement.id for measurement in measurements]
-        if len(measurement_ids) > len(set(measurement_ids)):
-            raise ValueError("measurements IDs are not unique.")
-        self.measurements = measurements
-        [measurement.torchify() for measurement in self.measurements]
+    def add_nn_module(self, type, nn_module, nn_input, known_to_super):
+        if self.finalized:
+            raise Exception("Can't add nn_module to design, it's been finalized already.")
+        if nn_module in self.nn_modules[type].keys():
+            raise Exception("This nn-module was already registered for '{}'.".format(type))
+        self.nn_modules[type][nn_module] = nn_input
+        if not known_to_super:
+            self.additional_modules.append(nn_module)
 
-        self._H = None
-        self._R = None
-        self._F = None
-        self._Q = None
+    def add_state(self, state):
+        if self.finalized:
+            raise Exception("Can't add state to design, it's been finalized already.")
+        if state.id in self.states.keys():
+            raise Exception("State with the same ID already in design.")
+        self.states[state.id] = state
+
+    def add_states(self, states):
+        for state in states:
+            self.add_state(state)
+
+    def add_measure(self, measure):
+        if self.finalized:
+            raise Exception("Can't add measure to design, it's been finalized already.")
+        if measure.id in self.measures.keys():
+            raise Exception("Measurement with the same ID already in design.")
+        self.measures[measure.id] = measure
+
+    def add_measures(self, measures):
+        for measure in measures:
+            self.add_measure(measure)
+
+    def add_process(self, process):
+        raise NotImplementedError()
+
+    @property
+    def finalized(self):
+        finalized_list = [x is not None for x in (self.Q, self.F, self.R, self.H, self.InitialState, self.NNState)]
+        if all(finalized_list):
+            return True
+        if not any(finalized_list):
+            return False
+        raise Exception("This design is only partially finalized, an error must have occurred.")
+
+    def finalize(self):
+        if self.finalized:
+            raise Exception("Design was already finalized.")
+
+        # organize the states/measures:
+        self.states = OrderedDict((k, self.states[k]) for k in sorted(self.states.keys()))
+        [state.torchify() for state in self.states.values()]
+        self.measures = OrderedDict((k, self.measures[k]) for k in sorted(self.measures.keys()))
+        [measure.torchify() for measure in self.measures.values()]
+
+        # initial-values:
+        self.InitialState = InitialState(self.states)
+        self.InitialState.add_nn_inputs(self.nn_modules['initial_state'].items())
+        self.InitialState.finalize_nn_module()
+
+        # design-mats:
+        self.F = F(states=self.states)
+        self.F.add_nn_inputs(self.nn_modules['transition'].items())
+        self.F.finalize_nn_module()
+
+        self.H = H(states=self.states, measures=self.measures)
+        self.H.add_nn_inputs(self.nn_modules['measure'].items())
+        self.H.finalize_nn_module()
+
+        self.Q = Q(states=self.states)
+        self.Q.finalize_nn_module()  # currently null
+
+        self.R = R(measures=self.measures)
+        self.R.finalize_nn_module()  # currently null
+
+        # NNStates:
+        self.NNState = DynamicState(self.states)
+        self.NNState.add_nn_inputs(self.nn_modules['state'].items())
+        self.NNState.finalize_nn_module()
+
+    @property
+    def num_measures(self):
+        return len(self.measures)
+
+    @property
+    def num_states(self):
+        return len(self.states)
+
+    @property
+    def measurable_states(self):
+        assert self.finalized
+        if self._measurable_states is None:
+            is_observable = (torch.sum(self.H.template, 0) > 0).data.tolist()
+            state_keys = list(self.states.keys())
+            self._measurable_states = [self.states[state_keys[i]] for i, observable in enumerate(is_observable)
+                                       if observable == 1]
+        return self._measurable_states
 
     def reset(self):
         """
         Reset the design matrices. For efficiency, the code to generate these matrices isn't executed every time
         they are called; instead, it's executed once then the results are saved. But calling pytorch's backward method
         will clear the graph and so these matrices will need to be re-generated. So this function is called at the end
-        of the forward pass computations, so that the matrices will be rebuild next time it's called.
+        of the forward pass computations, so that the matrices will be rebuilt next time it's called.
         """
-        self._H = None
-        self._R = None
-        self._F = None
-        self._Q = None
+        self.F.reset()
+        self.H.reset()
+        self.Q.reset()
+        self.R.reset()
+        self.InitialState.reset()
 
-    @staticmethod
-    def covariance_mat_from_variables(variables):
-        """
-        Take a list of states or measurements, and generate a covariance matrix.
+    def initialize_state(self, **kwargs):
 
-        :param variables: A list of states or measurements.
-        :return: A covariance Matrix, as a pytorch Variable.
-        """
-        num_states = len(variables)
-        std_devs = Variable(torch.zeros(num_states))
-        corr_mat = Variable(torch.eye(num_states))
-        idx_per_var = {var.id: idx for idx, var in enumerate(variables)}
-        visited_corr_idx = set()
-        for var in variables:
-            idx = idx_per_var[var.id]
-            std_devs[idx] = var.std_dev()
-            for id, corr in var.correlations.items():
-                idx2 = idx_per_var[id]
-                if (idx, idx2) not in visited_corr_idx:
-                    corr_mat[idx, idx2] = corr()
-                    corr_mat[idx2, idx] = corr()
-                    visited_corr_idx.add((idx, idx2))
+        initial_mean_expanded = self.InitialState.create_for_batch(time=0, **kwargs)
 
-        return quad_form_diag(std_devs, corr_mat)
+        if self.Q.nn_module.isnull:
+            initial_cov = self.Q.template
+        else:  # at the time of writing, Q can't have an nn-module. if that changes, the above won't work.
+            raise NotImplementedError("Please report this error to the package maintainer")
+        bs = initial_mean_expanded.data.shape[0]
+        initial_cov_expanded = expand(initial_cov, bs)
+
+        return initial_mean_expanded, initial_cov_expanded
+
+    def state_nn_update(self, state_mean, time, **kwargs):
+        self.NNState.update_state_mean(state_mean=state_mean, time=time, **kwargs)
 
     @property
-    def F(self):
-        if self._F is None:
-            num_states = len(self.states)
-            F = Variable(torch.zeros((num_states, num_states)))
-            idx_per_state = {state.id: idx for idx, state in enumerate(self.states)}
-            for state in self.states:
-                from_idx = idx_per_state[state.id]
-                for transition_to_id, multiplier in state.transitions.items():
-                    to_idx = idx_per_state[transition_to_id]
-                    F[to_idx, from_idx] = multiplier()
-            self._F = F
-        return self._F
+    def state_idx(self):
+        assert self.finalized
+        if self._state_idx is None:
+            self._state_idx = {state_id: idx for idx, state_id in enumerate(self.states.keys())}
+        return self._state_idx
 
     @property
-    def H(self):
-        if self._H is None:
-            num_measurements, num_states = len(self.measurements), len(self.states)
-            H = Variable(torch.zeros((num_measurements, num_states)))
-            idx_per_obs = {obs.id: idx for idx, obs in enumerate(self.measurements)}
-            idx_per_state = {state.id: idx for idx, state in enumerate(self.states)}
-            for measurement in self.measurements:
-                for state_id, multiplier in measurement.states.items():
-                    obs_idx = idx_per_obs[measurement.id]
-                    state_idx = idx_per_state[state_id]
-                    H[obs_idx, state_idx] = multiplier()
-            self._H = H
-        return self._H
+    def measure_idx(self):
+        assert self.finalized
+        if self._measure_idx is None:
+            self._measure_idx = {measure_id: idx for idx, measure_id in enumerate(self.measures.keys())}
+        return self._measure_idx
+def reset_design_on_exit(func):
+    def _decorator(self, *args, **kwargs):
+        try:
+            out = func(self, *args, **kwargs)
+            self.design.reset()
+            return out
+        except:
+            self.design.reset()
+            raise
 
-    @property
-    def R(self):
-        if self._R is None:
-            self._R = self.covariance_mat_from_variables(variables=self.measurements)
-        return self._R
-
-    @property
-    def Q(self):
-        if self._Q is None:
-            self._Q = self.covariance_mat_from_variables(variables=self.states)
-        return self._Q
+    return _decorator
