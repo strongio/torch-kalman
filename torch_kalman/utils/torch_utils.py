@@ -25,6 +25,17 @@ def expand(x, ns):
         return x.expand(ns, *x.shape)
 
 
+def batch_diag(x):
+    """
+    Interpreting a 3D tensor as a list of matrices with the first dimension indexing the elements in list, return the diag of
+     each matrix.
+    :param x: A 3D tensor.
+    :return: A 2D tensor, the first dimension that of x.
+    """
+    n = x.data.shape[0]
+    return torch.cat([torch.diag(x[i])[None, :] for i in range(n)], 1)
+
+
 def quad_form_diag(std_devs, corr_mat):
     """
     Generate a covariance matrix from marginal std-devs and a correlation matrix.
