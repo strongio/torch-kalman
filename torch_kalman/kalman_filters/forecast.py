@@ -71,7 +71,7 @@ class Forecast(KalmanFilter):
 
         self.add_process(measure_name, process)
 
-    def add_season(self, measure_name, period, duration, season_start=None, time_input_name='timestep_abs'):
+    def add_season(self, measure_name, period, duration, season_start=None, time_start_input_name='time_start'):
         """
         Add a seasonal process to `measure_name`.
 
@@ -80,9 +80,9 @@ class Forecast(KalmanFilter):
         :param duration: The duration of the seasonality (i.e., how many timesteps pass before the season changes). For
         example, if we wanted to indicate week-in-year seasonality for daily data, we'd specify period=52, duration=7.
         :param season_start: The timestep on which the season-starts. This value is in the same units as those given by
-        the time-argument (the argument that will be passed via `time_input_name`).
-        :param time_input_name: When `forward` is called, you need to provide an argument with this name, specifying the
-        *absolute* timestep for each group X time. Default is "timestep_abs".
+        the next argument.
+        :param time_start_input_name: When `forward` is called, you need to provide an argument with this name, specifying
+        the timestep at which each group starts.
         """
         assert isinstance(measure_name, str)
         self.process_params.append(Param0())
@@ -92,7 +92,7 @@ class Forecast(KalmanFilter):
                            std_dev=LogLinked(self.process_params[-1]),
                            duration=duration,
                            season_start=season_start,
-                           time_input_name=time_input_name)
+                           time_start_input_name=time_start_input_name)
 
         self.add_process(measure_name, process)
 

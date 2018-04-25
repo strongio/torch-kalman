@@ -3,7 +3,18 @@ from math import floor
 import torch
 from torch.autograd import Variable
 
+from torch_kalman.design.nn_input import NNInput
 from torch_kalman.utils.torch_utils import Param0
+
+
+class SeasonNNInput(NNInput):
+    def __init__(self, name):
+        super().__init__(name=name)
+
+    def slice(self, tensor, time):
+        if len(tensor.data.shape) != 1:
+            raise ValueError("The input {} should be one-dimensional.")
+        return tensor + time
 
 
 class SeasonNN(torch.nn.Module):
@@ -16,16 +27,6 @@ class SeasonNN(torch.nn.Module):
         self.period = int(period)
         self.duration = int(duration)
 
-    def check_input(self, input):
-        if len(input.data.shape) > 2:
-            raise ValueError("`SeasonNN` expected max. two-dimensional input.")
-        elif len(input.data.shape) == 2:
-            if input.data.shape[1] == 1:
-                input = torch.squeeze(input, 1)
-            else:
-                raise ValueError("`SeasonNN` received a two-dimensional input where the 2nd dimension wasn't singular.")
-        return input
-
     def forward(self, time):
         raise NotImplementedError()
 
@@ -37,7 +38,6 @@ class InitialSeasonStateNN(SeasonNN):
         self.initial_state_params = Param0(period - 1)
 
     def forward(self, time):
-        time = self.check_input(time)
         bs = time.data.shape[0]
 
         # the first season is constrained to be -sum(the-rest) s.t. the seasons sum to zero
@@ -67,7 +67,6 @@ class SeasonDurationNN(SeasonNN):
         self.season_start = season_start
 
     def forward(self, time):
-        time = self.check_input(time)
         bs = time.data.shape[0]
 
         out = {key: torch.zeros(bs) for key in ('to_self', 'to_first', 'to_next', 'from_first_to_first')}
