@@ -40,15 +40,12 @@ def quad_form_diag(std_devs, corr_mat):
     """
     Generate a covariance matrix from marginal std-devs and a correlation matrix.
 
-    :param std_devs: A list of Variables or a 1D variable, with the std-deviations.
+    :param std_devs: A 1D variable, with the std-deviations.
     :param corr_mat: A correlation matrix Variable
     :return: A covariance matrix
     """
-    n = len(std_devs)
-    variance_diag = Variable(torch.zeros((n, n)))
-    for i in range(n):
-        variance_diag[i, i] = torch.pow(std_devs[i], 2)
-    return torch.mm(torch.mm(variance_diag, corr_mat), variance_diag)
+    std_diag = torch.diag(std_devs)
+    return torch.mm(torch.mm(std_diag, corr_mat), std_diag)
 
 
 def Param0(*sizes):
