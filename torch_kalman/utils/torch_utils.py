@@ -33,7 +33,7 @@ def batch_diag(x):
     :return: A 2D tensor, the first dimension that of x.
     """
     n = x.data.shape[0]
-    return torch.cat([torch.diag(x[i])[None, :] for i in range(n)], 1)
+    return torch.cat([torch.diag(x[i])[None, :] for i in range(n)], 0)
 
 
 def quad_form_diag(std_devs, corr_mat):
