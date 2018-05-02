@@ -220,10 +220,11 @@ class KalmanFilter(torch.nn.Module):
             state_mean, state_cov = self.kf_predict(state_mean, state_cov, time=t, **kwargs)
 
             # translate into observable measures:
+            R_expanded = self.R.create_for_batch(time=t, **kwargs)
             H_expanded = self.H.create_for_batch(time=t, **kwargs)
             Ht_expanded = H_expanded.permute(0, 2, 1)
-            pred_mean = torch.bmm(H_expanded, state_mean).squeeze()
-            pred_cov = torch.bmm(torch.bmm(H_expanded, state_cov), Ht_expanded)
+            pred_mean = torch.bmm(H_expanded, state_mean).squeeze(2)
+            pred_cov = torch.bmm(torch.bmm(H_expanded, state_cov), Ht_expanded) + R_expanded
             pred_std_dev = torch.sqrt(batch_diag(pred_cov))
             out_means.append(pred_mean[:, None, :])
             out_std_devs.append(pred_std_dev[:, None, :])
