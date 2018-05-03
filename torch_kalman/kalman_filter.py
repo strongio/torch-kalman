@@ -8,6 +8,8 @@ from numpy import where, nan
 
 from torch_kalman.design import reset_design_on_exit
 
+from torch.distributions.multivariate_normal import MultivariateNormal
+
 
 # noinspection PyPep8Naming
 class KalmanFilter(torch.nn.Module):
@@ -27,6 +29,9 @@ class KalmanFilter(torch.nn.Module):
         # (useful so that Processes can get added to design and do all the work of adding their nn_modules)
         self.additional_modules = self.design.additional_modules
 
+        # if a method already decorated w/`reset_design_on_exit` needs filtering, it can call the non-decorated _filter
+        self.filter = reset_design_on_exit(self._filter)
+
     @property
     def num_states(self):
         return len(self.design.states)
@@ -36,12 +41,11 @@ class KalmanFilter(torch.nn.Module):
         return len(self.design.measures)
 
     # Main Forward-Pass Methods --------------------
-    @reset_design_on_exit
-    def filter(self, initial_state=None, horizon=None, **kwargs):
+    def _filter(self, initial_state=None, horizon=None, **kwargs):
         """
         Perform kalman-filtering operation on a tensor of data. It's not recommended to call this method directly; instead,
         this method is meant to be called by methods such as `forward`, `components`, and `retrieve_state`, which return
-        more organized output than this method.
+        more specific and goal-oriented output than this method (which simply returns all the output).
 
         :param initial_state: Optional, a tuple containing the initial state mean and initial state covariance. If left as
         None, values for these will be supplied as defined in the `initialize_state` method of the design.
@@ -118,6 +122,65 @@ class KalmanFilter(torch.nn.Module):
         return mean_out, cov_out
 
     @reset_design_on_exit
+    def log_likelihood(self, kf_input, initial_state=None, horizon=None, **kwargs):
+        """
+
+        :param kf_input: A Variable whose first dimension is group, second is time, and third is measure.
+        :param initial_state: Optional, a tuple containing the initial state mean and initial state covariance. If left as
+        None, values for these will be supplied as defined in the `initialize_state` method of the design.
+        :param horizon: The horizon for the predictions.
+        :param kwargs: Kwargs that will be passed to nn-modules in the design.
+        :return: A 2D Variable (group*time) containing the log-likelihoods.
+        """
+        if horizon is None:
+            horizon = self.horizon
+        means_per_horizon, covs_per_horizon = self._filter(initial_state=initial_state, horizon=horizon, **kwargs)
+        means, covs = means_per_horizon[horizon], covs_per_horizon[horizon]
+
+        num_groups = kf_input.data.shape[0]
+
+        out = []
+        for t, mean in means.items():
+            # log_probs:
+            log_probs = torch.zeros(num_groups)
+            log_probs[:] = nan
+            log_probs = Variable(log_probs)
+            if mean is not None:
+                # expand design mats:
+                H_expanded = self.H.create_for_batch(time=t, **kwargs)
+                Ht_expanded = H_expanded.permute(0, 2, 1)
+                R_expanded = self.R.create_for_batch(time=t, **kwargs)
+
+                # observed at this t:
+                kf_obs = kf_input[:, t, :]
+                # observable components of state, cov:
+                obs_state = H_expanded.bmm(mean).squeeze(2)
+                S = torch.bmm(torch.bmm(H_expanded, covs[t]), Ht_expanded) + R_expanded  # total covariance
+
+                # for groups with some nans, need to per-group MVnorm.
+                isnan = (kf_obs != kf_obs)
+                groups_with_nan = [i for i in range(num_groups) if isnan[i].data.any()]
+                for i in groups_with_nan:
+                    this_isnan = isnan[i].data
+                    if not this_isnan.all():
+                        # TODO: indexing is more powerful in pytorch 0.4, this could probably be cleaner now:
+                        valid_idx = where(this_isnan.numpy() == 0)[0].tolist()
+                        this_mvnorm = MultivariateNormal(loc=obs_state[i][valid_idx],
+                                                         covariance_matrix=S[i][valid_idx][:, valid_idx])
+                        log_probs[i] = this_mvnorm.log_prob(kf_obs[i][valid_idx])
+
+                # for groups with no nans, can batch MVnorm
+                no_nan = [i for i in range(num_groups) if i not in groups_with_nan]
+                if len(no_nan) > 0:
+                    batch_mvnorm = MultivariateNormal(loc=obs_state[no_nan], covariance_matrix=S[no_nan])
+                    log_probs[no_nan] = batch_mvnorm.log_prob(kf_obs[no_nan])
+
+            # if mean was none, we just append the nan-log-probs:
+            out.append(log_probs)
+
+        return torch.stack(out, 1)
+
+    @reset_design_on_exit
     def forward(self, kf_input, initial_state=None, **kwargs):
         """
         Perform a forward-pass, with kf_input being a Variable whose first dimension is group, second is time, and third is
@@ -136,7 +199,7 @@ class KalmanFilter(torch.nn.Module):
         kwargs['kf_input'] = kf_input
 
         # run kalman-filter to get predicted state
-        means_per_horizon, _ = self.filter(initial_state=initial_state, horizon=self.horizon, **kwargs)
+        means_per_horizon, _ = self._filter(initial_state=initial_state, horizon=self.horizon, **kwargs)
         means = means_per_horizon[self.horizon]
 
         # get predicted measures from state
@@ -174,7 +237,7 @@ class KalmanFilter(torch.nn.Module):
 
         # run kalman-filter to get predicted state
         horizon = horizon or self.horizon
-        means_per_horizon, _ = self.filter(initial_state=initial_state, horizon=horizon, **kwargs)
+        means_per_horizon, _ = self._filter(initial_state=initial_state, horizon=horizon, **kwargs)
         means = means_per_horizon[horizon]
 
         # get the observable states:
@@ -276,13 +339,11 @@ class KalmanFilter(torch.nn.Module):
     # Main KF Steps -------------------------
     def kf_predict(self, state_mean, state_cov, time, **kwargs):
         """
-        The 'predict' step of the kalman filter.
-
-        :param obs: The observed data for this timestep. Not needed for the predict computations themselves, but will be
-        passed to the `create_for_batch` methods of the design-matrices.
-        :param state_mean: The state mean (for each item in the batch).
-        :param state_cov: The state covariance (for each item in the batch).
-        :return: The update state_mean, state_cov.
+        :param state_mean: The means for the latent state.
+        :param state_cov: The covariance matrix for the latent state.
+        :param time: The timestep, relative to start.
+        :param kwargs: Kwargs passed to the design-matrices `create_for_batch` methods.
+        :return: The updated state_mean, state_cov.
         """
         # expand design-matrices for the batch
         F_expanded = self.F.create_for_batch(time=time, **kwargs)
@@ -294,6 +355,13 @@ class KalmanFilter(torch.nn.Module):
         return state_mean, state_cov
 
     def kf_update(self, state_mean, state_cov, time, **kwargs):
+        """
+        :param state_mean: The means for the latent state.
+        :param state_cov: The covariance matrix for the latent state.
+        :param time: The timestep, relative to start.
+        :param kwargs: Kwargs passed to the design-matrices `create_for_batch` methods; additionally, the `kf_input` kwarg.
+        :return: The updated state_mean, state_cov.
+        """
 
         # expand design-matrices for the batch:
         H_expanded = self.H.create_for_batch(time=time, **kwargs)
@@ -317,12 +385,13 @@ class KalmanFilter(torch.nn.Module):
             this_isnan = isnan[i].data
             if not this_isnan.all():  # if all nan, just don't perform update
                 # for partial nan, perform partial update
-                valid_idx = where(this_isnan.numpy() == 0)[0].tolist()  # will clean up when pytorch 0.4 is released
+                # TODO: indexing is more powerful in pytorch 0.4, this can probably be cleaner:
+                valid_idx = where(this_isnan.numpy() == 0)[0].tolist()
                 # get the subset of measures that are non-nan:
                 K_sub = K[i][:, valid_idx]
                 residual_sub = residual[i][valid_idx]
                 H_sub = H_expanded[i][valid_idx, :]
-                R_sub = R_expanded[i][valid_idx][:, valid_idx]  # will clean up when pytorch 0.4 is released
+                R_sub = R_expanded[i][valid_idx][:, valid_idx]
 
                 # perform updates with subsetted matrices
                 state_mean_new[i] = state_mean[i] + torch.mm(K_sub, residual_sub.unsqueeze(1))
