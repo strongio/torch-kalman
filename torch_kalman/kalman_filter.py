@@ -29,9 +29,6 @@ class KalmanFilter(torch.nn.Module):
         # (useful so that Processes can get added to design and do all the work of adding their nn_modules)
         self.additional_modules = self.design.additional_modules
 
-        # if a method already decorated w/`reset_design_on_exit` needs filtering, it can call the non-decorated _filter
-        self.filter = reset_design_on_exit(self._filter)
-
     @property
     def num_states(self):
         return len(self.design.states)
@@ -41,11 +38,16 @@ class KalmanFilter(torch.nn.Module):
         return len(self.design.measures)
 
     # Main Forward-Pass Methods --------------------
+    @property
+    def filter(self, initial_state=None, horizon=None, **kwargs):
+        return reset_design_on_exit(self._filter)(self, )
+
     def _filter(self, initial_state=None, horizon=None, **kwargs):
         """
-        Perform kalman-filtering operation on a tensor of data. It's not recommended to call this method directly; instead,
-        this method is meant to be called by methods such as `forward`, `components`, and `retrieve_state`, which return
-        more specific and goal-oriented output than this method (which simply returns all the output).
+        Perform kalman-filtering operation on a tensor of data. This method should not be called directly; instead, it's used
+        by methods such as `forward`, `components`, and `retrieve_state`, which return more specific and goal-oriented output
+         than this method (which simply returns all the output). If you need to call this method directly, be sure to call
+         `design.reset()` afterwards.
 
         :param initial_state: Optional, a tuple containing the initial state mean and initial state covariance. If left as
         None, values for these will be supplied as defined in the `initialize_state` method of the design.
@@ -132,6 +134,8 @@ class KalmanFilter(torch.nn.Module):
         :param kwargs: Kwargs that will be passed to nn-modules in the design.
         :return: A 2D Variable (group*time) containing the log-likelihoods.
         """
+        kwargs['kf_input'] = kf_input
+
         if horizon is None:
             horizon = self.horizon
         means_per_horizon, covs_per_horizon = self._filter(initial_state=initial_state, horizon=horizon, **kwargs)
@@ -314,7 +318,7 @@ class KalmanFilter(torch.nn.Module):
                             "with kf_input[:,:,None].")
         kwargs['kf_input'] = kf_input
 
-        means_per_horizon, covs_per_horizon = self.filter(initial_state=initial_state, horizon=0, **kwargs)
+        means_per_horizon, covs_per_horizon = self._filter(initial_state=initial_state, horizon=0, **kwargs)
         means = means_per_horizon[0]
         covs = covs_per_horizon[0]
 
