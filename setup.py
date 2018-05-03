@@ -9,4 +9,4 @@ setup(name='torch_kalman',
       license='MIT',
       packages=['torch_kalman'],
       zip_safe=False,
-      install_requires=['torch', 'numpy'])
+      install_requires=['torch==0.4.0', 'numpy==1.14.2'])
