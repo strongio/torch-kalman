@@ -144,7 +144,10 @@ class KalmanFilter(torch.nn.Module):
         num_groups = kf_input.data.shape[0]
 
         out = []
-        for t, mean in means.items():
+        for t in range(len(means)):
+            mean = means[t]
+            cov = covs[t]
+
             # log_probs:
             log_probs = torch.zeros(num_groups)
             log_probs[:] = nan
@@ -159,7 +162,7 @@ class KalmanFilter(torch.nn.Module):
                 kf_obs = kf_input[:, t, :]
                 # observable components of state, cov:
                 obs_state = H_expanded.bmm(mean).squeeze(2)
-                S = torch.bmm(torch.bmm(H_expanded, covs[t]), Ht_expanded) + R_expanded  # total covariance
+                S = torch.bmm(torch.bmm(H_expanded, cov), Ht_expanded) + R_expanded  # total covariance
 
                 # for groups with some nans, need to per-group MVnorm.
                 isnan = (kf_obs != kf_obs)
@@ -210,7 +213,8 @@ class KalmanFilter(torch.nn.Module):
         nan_pad = Variable(torch.zeros(kf_input.data.shape[0], self.num_measures, 1))
         nan_pad[:, :, :] = nan
         predicted_measures = []
-        for t, mean in means.items():
+        for t in range(len(means)):
+            mean = means[t]
             if mean is None:
                 predicted_measures.append(nan_pad)
             else:
@@ -249,7 +253,8 @@ class KalmanFilter(torch.nn.Module):
         nan_pad[:, :, :] = nan
         observable_states = {state.id: self.design.state_idx[state.id] for state in self.design.measurable_states}
         components = defaultdict(list)
-        for t, mean in means.items():
+        for t in range(len(means)):
+            mean = means[t]
             if mean is None:
                 for state_id in observable_states.keys():
                     components[state_id].append(nan_pad)
