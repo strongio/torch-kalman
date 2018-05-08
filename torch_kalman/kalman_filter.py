@@ -338,6 +338,46 @@ class KalmanFilter(torch.nn.Module):
 
         return torch.cat(out_means, 0), torch.cat(out_covs, 0)
 
+    @reset_design_on_exit
+    def mean_se(self, kf_input, initial_state=None, **kwargs):
+        if len(kf_input.data.shape) != 3:
+            raise Exception("Unexpected shape for `kf_input`. If your data are univariate, add the singular third dimension "
+                            "with kf_input[:,:,None].")
+        kwargs['kf_input'] = kf_input
+
+        # run kalman-filter to get predicted state
+        means_per_horizon, covs_per_horizon = self._filter(initial_state=initial_state, horizon=self.horizon, **kwargs)
+        means = means_per_horizon[self.horizon]
+        covs = covs_per_horizon[self.horizon]
+
+        # get predicted measures (and std-err) from state
+        nan_pad = Variable(torch.zeros(kf_input.data.shape[0], 1, self.num_measures))
+        nan_pad[:, :, :] = nan
+        out_means, out_std_devs = [], []
+        for t in range(len(means)):
+            mean, cov = means[t], covs[t]
+            if mean is None:
+                out_means.append(nan_pad)
+                out_std_devs.append(nan_pad)
+            else:
+                # expand design mats:
+                H_expanded = self.H.create_for_batch(time=t, **kwargs)
+                Ht_expanded = H_expanded.permute(0, 2, 1)
+                R_expanded = self.R.create_for_batch(time=t, **kwargs)
+
+                # state mean, cov:
+                pred_mean = torch.bmm(H_expanded, mean).squeeze(2)
+                pred_cov = torch.bmm(torch.bmm(H_expanded, cov), Ht_expanded) + R_expanded  # total covariance
+
+                # cov -> std:
+                pred_std_dev = torch.sqrt(batch_diag(pred_cov))
+
+                # append:
+                out_means.append(pred_mean[:, None, :])
+                out_std_devs.append(pred_std_dev[:, None, :])
+
+        return torch.cat(out_means, 1), torch.cat(out_std_devs, 1)
+
     # Kalman-Smoother ------------------------------
     @reset_design_on_exit
     def smooth(self, input):
