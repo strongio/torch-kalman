@@ -38,10 +38,6 @@ class KalmanFilter(torch.nn.Module):
         return len(self.design.measures)
 
     # Main Forward-Pass Methods --------------------
-    @property
-    def filter(self, initial_state=None, horizon=None, **kwargs):
-        return reset_design_on_exit(self._filter)(self, )
-
     def _filter(self, initial_state=None, horizon=None, **kwargs):
         """
         Perform kalman-filtering operation on a tensor of data. This method should not be called directly; instead, it's used
