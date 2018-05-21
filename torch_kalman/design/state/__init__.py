@@ -8,6 +8,7 @@ from warnings import warn
 
 
 class State(CovarianceElement):
+    # TODO: initial_value -> initial_mean. add initial_std_dev, w/default None that will use Q.
     def __init__(self, id, std_dev, initial_value=0.0):
         """
         A "state" in a kalman filter is an unobserved variable that generates the observed data. At each timestep,
