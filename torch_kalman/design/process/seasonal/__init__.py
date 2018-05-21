@@ -20,11 +20,11 @@ class Seasonal(Process):
         the timestep at which each group starts.
         :param sep: Separator for creating state ids from prefix and individual ids.
         """
-        if (duration == 1) != (not season_start):
+        if (duration == 1) != (season_start is None):
             if duration == 1:
                 raise ValueError("If duration == 1, then do not supply `season_start`.")
             else:
-                raise ValueError("If duration > 1, must supply `season_start")
+                raise ValueError("If duration > 1, must supply `season_start`.")
 
         # input:
         self.nn_input = SeasonNNInput(name=time_start_input_name)
