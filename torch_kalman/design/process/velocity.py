@@ -1,4 +1,4 @@
-from torch_kalman.design.lazy_parameter import LazyParameter
+from torch_kalman.lazy_parameter import LazyParameter
 from torch_kalman.design.process import Process
 from torch_kalman.utils.utils import nonejoin
 from torch_kalman.design.state_element import StateElement

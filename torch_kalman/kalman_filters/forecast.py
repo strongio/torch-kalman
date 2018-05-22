@@ -4,7 +4,7 @@ from torch_kalman.design.process.velocity import NoVelocity, DampenedVelocity
 from torch_kalman.design.measure import Measure
 from torch_kalman.kalman_filter import KalmanFilter
 
-from torch_kalman.design.lazy_parameter import LogLinked, LogitLinked
+from torch_kalman.lazy_parameter.lazy_parameters import LogLinked, LogitLinked
 
 from torch.nn import ParameterList
 

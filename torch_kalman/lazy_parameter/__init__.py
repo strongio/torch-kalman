@@ -1,6 +1,3 @@
-import torch
-
-
 class LazyParameter(object):
     def __init__(self, parameter):
         self.parameter = parameter
@@ -25,17 +22,3 @@ class LazyParameter(object):
         for lam in self.lambda_chain:
             param_out = lam(param_out)
         return param_out
-
-
-class LogLinked(LazyParameter):
-    def __init__(self, parameter):
-        super(LogLinked, self).__init__(parameter=parameter)
-        self.lambda_chain.append(torch.exp)
-        self.after_init_idx = 1
-
-
-class LogitLinked(LazyParameter):
-    def __init__(self, parameter):
-        super(LogitLinked, self).__init__(parameter=parameter)
-        self.lambda_chain.append(torch.sigmoid)
-        self.after_init_idx = 1

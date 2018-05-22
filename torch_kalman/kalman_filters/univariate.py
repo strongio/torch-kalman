@@ -3,7 +3,7 @@ from torch_kalman.design.process.velocity import ConstantVelocity
 from torch_kalman.design.measure import Measure
 from torch_kalman.kalman_filter import KalmanFilter
 
-from torch_kalman.design.lazy_parameter import LogLinked
+from torch_kalman.lazy_parameter.lazy_parameters import LogLinked
 
 import torch
 from torch.nn import Parameter
