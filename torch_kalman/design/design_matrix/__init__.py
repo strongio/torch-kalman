@@ -19,11 +19,11 @@ class DesignMatrix(NNOutputTracker):
         self._template = None
         self.batch_cache = {}
 
-    def create_for_batch(self, time, **kwargs):
+    def _create_for_batch(self, time, template, **kwargs):
         bs = kwargs['kf_input'].data.shape[0]
 
         if self.nn_module.isnull:
-            return expand(self.template, bs)
+            return expand(template, bs)
         else:
             # check kwargs:
             missing_kwargs = self.input_names - set(kwargs.keys())
@@ -34,7 +34,12 @@ class DesignMatrix(NNOutputTracker):
 
             # expand, replacing NNOutput placeholders:
             nn_outputs = self.nn_module(time=time, **nn_module_kwargs)
-            expanded = expand(self.template, bs).clone()
+            expanded = expand(template, bs).clone()
             for (row, col), output in nn_outputs:
                 expanded[:, row, col] = output
             return expanded
+
+    def create_for_batch(self, time, **kwargs):
+        if time not in self.batch_cache.keys():
+            self.batch_cache[time] = self._create_for_batch(time=time, template=self.template, **kwargs)
+        return self.batch_cache[time]

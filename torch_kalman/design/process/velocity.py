@@ -13,7 +13,7 @@ class NoVelocity(Process):
         :param std_dev: Standard deviation (process-noise).
         :param sep: The separator between id_prefix and the state name (defaults "_").
         """
-        pos = State(id=nonejoin([id_prefix, 'position'], sep), std_dev=std_dev, initial_value=initial_value)
+        pos = State(id=nonejoin([id_prefix, 'position'], sep), std_dev=std_dev, initial_mean=initial_value)
         pos.add_transition(pos)
         super(NoVelocity, self).__init__(states=(pos,))
 
@@ -37,11 +37,8 @@ class DampenedVelocity(Process):
         """
 
         # position and velocity:
-        position = State(id=nonejoin([id_prefix, 'position'], sep),
-                         std_dev=std_devs[0],
-                         initial_value=initial_position)
-        velocity = State(id=nonejoin([id_prefix, 'velocity'], sep),
-                         std_dev=std_devs[1])
+        position = State(id=nonejoin([id_prefix, 'position'], sep), std_dev=std_devs[0], initial_mean=initial_position)
+        velocity = State(id=nonejoin([id_prefix, 'velocity'], sep), std_dev=std_devs[1])
         position.add_correlation(velocity, correlation=corr)
 
         # next position is just positition + velocity

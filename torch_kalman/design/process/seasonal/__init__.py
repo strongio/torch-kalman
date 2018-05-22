@@ -35,9 +35,8 @@ class Seasonal(Process):
         states = []
         for i in range(period):
             season = str(i).rjust(pad_n, "0")
-            this_state = State(id=nonejoin([id_prefix, 'season', season], sep),
-                               std_dev=std_dev if i == 0 else 0.0,
-                               initial_value=NNOutput(nn_module=self.nn_module_initial, nn_output_idx=i))
+            this_state = State(id=nonejoin([id_prefix, 'season', season], sep), std_dev=std_dev if i == 0 else 0.0,
+                               initial_mean=NNOutput(nn_module=self.nn_module_initial, nn_output_idx=i))
             states.append(this_state)
 
         # define transitions:

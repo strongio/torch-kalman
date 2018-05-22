@@ -137,14 +137,8 @@ class Design(object):
 
     def initialize_state(self, **kwargs):
 
-        initial_mean_expanded = self.InitialState.create_for_batch(time=0, **kwargs)
-
-        if self.Q.nn_module.isnull:
-            initial_cov = self.Q.template
-        else:  # at the time of writing, Q can't have an nn-module. if that changes, the above won't work.
-            raise NotImplementedError("Please report this error to the package maintainer")
-        bs = initial_mean_expanded.data.shape[0]
-        initial_cov_expanded = expand(initial_cov, bs)
+        initial_mean_expanded = self.InitialState.create_means_for_batch(time=0, **kwargs)
+        initial_cov_expanded = self.InitialState.create_cov_for_batch(time=0, **kwargs)
 
         return initial_mean_expanded, initial_cov_expanded
 
