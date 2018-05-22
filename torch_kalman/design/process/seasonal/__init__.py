@@ -1,6 +1,7 @@
 from torch_kalman.design.nn_output import NNOutput, NNDictOutput
 from torch_kalman.design.process import Process
-from torch_kalman.design.process.seasonal.nn_modules import InitialSeasonStateNN, SeasonDurationNN, SeasonNNInput
+from torch_kalman.design.process.seasonal.nn_modules import InitialSeasonStateNN, SeasonDurationNN
+from torch_kalman.design.nn_input import InitialToCurrentTime
 from torch_kalman.utils.utils import nonejoin
 from torch_kalman.design.state import State
 
@@ -27,7 +28,7 @@ class Seasonal(Process):
                 raise ValueError("If duration > 1, must supply `season_start`.")
 
         # input:
-        self.nn_input = SeasonNNInput(name=time_start_input_name)
+        self.nn_input = InitialToCurrentTime(name=time_start_input_name)
 
         # define states, their std-dev, and initial-values:
         self.nn_module_initial = InitialSeasonStateNN(period=period, duration=duration)

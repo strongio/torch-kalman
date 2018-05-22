@@ -3,18 +3,7 @@ from math import floor
 import torch
 from torch.autograd import Variable
 
-from torch_kalman.design.nn_input import NNInput
 from torch_kalman.utils.torch_utils import Param0
-
-
-class SeasonNNInput(NNInput):
-    def __init__(self, name):
-        super().__init__(name=name)
-
-    def slice(self, tensor, time):
-        if len(tensor.data.shape) != 1:
-            raise ValueError("The input {} should be one-dimensional.")
-        return tensor + time
 
 
 class SeasonNN(torch.nn.Module):
