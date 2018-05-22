@@ -7,8 +7,6 @@ from torch_kalman.design.nn_output import DynamicState
 from torch_kalman.design.design_matrix.design_matrices import F, H, Q, R, B
 from torch_kalman.design.design_matrix.initial_state import InitialState
 
-from torch_kalman.utils.torch_utils import expand
-
 
 class Design(object):
     def __init__(self):
