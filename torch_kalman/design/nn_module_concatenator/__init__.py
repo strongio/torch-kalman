@@ -29,7 +29,7 @@ class NNModuleConcatenator(torch.nn.Module):
     def forward(self, time, **kwargs):
         assert self.finalized
         for i, this_module in enumerate(self.concat_modules):
-            this_kwargs = {this_nn_input.name: this_nn_input.slice(kwargs[this_nn_input])
+            this_kwargs = {this_nn_input.name: this_nn_input.slice(kwargs[this_nn_input.name], time=time)
                            for this_nn_input in self.input_lists[i]}
             this_nn_outputs = self.output_lists[i]
             module_output_raw = this_module(**this_kwargs)

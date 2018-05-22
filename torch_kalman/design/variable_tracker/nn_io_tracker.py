@@ -25,7 +25,10 @@ class NNIOTracker(VariableTracker):
     def input_names(self):
         if self._nn_module is None:
             raise Exception("The nn_module hasn't been finalized yet with a call to `prepare_nn_module`.")
-        return set(input.name for input in self.nn_module.module_inputs)
+        out = set()
+        for input_list in self.nn_module.input_lists:
+            [out.add(input.name) for input in input_list]
+        return out
 
     def prepare_nn_module(self, nn_inputs_by_module):
         """
