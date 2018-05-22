@@ -4,7 +4,8 @@ import torch
 from torch.nn import ModuleList
 
 from torch_kalman.design.nn_output import DynamicState
-from torch_kalman.design.design_matrix import F, H, R, Q, B, InitialState
+from torch_kalman.design.design_matrix.design_matrices import F, H, Q, R, B
+from torch_kalman.design.design_matrix.initial_state import InitialState
 
 from torch_kalman.utils.torch_utils import expand
 
