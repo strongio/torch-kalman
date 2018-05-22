@@ -35,3 +35,7 @@ class Measure(CovarianceElement):
             if isinstance(self.states[key], float):
                 self.states[key] = Variable(Tensor([self.states[key]]))
             self.states[key] = make_callable(self.states[key])
+
+
+# alias that's more consistent w/StateElement:
+MeasurementElement = Measure

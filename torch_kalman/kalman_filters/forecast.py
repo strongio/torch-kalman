@@ -133,7 +133,7 @@ class Forecast(KalmanFilter):
             raise Exception("Cannot add processes to finalized design.")
 
         # add process to design:
-        self.design.add_states(process.states)
+        self.design.add_state_elements(process.states)
 
         # keep track of the measure it belongs to:
         measure_processes = self.processes_per_dim[measure_name]

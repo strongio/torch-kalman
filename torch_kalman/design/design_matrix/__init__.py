@@ -1,8 +1,8 @@
-from torch_kalman.design.nn_output import NNOutputTracker
+from torch_kalman.design.variable_tracker.nn_io_tracker import NNIOTracker
 from torch_kalman.utils.torch_utils import expand
 
 
-class DesignMatrix(NNOutputTracker):
+class DesignMatrix(NNIOTracker):
     def __init__(self):
         self._template = None
         self.batch_cache = {}

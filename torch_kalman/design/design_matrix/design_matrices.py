@@ -7,25 +7,25 @@ from torch_kalman.utils.torch_utils import quad_form_diag
 
 
 class F(DesignMatrix):
-    def __init__(self, states):
-        self.states = states
+    def __init__(self, state_elements):
+        self.state_elements = state_elements
         self.transitions = {}
         super().__init__()
 
     @property
     def template(self):
         if self._template is None:
-            num_states = len(self.states)
-            self._template = Variable(torch.zeros((num_states, num_states)))
+            num_state_elements = len(self.state_elements)
+            self._template = Variable(torch.zeros((num_state_elements, num_state_elements)))
             for (row, col), multiplier in self.transitions.items():
                 self._template[row, col] = multiplier()
         return self._template
 
     def register_variables(self):
         self.nn_outputs = []
-        state_idx = {state_id: idx for idx, state_id in enumerate(self.states.keys())}
+        state_idx = {state_id: idx for idx, state_id in enumerate(self.state_elements.keys())}
 
-        for state_id, state in self.states.items():
+        for state_id, state in self.state_elements.items():
             from_idx = state_idx[state.id]
             for transition_to_id, multiplier in state.transitions.items():
                 to_idx = state_idx[transition_to_id]
@@ -36,8 +36,8 @@ class F(DesignMatrix):
 
 
 class H(DesignMatrix):
-    def __init__(self, states, measures):
-        self.states = states
+    def __init__(self, state_elements, measures):
+        self.state_elements = state_elements
         self.measures = measures
         self.state_to_measures = {}
         super().__init__()
@@ -45,21 +45,20 @@ class H(DesignMatrix):
     @property
     def template(self):
         if self._template is None:
-            num_measures, num_states = len(self.measures), len(self.states)
-            self._template = Variable(torch.zeros((num_measures, num_states)))
+            num_measures, num_state_elements = len(self.measures), len(self.state_elements)
+            self._template = Variable(torch.zeros((num_measures, num_state_elements)))
             for (row, col), multiplier in self.state_to_measures.items():
                 self._template[row, col] = multiplier()
         return self._template
 
     def register_variables(self):
         self.nn_outputs = []
-        self.nn_modules = []
 
-        state_idx = {state_id: idx for idx, state_id in enumerate(self.states.keys())}
+        state_idx = {state_id: idx for idx, state_id in enumerate(self.state_elements.keys())}
         measure_idx = {measure_id: idx for idx, measure_id in enumerate(self.measures.keys())}
 
         for measure in self.measures.values():
-            for state_id, multiplier in measure.states.items():
+            for state_id, multiplier in measure.state_elements.items():
                 this_measure_idx = measure_idx[measure.id]
                 this_state_idx = state_idx[state_id]
                 self.state_to_measures.update({(this_measure_idx, this_state_idx): multiplier})
@@ -101,9 +100,9 @@ class CovarianceMatrix(DesignMatrix):
 
     def register_covariance(self, variables):
         """
-        Take a list of states or measures, and generate a covariance matrix.
+        Take a list of state_elements or measures, and generate a covariance matrix.
 
-        :param variables: A list of states or measures.
+        :param variables: A list of state_elements or measures.
         :return: A covariance Matrix, as a pytorch Variable.
         """
 
@@ -125,16 +124,16 @@ class CovarianceMatrix(DesignMatrix):
 
 
 class Q(CovarianceMatrix):
-    def __init__(self, states):
-        self.states = states
+    def __init__(self, state_elements):
+        self.state_elements = state_elements
         super().__init__()
 
     @property
     def num_vars(self):
-        return len(self.states)
+        return len(self.state_elements)
 
     def register_variables(self):
-        return self.register_covariance(self.states.values())
+        return self.register_covariance(self.state_elements.values())
 
 
 class R(CovarianceMatrix):

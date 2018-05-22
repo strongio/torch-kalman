@@ -3,7 +3,7 @@ from torch_kalman.design.process import Process
 from torch_kalman.design.process.seasonal.nn_modules import InitialSeasonStateNN, SeasonDurationNN
 from torch_kalman.design.nn_input import InitialToCurrentTime
 from torch_kalman.utils.utils import nonejoin
-from torch_kalman.design.state import State
+from torch_kalman.design.state_element import StateElement
 
 
 class Seasonal(Process):
@@ -36,8 +36,8 @@ class Seasonal(Process):
         states = []
         for i in range(period):
             season = str(i).rjust(pad_n, "0")
-            this_state = State(id=nonejoin([id_prefix, 'season', season], sep), std_dev=std_dev if i == 0 else 0.0,
-                               initial_mean=NNOutput(nn_module=self.nn_module_initial, nn_output_idx=i))
+            this_state = StateElement(id=nonejoin([id_prefix, 'season', season], sep), std_dev=std_dev if i == 0 else 0.0,
+                                      initial_mean=NNOutput(nn_module=self.nn_module_initial, nn_output_idx=i))
             states.append(this_state)
 
         # define transitions:
@@ -74,12 +74,12 @@ class Seasonal(Process):
     def add_modules_to_design(self, design, known_to_super=False):
         design.add_nn_module(type='initial_state',
                              nn_module=self.nn_module_initial,
-                             nn_input=self.nn_input,
+                             nn_inputs=(self.nn_input,),
                              known_to_super=known_to_super)
         if self.nn_module_season_duration is not None:
             design.add_nn_module(type='transition',
                                  nn_module=self.nn_module_season_duration,
-                                 nn_input=self.nn_input,
+                                 nn_inputs=(self.nn_input,),
                                  known_to_super=known_to_super)
 
     @property
