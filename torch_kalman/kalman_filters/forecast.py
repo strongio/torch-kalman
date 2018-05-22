@@ -71,7 +71,7 @@ class Forecast(KalmanFilter):
 
         self.add_process(measure_name, process)
 
-    def add_season(self, measure_name, period, duration, season_start=None, time_start_input_name='time_start'):
+    def add_season(self, measure_name, period, duration, season_start=None):
         """
         Add a seasonal process to `measure_name`.
 
@@ -81,8 +81,6 @@ class Forecast(KalmanFilter):
         example, if we wanted to indicate week-in-year seasonality for daily data, we'd specify period=52, duration=7.
         :param season_start: The timestep on which the season-starts. This value is in the same units as those given by
         the next argument.
-        :param time_start_input_name: When `forward` is called, you need to provide an argument with this name, specifying
-        the timestep at which each group starts.
         """
         assert isinstance(measure_name, str)
         self.process_params.append(Param0())
@@ -91,8 +89,7 @@ class Forecast(KalmanFilter):
                            period=period,
                            std_dev=LogLinked(self.process_params[-1]),
                            duration=duration,
-                           season_start=season_start,
-                           time_start_input_name=time_start_input_name)
+                           season_start=season_start)
 
         self.add_process(measure_name, process)
 
@@ -133,7 +130,7 @@ class Forecast(KalmanFilter):
             raise Exception("Cannot add processes to finalized design.")
 
         # add process to design:
-        self.design.add_states(process.states)
+        self.design.add_state_elements(process.states)
 
         # keep track of the measure it belongs to:
         measure_processes = self.processes_per_dim[measure_name]
@@ -167,7 +164,7 @@ class Forecast(KalmanFilter):
             for name in (measure_name, 'common'):
                 for process in self.processes_per_dim.get(name, []):
                     multiplier = 1.0
-                    this_measure.add_state(process.observable, multiplier=multiplier)
+                    this_measure.add_state_element(process.observable, multiplier=multiplier)
 
             # add to design:
             self.design.add_measure(this_measure)

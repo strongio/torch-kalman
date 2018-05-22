@@ -25,13 +25,13 @@ class KalmanFilter(torch.nn.Module):
                             "child-module's __init__ method.")
 
         # when people call design.add_nn_module, if they didn't assign that module to self, they indicate
-        # known_to_super=False. when they do that, it's added to this list, and so its guaranteed pytorch will know about it.
+        # known_to_super=False. when they do that, it's added to this list, and so it's guaranteed pytorch will know about it
         # (useful so that Processes can get added to design and do all the work of adding their nn_modules)
         self.additional_modules = self.design.additional_modules
 
     @property
-    def num_states(self):
-        return len(self.design.states)
+    def num_state_elements(self):
+        return len(self.design.state_elements)
 
     @property
     def num_measures(self):
@@ -247,7 +247,7 @@ class KalmanFilter(torch.nn.Module):
         # get the observable states:
         nan_pad = Variable(torch.zeros(kf_input.data.shape[0], 1, 1))
         nan_pad[:, :, :] = nan
-        observable_states = {state.id: self.design.state_idx[state.id] for state in self.design.measurable_states}
+        observable_states = {state.id: self.design.state_idx[state.id] for state in self.design.measurable_state_elements}
         components = defaultdict(list)
         for t in range(len(means)):
             mean = means[t]

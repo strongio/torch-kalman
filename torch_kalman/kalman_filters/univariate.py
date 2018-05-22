@@ -36,7 +36,7 @@ class UnivariateWithVelocity(KalmanFilter):
 
         # measures ---
         pos_measure = Measure(id=1, std_dev=measure_std_dev)
-        pos_measure.add_state(process.observable)
+        pos_measure.add_state_element(process.observable)
         self.design.add_measure(pos_measure)
 
         self.design.finalize()

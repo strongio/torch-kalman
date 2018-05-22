@@ -3,18 +3,7 @@ from math import floor
 import torch
 from torch.autograd import Variable
 
-from torch_kalman.design.nn_input import NNInput
 from torch_kalman.utils.torch_utils import Param0
-
-
-class SeasonNNInput(NNInput):
-    def __init__(self, name):
-        super().__init__(name=name)
-
-    def slice(self, tensor, time):
-        if len(tensor.data.shape) != 1:
-            raise ValueError("The input {} should be one-dimensional.")
-        return tensor + time
 
 
 class SeasonNN(torch.nn.Module):
@@ -37,8 +26,8 @@ class InitialSeasonStateNN(SeasonNN):
         # if we have N seasons, we have N-1 degrees of freedom. the first is always constrained to zero
         self.initial_state_params = Param0(period - 1)
 
-    def forward(self, time):
-        bs = time.data.shape[0]
+    def forward(self, time_start):
+        bs = time_start.data.shape[0]
 
         # the first season is constrained to be -sum(the-rest) s.t. the seasons sum to zero
         initial_states = Variable(torch.zeros(self.period))
@@ -46,7 +35,7 @@ class InitialSeasonStateNN(SeasonNN):
         initial_states[0] = -torch.sum(initial_states[1:])
 
         out = Variable(torch.zeros(bs, self.period))
-        for i, init_time in enumerate(time.data.tolist()):
+        for i, init_time in enumerate(time_start.data.tolist()):
             # start-time => start-season
             init_season = int(floor(init_time / self.duration))
 
@@ -66,11 +55,11 @@ class SeasonDurationNN(SeasonNN):
             assert season_start.is_integer()
         self.season_start = season_start
 
-    def forward(self, time):
-        bs = time.data.shape[0]
+    def forward(self, time_start):
+        bs = time_start.data.shape[0]
 
         out = {key: torch.zeros(bs) for key in ('to_self', 'to_first', 'to_next', 'from_first_to_first')}
-        in_transition = (torch.fmod(time, self.duration) == self.season_start).data
+        in_transition = (torch.fmod(time_start, self.duration) == self.season_start).data
         out['to_self'][~in_transition] = 1.
         out['to_first'][in_transition] = -1.
         out['to_next'][in_transition] = 1.

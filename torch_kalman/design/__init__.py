@@ -3,51 +3,46 @@ from collections import OrderedDict
 import torch
 from torch.nn import ModuleList
 
-from torch_kalman.design.nn_output import DynamicState
-from torch_kalman.design.design_matrix import F, H, R, Q, B, InitialState
-
-from torch_kalman.utils.torch_utils import expand
+from torch_kalman.design.variable_tracker.nn_state import NNState
+from torch_kalman.design.design_matrix.design_matrices import F, H, Q, R, B
+from torch_kalman.design.design_matrix.initial_state import InitialState
 
 
 class Design(object):
     def __init__(self):
-        self.states = {}
-        self.measures = {}
-        self.nn_modules = dict(transition={},
-                               measure={},
-                               state={},
-                               initial_state={})
+        self.state_elements = dict()
+        self.measures = dict()
+        self.nn_modules = dict(transition=dict(),
+                               measure=dict(),
+                               state=dict(),
+                               initial_state=dict())
 
         self.additional_modules = ModuleList()
 
         self.Q, self.F, self.R, self.H = None, None, None, None
         self.InitialState, self.NNState = None, None
         self._state_idx, self._measure_idx = None, None
-        self._measurable_states = None
+        self._measurable_state_elements = None
 
-    def add_nn_module(self, type, nn_module, nn_input, known_to_super):
-        if self.finalized:
-            raise Exception("Can't add nn_module to design, it's been finalized already.")
-        if nn_module in self.nn_modules[type].keys():
-            raise Exception("This nn-module was already registered for '{}'.".format(type))
-        self.nn_modules[type][nn_module] = nn_input
+    def add_nn_module(self, type, nn_module, nn_inputs, known_to_super):
+        assert not self.finalized
+        assert nn_module not in self.nn_modules[type].keys()
+        self.nn_modules[type][nn_module] = nn_inputs
         if not known_to_super:
             self.additional_modules.append(nn_module)
 
-    def add_state(self, state):
-        if self.finalized:
-            raise Exception("Can't add state to design, it's been finalized already.")
-        if state.id in self.states.keys():
+    def add_state_element(self, state):
+        assert not self.finalized
+        if state.id in self.state_elements.keys():
             raise Exception("State with the same ID already in design.")
-        self.states[state.id] = state
+        self.state_elements[state.id] = state
 
-    def add_states(self, states):
+    def add_state_elements(self, states):
         for state in states:
-            self.add_state(state)
+            self.add_state_element(state)
 
     def add_measure(self, measure):
-        if self.finalized:
-            raise Exception("Can't add measure to design, it's been finalized already.")
+        assert not self.finalized
         if measure.id in self.measures.keys():
             raise Exception("Measurement with the same ID already in design.")
         self.measures[measure.id] = measure
@@ -73,53 +68,49 @@ class Design(object):
             raise Exception("Design was already finalized.")
 
         # organize the states/measures:
-        self.states = OrderedDict((k, self.states[k]) for k in sorted(self.states.keys()))
-        [state.torchify() for state in self.states.values()]
+        self.state_elements = OrderedDict((k, self.state_elements[k]) for k in sorted(self.state_elements.keys()))
+        [state.torchify() for state in self.state_elements.values()]
         self.measures = OrderedDict((k, self.measures[k]) for k in sorted(self.measures.keys()))
         [measure.torchify() for measure in self.measures.values()]
 
         # initial-values:
-        self.InitialState = InitialState(self.states)
-        self.InitialState.add_nn_inputs(self.nn_modules['initial_state'].items())
-        self.InitialState.finalize_nn_module()
+        self.InitialState = InitialState(self.state_elements)
+        self.InitialState.prepare_nn_module(self.nn_modules['initial_state'])
 
         # design-mats:
-        self.F = F(states=self.states)
-        self.F.add_nn_inputs(self.nn_modules['transition'].items())
-        self.F.finalize_nn_module()
+        self.F = F(self.state_elements)
+        self.F.prepare_nn_module(self.nn_modules['transition'])
 
-        self.H = H(states=self.states, measures=self.measures)
-        self.H.add_nn_inputs(self.nn_modules['measure'].items())
-        self.H.finalize_nn_module()
+        self.H = H(self.state_elements, self.measures)
+        self.H.prepare_nn_module(self.nn_modules['measure'])
 
-        self.Q = Q(states=self.states)
-        self.Q.finalize_nn_module()  # currently null
+        self.Q = Q(self.state_elements)
+        self.Q.prepare_nn_module({})  # currently null
 
-        self.R = R(measures=self.measures)
-        self.R.finalize_nn_module()  # currently null
+        self.R = R(self.measures)
+        self.R.prepare_nn_module({})  # currently null
 
         # NNStates:
-        self.NNState = DynamicState(self.states)
-        self.NNState.add_nn_inputs(self.nn_modules['state'].items())
-        self.NNState.finalize_nn_module()
+        self.NNState = NNState(self.state_elements)
+        self.NNState.prepare_nn_module(self.nn_modules['state'])
 
     @property
     def num_measures(self):
         return len(self.measures)
 
     @property
-    def num_states(self):
-        return len(self.states)
+    def num_state_elements(self):
+        return len(self.state_elements)
 
     @property
-    def measurable_states(self):
+    def measurable_state_elements(self):
         assert self.finalized
-        if self._measurable_states is None:
+        if self._measurable_state_elements is None:
             is_observable = (torch.sum(self.H.template, 0) > 0).data.tolist()
-            state_keys = list(self.states.keys())
-            self._measurable_states = [self.states[state_keys[i]] for i, observable in enumerate(is_observable)
-                                       if observable == 1]
-        return self._measurable_states
+            state_keys = list(self.state_elements.keys())
+            self._measurable_state_elements = [self.state_elements[state_keys[i]] for i, observable in
+                                               enumerate(is_observable) if observable == 1]
+        return self._measurable_state_elements
 
     def reset(self):
         """
@@ -136,14 +127,8 @@ class Design(object):
 
     def initialize_state(self, **kwargs):
 
-        initial_mean_expanded = self.InitialState.create_for_batch(time=0, **kwargs)
-
-        if self.Q.nn_module.isnull:
-            initial_cov = self.Q.template
-        else:  # at the time of writing, Q can't have an nn-module. if that changes, the above won't work.
-            raise NotImplementedError("Please report this error to the package maintainer")
-        bs = initial_mean_expanded.data.shape[0]
-        initial_cov_expanded = expand(initial_cov, bs)
+        initial_mean_expanded = self.InitialState.create_means_for_batch(time=0, **kwargs)
+        initial_cov_expanded = self.InitialState.create_cov_for_batch(time=0, **kwargs)
 
         return initial_mean_expanded, initial_cov_expanded
 
@@ -154,7 +139,7 @@ class Design(object):
     def state_idx(self):
         assert self.finalized
         if self._state_idx is None:
-            self._state_idx = {state_id: idx for idx, state_id in enumerate(self.states.keys())}
+            self._state_idx = {state_id: idx for idx, state_id in enumerate(self.state_elements.keys())}
         return self._state_idx
 
     @property
@@ -166,7 +151,7 @@ class Design(object):
 
 
 def reset_design_on_exit(func):
-    def _decorator(self, *args, **kwargs):
+    def _decorated(self, *args, **kwargs):
         try:
             out = func(self, *args, **kwargs)
             self.design.reset()
@@ -175,4 +160,4 @@ def reset_design_on_exit(func):
             self.design.reset()
             raise
 
-    return _decorator
+    return _decorated

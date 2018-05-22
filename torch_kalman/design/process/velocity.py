@@ -1,7 +1,7 @@
 from torch_kalman.design.lazy_parameter import LazyParameter
 from torch_kalman.design.process import Process
 from torch_kalman.utils.utils import nonejoin
-from torch_kalman.design.state import State
+from torch_kalman.design.state_element import StateElement
 
 
 class NoVelocity(Process):
@@ -13,7 +13,7 @@ class NoVelocity(Process):
         :param std_dev: Standard deviation (process-noise).
         :param sep: The separator between id_prefix and the state name (defaults "_").
         """
-        pos = State(id=nonejoin([id_prefix, 'position'], sep), std_dev=std_dev, initial_value=initial_value)
+        pos = StateElement(id=nonejoin([id_prefix, 'position'], sep), std_dev=std_dev, initial_mean=initial_value)
         pos.add_transition(pos)
         super(NoVelocity, self).__init__(states=(pos,))
 
@@ -37,18 +37,15 @@ class DampenedVelocity(Process):
         """
 
         # position and velocity:
-        position = State(id=nonejoin([id_prefix, 'position'], sep),
-                         std_dev=std_devs[0],
-                         initial_value=initial_position)
-        velocity = State(id=nonejoin([id_prefix, 'velocity'], sep),
-                         std_dev=std_devs[1])
+        position = StateElement(id=nonejoin([id_prefix, 'position'], sep), std_dev=std_devs[0], initial_mean=initial_position)
+        velocity = StateElement(id=nonejoin([id_prefix, 'velocity'], sep), std_dev=std_devs[1])
         position.add_correlation(velocity, correlation=corr)
 
         # next position is just positition + velocity
-        position.add_transition(to_state=position)
-        velocity.add_transition(to_state=position)
+        position.add_transition(to_state_element=position)
+        velocity.add_transition(to_state_element=position)
         # next velocity is just current velocity:
-        velocity.add_transition(to_state=velocity, multiplier=damp_multi)
+        velocity.add_transition(to_state_element=velocity, multiplier=damp_multi)
 
         super(DampenedVelocity, self).__init__((position, velocity))
 
