@@ -166,7 +166,7 @@ class Design(object):
 
 
 def reset_design_on_exit(func):
-    def _decorator(self, *args, **kwargs):
+    def _decorated(self, *args, **kwargs):
         try:
             out = func(self, *args, **kwargs)
             self.design.reset()
@@ -175,4 +175,4 @@ def reset_design_on_exit(func):
             self.design.reset()
             raise
 
-    return _decorator
+    return _decorated

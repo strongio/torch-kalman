@@ -84,5 +84,6 @@ class TestBasicSeasons(TestCase):
         # mse:
         predicted = model(kf_input, time_start=time_start)
         mse = np.nanmean(np.power((kf_input - predicted).data.numpy(), 2))
+        # season_component = model.components(kf_input, time_start=time_start)['0_season_0']
 
         return mse, final_loss.data.tolist(), final_iter
