@@ -167,7 +167,7 @@ class Forecast(KalmanFilter):
             for name in (measure_name, 'common'):
                 for process in self.processes_per_dim.get(name, []):
                     multiplier = 1.0
-                    this_measure.add_state(process.observable, multiplier=multiplier)
+                    this_measure.add_state_element(process.observable, multiplier=multiplier)
 
             # add to design:
             self.design.add_measure(this_measure)

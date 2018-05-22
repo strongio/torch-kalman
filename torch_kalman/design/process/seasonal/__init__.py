@@ -56,18 +56,18 @@ class Seasonal(Process):
                            'to_self': lambda: 0.}
 
         # for the first state, only need to define two transitions:
-        states[0].add_transition(to_state=states[1], multiplier=multipliers['to_next']())
-        states[0].add_transition(to_state=states[0], multiplier=multipliers['from_first_to_first']())
+        states[0].add_transition(to_state_element=states[1], multiplier=multipliers['to_next']())
+        states[0].add_transition(to_state_element=states[0], multiplier=multipliers['from_first_to_first']())
 
         # for the rest, need to define three transitions:
         for i in range(1, period):
             if (i + 1) < period:
                 # when transitioning:
-                states[i].add_transition(to_state=states[i + 1], multiplier=multipliers['to_next']())
-                states[i].add_transition(to_state=states[0], multiplier=multipliers['to_first']())
+                states[i].add_transition(to_state_element=states[i + 1], multiplier=multipliers['to_next']())
+                states[i].add_transition(to_state_element=states[0], multiplier=multipliers['to_first']())
 
             # when not transitioning:
-            states[i].add_transition(to_state=states[i], multiplier=multipliers['to_self']())
+            states[i].add_transition(to_state_element=states[i], multiplier=multipliers['to_self']())
 
         super(Seasonal, self).__init__(states)
 

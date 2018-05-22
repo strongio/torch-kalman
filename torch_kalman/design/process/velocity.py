@@ -42,10 +42,10 @@ class DampenedVelocity(Process):
         position.add_correlation(velocity, correlation=corr)
 
         # next position is just positition + velocity
-        position.add_transition(to_state=position)
-        velocity.add_transition(to_state=position)
+        position.add_transition(to_state_element=position)
+        velocity.add_transition(to_state_element=position)
         # next velocity is just current velocity:
-        velocity.add_transition(to_state=velocity, multiplier=damp_multi)
+        velocity.add_transition(to_state_element=velocity, multiplier=damp_multi)
 
         super(DampenedVelocity, self).__init__((position, velocity))
 

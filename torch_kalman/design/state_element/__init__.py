@@ -26,16 +26,17 @@ class StateElement(CovarianceElement):
         self.initial_std_dev = initial_std_dev
         self.transitions = {}
 
-    def add_transition(self, to_state, multiplier=1.0):
+    def add_transition(self, to_state_element, multiplier=1.0):
         """
         Specify that this state at T_n links to another state at T_n+1.
 
-        :param to_state: The state that this state links to.
+        :param to_state_element: The state element that this state links to.
         :param multiplier: The multiplier for the transition (e.g., multipier of .5 means T_n+1 = .5*T_n)
         """
-        if to_state.id in self.transitions.keys():
-            warn("This state ('{}') already has a transition to '{}' recorded. Will overwrite.".format(self.id, to_state.id))
-        self.transitions.update({to_state.id: multiplier})
+        if to_state_element.id in self.transitions.keys():
+            warn("This state element ('{}') already has a transition to '{}' recorded. Will overwrite.".
+                 format(self.id, to_state_element.id))
+        self.transitions.update({to_state_element.id: multiplier})
 
     def torchify(self):
         super(StateElement, self).torchify()
