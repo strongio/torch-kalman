@@ -46,8 +46,21 @@ class TestDesign(TestCaseTK):
         self.assertTrue(array_equal(design_F, manual_F))
 
     def test_design_q(self):
-        # TODO: check requires grad, check...?
-        pass
+        # design
+        design = self.make_usable_design()
+        batch_design = design.for_batch(1)
+        batch_design.lock()
+
+        # requires grad:
+        self.assertTrue(batch_design.Q.requires_grad)
+
+        # symetric
+        design_Q = batch_design.Q[0].data.numpy()
+        self.assertTrue(array_equal(design_Q, design_Q.T), msg="Covariance is not symmetric.")
+
+        # block diag
+        manual_Q = block_diag(*[process.Q[0].data.numpy() for process in batch_design.processes.values()])
+        self.assertTrue(array_equal(design_Q, manual_Q))
 
     def test_design_h(self):
         # TODO
