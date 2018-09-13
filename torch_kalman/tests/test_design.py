@@ -19,19 +19,21 @@ class TestDesign(TestCaseTK):
             design = Design(processes=[Velocity(id='same'), Velocity(id='same')], measures=[])
         self.assertEqual(cm.exception.args[0], "Duplicate process-ids: same.")
 
-    def test_design_f(self):
-
+    @staticmethod
+    def make_usable_design(dims=2):
         # create design:
         processes, measures = [], []
-        for i in range(2):
+        for i in range(dims):
             process = Velocity(id=str(i))
             measure = Measure(id=str(i))
             measure.add_process(process, value=1.)
             processes.append(process)
             measures.append(measure)
-        design = Design(processes=processes, measures=measures)
+        return Design(processes=processes, measures=measures)
 
-        # create for batch:
+    def test_design_f(self):
+        # design
+        design = self.make_usable_design()
         batch_design = design.for_batch(1)
         batch_design.lock()
 
