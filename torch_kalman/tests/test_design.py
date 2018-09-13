@@ -1,7 +1,12 @@
+from numpy import array_equal
+
 from torch_kalman.design import Design
 from torch_kalman.measure import Measure
+from torch_kalman.process.velocity import Velocity
 
 from torch_kalman.tests import TestCaseTK
+
+from scipy.linalg import block_diag
 
 
 class TestDesign(TestCaseTK):
@@ -10,12 +15,36 @@ class TestDesign(TestCaseTK):
             design = Design(measures=[Measure(id='same'), Measure(id='same')], processes=[])
         self.assertEqual(cm.exception.args[0], "Duplicate measure-ids: same.")
 
+        with self.assertRaises(ValueError) as cm:
+            design = Design(processes=[Velocity(id='same'), Velocity(id='same')], measures=[])
+        self.assertEqual(cm.exception.args[0], "Duplicate process-ids: same.")
+
     def test_design_f(self):
-        # TODO
-        pass
+
+        # create design:
+        processes, measures = [], []
+        for i in range(2):
+            process = Velocity(id=str(i))
+            measure = Measure(id=str(i))
+            measure.add_process(process, value=1.)
+            processes.append(process)
+            measures.append(measure)
+        design = Design(processes=processes, measures=measures)
+
+        # create for batch:
+        batch_design = design.for_batch(1)
+        batch_design.lock()
+
+        # F doesn't require grad:
+        self.assertFalse(batch_design.F.requires_grad)
+
+        # F is block diagonal of components:
+        design_F = batch_design.F[0].data.numpy()
+        manual_F = block_diag(*[process.F[0].data.numpy() for process in batch_design.processes.values()])
+        self.assertTrue(array_equal(design_F, manual_F))
 
     def test_design_q(self):
-        # TODO
+        # TODO: check requires grad, check...?
         pass
 
     def test_design_h(self):
