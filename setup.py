@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(name='torch_kalman',
       version='0.1',
-      description='Kalman Filter using pytorch for parameter-estimation',
+      description='Kalman filters with pytorch',
       url='http://github.com/strongio/torch_kalman',
       author='Jacob Dink',
       author_email='jacob.dink@strong.io',
