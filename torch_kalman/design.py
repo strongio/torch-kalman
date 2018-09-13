@@ -56,6 +56,7 @@ class Design:
 class DesignForBatch:
     def __init__(self, design: Design, batch_size: int):
         self.batch_size = batch_size
+        self.locked = False
 
         # create processes for batch:
         self._processes = OrderedDict()
@@ -66,8 +67,6 @@ class DesignForBatch:
         self._measures = OrderedDict()
         for measure_name, measure in design.measures.items():
             self.measures[measure_name] = measure.for_batch(batch_size=batch_size)
-
-        self.locked = False
 
         # design-mats:
         self.make_measure_covariance = design.measure_covariance
@@ -81,14 +80,10 @@ class DesignForBatch:
 
     @property
     def processes(self):
-        if self.locked:
-            raise Exception("Cannot access `processes` attribute once design is locked.")
         return self._processes
 
     @property
     def measures(self):
-        if self.locked:
-            raise Exception("Cannot access `measures` attribute once design is locked.")
         return self._measures
 
     @property
@@ -110,7 +105,7 @@ class DesignForBatch:
             start = 0
             for process in self.processes.values():
                 end = start + len(process.state_elements)
-                self._F[:, np.ix_(range(start, end), range(start, end))] = process.F  # WARNING: probably can't do this
+                self._F[np.ix_(range(self.batch_size), range(start, end), range(start, end))] = process.F
                 start = end
         return self._F
 
@@ -124,7 +119,7 @@ class DesignForBatch:
             start = 0
             for process in self.processes.values():
                 end = start + len(process.state_elements)
-                self._Q[:, np.ix_(range(start, end), range(start, end))] = process.Q
+                self._Q[np.ix_(range(self.batch_size), range(start, end), range(start, end))] = process.Q
                 start = end
         return self._Q
 
