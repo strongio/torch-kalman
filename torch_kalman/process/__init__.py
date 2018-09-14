@@ -50,12 +50,17 @@ class ProcessForBatch:
     def __init__(self, process: Process, batch_size: int):
         self.batch_size = batch_size
         self.process = process
-        self.attrs_from_process = {}
 
-    def __getattribute__(self, name):
-        if name not in {'id', 'state_elements', 'state_element_idx', 'transitions', 'measurable_state'}:
-            return super().__getattribute__(name)
-        return self.process.__getattribute__(name)
+        # a bit over-protective: batch process gets these, but they're copies so no one will accidentally modify originals
+        self.state_elements = list(self.process.state_elements)
+        self.state_element_idx = dict(self.process.state_element_idx)
+
+        # transitions that are specific to this batch, not the process generally:
+        self.batch_transitions = {}
+
+    @property
+    def measurable_state(self) -> str:
+        return self.process.measurable_state
 
     def F(self) -> Tensor:
         # fill in template:
