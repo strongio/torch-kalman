@@ -64,10 +64,15 @@ class ProcessForBatch:
 
     def F(self) -> Tensor:
         # fill in template:
-        F = torch.zeros(size=(self.batch_size, len(self.state_elements), len(self.state_elements)))
-        for to_el, from_els in self.transitions.items():
+        F = torch.zeros(size=(self.batch_size, len(self.process.state_elements), len(self.process.state_elements)))
+        all_transitions = {**self.process.transitions, **self.batch_transitions}  # `set_transition` doesn't allow duplicates
+        for to_el, from_els in all_transitions.items():
             for from_el, value in from_els.items():
-                r, c = self.state_element_idx[to_el], self.state_element_idx[from_el]
+                r, c = self.process.state_element_idx[to_el], self.process.state_element_idx[from_el]
+                if value is None:
+                    raise ValueError(f"The transition from '{from_el}' to '{to_el}' is None, which means this process "
+                                     f"('{self.process.__class__.__name__}') requires you set it on a per-batch basis using "
+                                     f"the `set_transition` method.")
                 F[:, r, c] = value
 
         # expand for batch:
@@ -81,5 +86,18 @@ class ProcessForBatch:
 
     def set_transition(self, from_element: str, to_element: str, values: Tensor) -> None:
         assert len(values) == 1 or len(values) == self.batch_size
-        r, c = self.state_element_idx[from_element], self.state_element_idx[to_element]
-        self.F[:, r, c] = values
+        assert from_element in self.process.state_elements
+        assert to_element in self.process.state_elements
+
+        if to_element in self.process.transitions.keys():
+            if self.process.transitions[to_element].get(from_element, None):
+                raise ValueError(f"The transition from '{from_element}' to '{to_element}' was already set for this Process,"
+                                 f" so can't give it batch-specific values.")
+
+        if to_element not in self.batch_transitions.keys():
+            self.batch_transitions[to_element] = {}
+        elif from_element in self.batch_transitions[to_element]:
+            raise ValueError(f"The transition from '{from_element}' to '{to_element}' was already set for this batch,"
+                             f" so can't set it again.")
+
+        self.batch_transitions[to_element][from_element] = values
