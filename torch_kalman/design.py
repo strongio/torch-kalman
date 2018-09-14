@@ -130,7 +130,7 @@ class DesignForBatch:
         if self._H is None:
             process_lens = [len(process.state_elements) for process in self.processes.values()]
             state_size = sum(process_lens)
-            measure_size = len(self.design.measures)
+            measure_size = len(self.measures)
             self._H = torch.zeros((self.batch_size, measure_size, state_size))
 
             process_start_idx = dict(zip(self.processes.keys(), [0] + process_lens[:-1]))
