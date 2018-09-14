@@ -50,18 +50,24 @@ class ProcessForBatch:
     def __init__(self, process: Process, batch_size: int):
         self.batch_size = batch_size
         self.process = process
+        self.attrs_from_process = {}
 
         self._F = None
         self._Q = None
+
+    def __getattribute__(self, name):
+        if name not in {'id', 'state_elements', 'state_element_idx', 'transitions', 'measurable_state'}:
+            return super().__getattribute__(name)
+        return self.process.__getattribute__(name)
 
     @property
     def F(self) -> Tensor:
         if self._F is None:
             # fill in template:
             self._F = torch.zeros(size=(self.batch_size, len(self.state_elements), len(self.state_elements)))
-            for to_el, from_els in self.process.transitions.items():
+            for to_el, from_els in self.transitions.items():
                 for from_el, value in from_els.items():
-                    r, c = self.process.state_element_idx[to_el], self.process.state_element_idx[from_el]
+                    r, c = self.state_element_idx[to_el], self.state_element_idx[from_el]
                     self._F[:, r, c] = value
 
             # expand for batch:
@@ -77,11 +83,7 @@ class ProcessForBatch:
             self._Q = cov.expand(self.batch_size, -1, -1)
         return self._Q
 
-    @property
-    def state_elements(self) -> Sequence[str]:
-        return self.process.state_elements
-
     def set_transition(self, from_element: str, to_element: str, values: Tensor) -> None:
         assert len(values) == 1 or len(values) == self.batch_size
-        r, c = self.process.state_element_idx[from_element], self.process.state_element_idx[to_element]
+        r, c = self.state_element_idx[from_element], self.state_element_idx[to_element]
         self.F[:, r, c] = values
