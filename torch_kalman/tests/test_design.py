@@ -1,4 +1,5 @@
 from numpy import array_equal
+from torch import Tensor
 
 from torch_kalman.design import Design
 from torch_kalman.measure import Measure
@@ -51,10 +52,10 @@ class TestDesign(TestCaseTK):
         batch_design = design.for_batch(1)
         batch_design.lock()
 
-        # requires grad:
+        # Q requires grad:
         self.assertTrue(batch_design.Q.requires_grad)
 
-        # symetric
+        # symmetric
         design_Q = batch_design.Q[0].data.numpy()
         self.assertTrue(array_equal(design_Q, design_Q.T), msg="Covariance is not symmetric.")
 
@@ -63,16 +64,23 @@ class TestDesign(TestCaseTK):
         self.assertTrue(array_equal(design_Q, manual_Q))
 
     def test_design_h(self):
-        # TODO
-        pass
+        # design
+        design = self.make_usable_design()
+        batch_design = design.for_batch(1)
+        batch_design.lock()
+
+        design_H = batch_design.H
+        state_mean = Tensor([[[1.], [-.5], [-.5], [0.]]])
+        measured_state = design_H.bmm(state_mean)
+        self.assertListEqual(list1=measured_state.tolist(), list2=[[[1.0], [-.5]]])
 
     def test_design_r(self):
-        measures = []
-        for i in range(3):
-            measures.append(Measure(id=f'test{i}'))
+        design = self.make_usable_design(3)
+        cov = design.measure_covariance()
+        self.assertTupleEqual(cov.size(), (3, 3))
 
-        design = Design(measures=measures, processes=[])
+        self.assertTrue(cov.requires_grad)
 
-        self.check_covariance_chol(cov=design.measure_covariance(),
+        self.check_covariance_chol(cov=cov,
                                    cholesky_log_diag=design.measure_cholesky_log_diag,
                                    cholesky_off_diag=design.measure_cholesky_off_diag)
