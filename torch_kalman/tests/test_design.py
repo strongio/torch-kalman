@@ -76,7 +76,10 @@ class TestDesign(TestCaseTK):
 
     def test_design_r(self):
         design = self.make_usable_design(3)
-        cov = design.measure_covariance()
+        batch_design = design.for_batch(1)
+        batch_design.lock()
+
+        cov = batch_design.R[0]
         self.assertTupleEqual(cov.size(), (3, 3))
 
         self.assertTrue(cov.requires_grad)
