@@ -36,10 +36,6 @@ class Design:
         self.measure_cholesky_log_diag = Parameter(data=torch.randn(n))
         self.measure_cholesky_off_diag = Parameter(data=torch.randn(int(n * (n - 1) / 2)))
 
-    def measure_covariance(self):
-        return Covariance.from_log_cholesky(log_diag=self.measure_cholesky_log_diag,
-                                            off_diag=self.measure_cholesky_off_diag)
-
     def parameters(self) -> Generator[Parameter, None, None]:
         for process in self.processes.values():
             for param in process.parameters():
@@ -56,89 +52,56 @@ class Design:
 class DesignForBatch:
     def __init__(self, design: Design, batch_size: int):
         self.batch_size = batch_size
-        self.locked = False
 
         # create processes for batch:
-        self._processes = OrderedDict()
+        self.processes = OrderedDict()
         for process_name, process in design.processes.items():
             self.processes[process_name] = process.for_batch(batch_size=batch_size)
 
         # create measures fo batch:
-        self._measures = OrderedDict()
+        self.measures = OrderedDict()
         for measure_name, measure in design.measures.items():
             self.measures[measure_name] = measure.for_batch(batch_size=batch_size)
 
-        # design-mats:
-        self.make_measure_covariance = design.measure_covariance
-        self._R = None
-        self._F = None
-        self._H = None
-        self._Q = None
+        # measure-covariance parameters:
+        self.measure_cov_params = {'log_diag': design.measure_cholesky_log_diag,
+                                   'off_diag': design.measure_cholesky_off_diag}
 
-    def lock(self):
-        self.locked = True
-
-    @property
-    def processes(self):
-        return self._processes
-
-    @property
-    def measures(self):
-        return self._measures
-
-    @property
     def R(self) -> Tensor:
-        if not self.locked:
-            raise Exception("Cannot create/access design-matrices for batch until design is locked.")
-        if self._R is None:
-            R = self.make_measure_covariance()
-            self._R = R.expand(self.batch_size, -1, -1)
-        return self._R
+        R = Covariance.from_log_cholesky(**self.measure_cov_params)
+        return R.expand(self.batch_size, -1, -1)
 
-    @property
     def F(self) -> Tensor:
-        if not self.locked:
-            raise Exception("Cannot create/access design-matrices for batch until design is locked.")
-        if self._F is None:
-            state_size = sum(len(process.state_elements) for process in self.processes.values())
-            self._F = torch.zeros((self.batch_size, state_size, state_size))
-            start = 0
-            for process in self.processes.values():
-                end = start + len(process.state_elements)
-                self._F[np.ix_(range(self.batch_size), range(start, end), range(start, end))] = process.F
-                start = end
-        return self._F
+        state_size = sum(len(process.state_elements) for process in self.processes.values())
+        F = torch.zeros((self.batch_size, state_size, state_size))
+        start = 0
+        for process in self.processes.values():
+            end = start + len(process.state_elements)
+            F[np.ix_(range(self.batch_size), range(start, end), range(start, end))] = process.F()
+            start = end
+        return F
 
-    @property
     def Q(self) -> Tensor:
-        if not self.locked:
-            raise Exception("Cannot create/access design-matrices for batch until design is locked.")
-        if self._Q is None:
-            state_size = sum(len(process.state_elements) for process in self.processes.values())
-            self._Q = torch.zeros((self.batch_size, state_size, state_size))
-            start = 0
-            for process in self.processes.values():
-                end = start + len(process.state_elements)
-                self._Q[np.ix_(range(self.batch_size), range(start, end), range(start, end))] = process.Q
-                start = end
-        return self._Q
+        state_size = sum(len(process.state_elements) for process in self.processes.values())
+        Q = torch.zeros((self.batch_size, state_size, state_size))
+        start = 0
+        for process in self.processes.values():
+            end = start + len(process.state_elements)
+            Q[np.ix_(range(self.batch_size), range(start, end), range(start, end))] = process.Q()
+            start = end
+        return Q
 
-    @property
     def H(self) -> Tensor:
-        if not self.locked:
-            raise Exception("Cannot create/access design-matrices for batch until design is locked.")
-        if self._H is None:
-            process_lens = [len(process.state_elements) for process in self.processes.values()]
-            state_size = sum(process_lens)
-            measure_size = len(self.measures)
-            self._H = torch.zeros((self.batch_size, measure_size, state_size))
+        process_lens = [len(process.state_elements) for process in self.processes.values()]
+        state_size = sum(process_lens)
+        measure_size = len(self.measures)
+        H = torch.zeros((self.batch_size, measure_size, state_size))
 
-            process_start_idx = dict(zip(self.processes.keys(), [0] + process_lens[:-1]))
+        process_start_idx = dict(zip(self.processes.keys(), [0] + process_lens[:-1]))
 
-            for r, (measure_name, measure) in enumerate(self.measures.items()):
-                for process_name, measure_vals in measure.processes.items():
-                    process = self.processes[process_name]
-                    c = process_start_idx[process_name] + process.state_element_idx[process.measurable_state]
-                    self._H[:, r, c] = measure_vals
-
-        return self._H
+        for r, (measure_name, measure) in enumerate(self.measures.items()):
+            for process_name, measure_vals in measure.processes.items():
+                process = self.processes[process_name]
+                c = process_start_idx[process_name] + process.state_element_idx[process.measurable_state]
+                H[:, r, c] = measure_vals
+        return H

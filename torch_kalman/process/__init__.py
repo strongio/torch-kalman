@@ -52,36 +52,27 @@ class ProcessForBatch:
         self.process = process
         self.attrs_from_process = {}
 
-        self._F = None
-        self._Q = None
-
     def __getattribute__(self, name):
         if name not in {'id', 'state_elements', 'state_element_idx', 'transitions', 'measurable_state'}:
             return super().__getattribute__(name)
         return self.process.__getattribute__(name)
 
-    @property
     def F(self) -> Tensor:
-        if self._F is None:
-            # fill in template:
-            self._F = torch.zeros(size=(self.batch_size, len(self.state_elements), len(self.state_elements)))
-            for to_el, from_els in self.transitions.items():
-                for from_el, value in from_els.items():
-                    r, c = self.state_element_idx[to_el], self.state_element_idx[from_el]
-                    self._F[:, r, c] = value
+        # fill in template:
+        F = torch.zeros(size=(self.batch_size, len(self.state_elements), len(self.state_elements)))
+        for to_el, from_els in self.transitions.items():
+            for from_el, value in from_els.items():
+                r, c = self.state_element_idx[to_el], self.state_element_idx[from_el]
+                F[:, r, c] = value
 
-            # expand for batch:
-            self._F = self._F.expand(self.batch_size, -1, -1)
-        return self._F
+        # expand for batch:
+        return F.expand(self.batch_size, -1, -1)
 
-    @property
     def Q(self) -> Tensor:
-        if self._Q is None:
-            # generate covariance:
-            cov = self.process.covariance()
-            # expand for batch:
-            self._Q = cov.expand(self.batch_size, -1, -1)
-        return self._Q
+        # generate covariance:
+        cov = self.process.covariance()
+        # expand for batch:
+        return cov.expand(self.batch_size, -1, -1)
 
     def set_transition(self, from_element: str, to_element: str, values: Tensor) -> None:
         assert len(values) == 1 or len(values) == self.batch_size

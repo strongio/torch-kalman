@@ -36,50 +36,47 @@ class TestDesign(TestCaseTK):
         # design
         design = self.make_usable_design()
         batch_design = design.for_batch(1)
-        batch_design.lock()
 
         # F doesn't require grad:
-        self.assertFalse(batch_design.F.requires_grad)
+        self.assertFalse(batch_design.F().requires_grad)
 
         # F is block diagonal of components:
-        design_F = batch_design.F[0].data.numpy()
-        manual_F = block_diag(*[process.F[0].data.numpy() for process in batch_design.processes.values()])
+        design_F = batch_design.F()[0].data.numpy()
+        manual_F = block_diag(*[process.F()[0].data.numpy() for process in batch_design.processes.values()])
         self.assertTrue(array_equal(design_F, manual_F))
 
     def test_design_q(self):
         # design
         design = self.make_usable_design()
         batch_design = design.for_batch(1)
-        batch_design.lock()
 
         # Q requires grad:
-        self.assertTrue(batch_design.Q.requires_grad)
+        self.assertTrue(batch_design.Q().requires_grad)
 
         # symmetric
-        design_Q = batch_design.Q[0].data.numpy()
+        design_Q = batch_design.Q()[0].data.numpy()
         self.assertTrue(array_equal(design_Q, design_Q.T), msg="Covariance is not symmetric.")
 
         # block diag
-        manual_Q = block_diag(*[process.Q[0].data.numpy() for process in batch_design.processes.values()])
+        manual_Q = block_diag(*[process.Q()[0].data.numpy() for process in batch_design.processes.values()])
         self.assertTrue(array_equal(design_Q, manual_Q))
 
     def test_design_h(self):
         # design
         design = self.make_usable_design()
         batch_design = design.for_batch(1)
-        batch_design.lock()
 
-        design_H = batch_design.H
-        state_mean = Tensor([[[1.], [-.5], [-.5], [0.]]])
+        design_H = batch_design.H()
+        state_mean = Tensor([[[1.], [-.5],
+                              [-1.5], [0.]]])
         measured_state = design_H.bmm(state_mean)
-        self.assertListEqual(list1=measured_state.tolist(), list2=[[[1.0], [-.5]]])
+        self.assertListEqual(list1=measured_state.tolist(), list2=[[[1.0], [-1.5]]])
 
     def test_design_r(self):
         design = self.make_usable_design(3)
         batch_design = design.for_batch(1)
-        batch_design.lock()
 
-        cov = batch_design.R[0]
+        cov = batch_design.R()[0]
         self.assertTupleEqual(cov.size(), (3, 3))
 
         self.assertTrue(cov.requires_grad)
