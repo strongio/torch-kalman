@@ -1,7 +1,4 @@
-from typing import Generator
-
 from torch import Tensor
-from torch.nn import Parameter
 
 from torch_kalman.process import Process
 
