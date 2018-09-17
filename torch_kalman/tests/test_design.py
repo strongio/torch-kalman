@@ -1,5 +1,4 @@
 from copy import deepcopy
-from unittest import mock
 
 import torch
 from numpy import array_equal
@@ -24,18 +23,6 @@ class TestDesign(TestCaseTK):
         with self.assertRaises(ValueError) as cm:
             design = Design(processes=[Velocity(id='same'), Velocity(id='same')], measures=[])
         self.assertEqual(cm.exception.args[0], "Duplicate process-ids: same.")
-
-    @staticmethod
-    def make_usable_design(dims=2):
-        # create design:
-        processes, measures = [], []
-        for i in range(dims):
-            process = Velocity(id=str(i))
-            measure = Measure(id=str(i))
-            measure.add_process(process, value=1.)
-            processes.append(process)
-            measures.append(measure)
-        return Design(processes=processes, measures=measures)
 
     def test_design_f(self):
         # design

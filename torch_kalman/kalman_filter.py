@@ -24,9 +24,10 @@ class KalmanFilter(torch.nn.Module):
             self._state_belief = Gaussian
         return self._state_belief
 
-    def initialize_state_belief(self) -> StateBelief:
+    def initialize_state_belief(self, input) -> StateBelief:
         state_size = self.design.state_size()
-        return self.state_belief(mean=torch.zeros(state_size), cov=torch.eye(state_size))
+        return self.state_belief(mean=torch.zeros(state_size).expand(len(input), -1),
+                                 cov=torch.eye(state_size).expand(len(input), -1, -1))
 
     # noinspection PyShadowingBuiltins
     def forward(self, input: Tensor) -> Tuple[Tensor, Tensor]:
@@ -39,8 +40,9 @@ class KalmanFilter(torch.nn.Module):
 
         num_groups, num_timesteps, num_dims_all = input.shape
 
-        state_belief = self.initialize_state_belief()
+        state_belief = self.initialize_state_belief(input)
 
+        # TODO: these are predictions *from* time t, but we want predictions *of* time t
         state_beliefs = []
         for t in range(num_timesteps):
             state_belief = self.kf_update(state_belief, obs=input[:, t, :])
@@ -48,30 +50,18 @@ class KalmanFilter(torch.nn.Module):
             state_beliefs.append(state_belief)
 
         mean, cov = zip(*[state_belief.to_tensors() for state_belief in state_beliefs])
-        return torch.concat(mean), torch.concat(cov)
+        return torch.stack(mean), torch.stack(cov)
 
     def kf_predict(self, state_belief: StateBelief, obs: Tensor) -> StateBelief:
-        """
-
-        :param state_belief:
-        :param obs:
-        :return:
-        """
         batch_design = self.design.for_batch(batch_size=len(obs))
         # batch-specific changes to design would go here
-        state_belief_new = state_belief.predict(F=batch_design.F, Q=batch_design.Q)
+        state_belief_new = state_belief.predict(F=batch_design.F(), Q=batch_design.Q())
         return state_belief_new
 
     def kf_update(self, state_belief: StateBelief, obs: Tensor) -> StateBelief:
-        """
-
-        :param state_belief:
-        :param obs:
-        :return:
-        """
         batch_design = self.design.for_batch(batch_size=len(obs))
         # batch-specific changes to design would go here
-        state_belief_new = state_belief.update(obs=obs, H=batch_design.H, R=batch_design.R)
+        state_belief_new = state_belief.update(obs=obs, H=batch_design.H(), R=batch_design.R())
         return state_belief_new
 
     def log_likelihood(self, *args, **kwargs):
