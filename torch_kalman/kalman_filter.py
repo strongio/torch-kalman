@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 from torch.nn import ParameterList
 from torch_kalman.design import Design
-from torch_kalman.state_belief import StateBelief
+from torch_kalman.state_belief import StateBelief, Gaussian
 
 
 class KalmanFilter(torch.nn.Module):
@@ -16,6 +16,17 @@ class KalmanFilter(torch.nn.Module):
         for param in self.design.parameters():
             self.design_parameters.append(param)
 
+        self._state_belief = None
+
+    @property
+    def state_belief(self):
+        if self._state_belief is None:
+            self._state_belief = Gaussian
+        return self._state_belief
+
+    def initialize_state_belief(self) -> StateBelief:
+        state_size = self.design.state_size()
+        return self.state_belief(mean=torch.zeros(state_size), cov=torch.eye(state_size))
 
     # noinspection PyShadowingBuiltins
     def forward(self, input: Tensor) -> Tuple[Tensor, Tensor]:
@@ -32,10 +43,7 @@ class KalmanFilter(torch.nn.Module):
 
         state_beliefs = []
         for t in range(num_timesteps):
-            if t >= 0:
-                # update step:
-                state_belief = self.kf_update(state_belief, obs=input[:, t, :])
-
+            state_belief = self.kf_update(state_belief, obs=input[:, t, :])
             state_belief = self.kf_predict(state_belief, obs=input[:, t, :])
             state_beliefs.append(state_belief)
 
@@ -51,7 +59,6 @@ class KalmanFilter(torch.nn.Module):
         """
         batch_design = self.design.for_batch(batch_size=len(obs))
         # batch-specific changes to design would go here
-        batch_design.lock()
         state_belief_new = state_belief.predict(F=batch_design.F, Q=batch_design.Q)
         return state_belief_new
 
@@ -64,14 +71,8 @@ class KalmanFilter(torch.nn.Module):
         """
         batch_design = self.design.for_batch(batch_size=len(obs))
         # batch-specific changes to design would go here
-        batch_design.lock()
         state_belief_new = state_belief.update(obs=obs, H=batch_design.H, R=batch_design.R)
         return state_belief_new
 
-    def logliklihood(self, *args, **kwargs):
-        # classmethod of state-belief?
-        raise NotImplementedError("TODO")
-
-    def initialize_state_belief(self):
-        # this is where the actual type of state-belief (e.g. gaussian) is chosen
-        raise NotImplementedError("TODO")
+    def log_likelihood(self, *args, **kwargs):
+        return self.state_belief.log_likelihood(*args, **kwargs)
