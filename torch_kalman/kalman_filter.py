@@ -9,21 +9,13 @@ from torch_kalman.state_belief import StateBelief
 
 class KalmanFilter(torch.nn.Module):
     def __init__(self, design: Design) -> None:
+        super().__init__()
         self.design = design
 
         self.design_parameters = ParameterList()
-
-        # process params:
-        for process in self.design.processes:
-            for param in process.parameters():
-                self.design_parameters.append(param)
-
-        # measure params:
         for param in self.design.parameters():
             self.design_parameters.append(param)
 
-        # torch.nn.Module
-        super().__init__()
 
     # noinspection PyShadowingBuiltins
     def forward(self, input: Tensor) -> Tuple[Tensor, Tensor]:
