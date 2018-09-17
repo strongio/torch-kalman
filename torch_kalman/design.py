@@ -97,11 +97,20 @@ class DesignForBatch:
         measure_size = len(self.measures)
         H = torch.zeros((self.batch_size, measure_size, state_size))
 
-        process_start_idx = dict(zip(self.processes.keys(), [0] + process_lens[:-1]))
+        process_start_idx = dict(zip(self.processes.keys(), np.cumsum([0] + process_lens[:-1])))
 
         for r, (measure_name, measure) in enumerate(self.measures.items()):
-            for process_name, measure_vals in measure.processes.items():
-                process = self.processes[process_name]
+            this_measure_processes = measure.processes()
+            for process_name, measure_vals in this_measure_processes.items():
+                if measure_vals is None:
+                    raise ValueError(f"The measurement value for measure '{measure_name}' of process '{process_name}' is "
+                                     f"None, which means that this needs to be set on a per-batch basis using the "
+                                     f"`add_process` method.")
+                try:
+                    process = self.processes[process_name]
+                except KeyError:
+                    raise KeyError(f"The measure '{measure_name}' includes the process '{process_name}', but this process "
+                                   f"wasn't passed in the `processes` argument at design init.")
                 c = process_start_idx[process_name] + process.state_element_idx[process.measurable_state]
                 H[:, r, c] = measure_vals
         return H
