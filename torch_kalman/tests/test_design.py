@@ -105,6 +105,48 @@ class TestDesign(TestCaseTK):
         measured_state = design_H.bmm(state_mean)
         self.assertListEqual(list1=measured_state.tolist(), list2=[[[1.0], [-1.5]]])
 
+        batch_design.measures['0'].add_process(process=Velocity(id='3'), values=Tensor([1.0]))
+        with self.assertRaises(KeyError):
+            batch_design.H()  # can't add this process because it's not in the design.
+
+    def test_design_h_batch_process(self):
+        # processes:
+        vel_1 = Velocity(id='vel_1')
+        vel_2 = Velocity(id='vel_2')
+        vel_common = Velocity(id='vel_common')
+
+        # measures:
+        measure_1 = Measure(id='measure_1')
+        measure_1.add_process(vel_1, value=1.)
+        measure_1.add_process(vel_common, value=None)
+
+        measure_2 = Measure(id='measure_2')
+        measure_2.add_process(vel_2, value=1.)
+        measure_2.add_process(vel_common, value=None)
+
+        # create design:
+        design = Design(processes=[vel_1, vel_2, vel_common], measures=[measure_1, measure_2])
+        batch_design = design.for_batch(batch_size=2)
+
+        # since it's None, requires batch-specific param:
+        with self.assertRaises(ValueError) as cm:
+            batch_design.H()
+        expected_msg_start = f"The measurement value for measure 'measure_1' of process 'vel_common' is None"
+        self.assertIn(expected_msg_start, cm.exception.args[0])
+
+        # add, check batch-specific param:
+        batch_design.measures['measure_1'].add_process(vel_common, values=Tensor([1.0, 0.0]))
+        batch_design.measures['measure_2'].add_process(vel_common, values=Tensor([1.0, 0.0]))
+        design_H = batch_design.H()
+
+        self.assertListEqual(list1=design_H[0].tolist(),
+                             list2=[[1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                                    [0.0, 0.0, 1.0, 0.0, 1.0, 0.0]])
+
+        self.assertListEqual(list1=design_H[1].tolist(),
+                             list2=[[1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                                    [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]])
+
     def test_design_r(self):
         design = self.make_usable_design(3)
         batch_design = design.for_batch(1)
