@@ -9,7 +9,7 @@ from torch_kalman.design import Design
 from torch_kalman.measure import Measure
 from torch_kalman.process.velocity import Velocity
 
-from torch_kalman.tests import TestCaseTK
+from torch_kalman.tests import TestCaseTK, simple_mv_velocity_design
 
 from scipy.linalg import block_diag
 
@@ -26,7 +26,7 @@ class TestDesign(TestCaseTK):
 
     def test_design_f(self):
         # design
-        design = self.make_usable_design()
+        design = simple_mv_velocity_design()
         batch_design = design.for_batch(2)
 
         # F doesn't require grad:
@@ -67,7 +67,7 @@ class TestDesign(TestCaseTK):
 
     def test_design_q(self):
         # design
-        design = self.make_usable_design()
+        design = simple_mv_velocity_design()
         batch_design = design.for_batch(1)
 
         # Q requires grad:
@@ -83,7 +83,7 @@ class TestDesign(TestCaseTK):
 
     def test_design_h(self):
         # design
-        design = self.make_usable_design()
+        design = simple_mv_velocity_design()
         batch_design = design.for_batch(1)
 
         design_H = batch_design.H()
@@ -135,7 +135,7 @@ class TestDesign(TestCaseTK):
                                     [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]])
 
     def test_design_r(self):
-        design = self.make_usable_design(3)
+        design = simple_mv_velocity_design(3)
         batch_design = design.for_batch(1)
 
         cov = batch_design.R()[0]
