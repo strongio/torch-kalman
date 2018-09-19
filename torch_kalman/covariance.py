@@ -13,9 +13,7 @@ class Covariance(Tensor):
         L[np.diag_indices(n)] = torch.exp(log_diag)
         L[np.tril_indices(n=n, k=-1)] = off_diag
         L[np.triu_indices(n=n, k=1)] = 0.
-        out = Covariance(size=(n, n))
-        out.set_(source=L.mm(L.t()))  # avoids unnecessary copy
-        return out
+        return L.mm(L.t())
 
     @classmethod
     def from_diag(cls, diag: Parameter) -> Tensor:
