@@ -48,7 +48,7 @@ class Design:
         # TODO: could this be cached? the problem is that we'll end up caching the locked version...
         return DesignForBatch(design=self, batch_size=batch_size)
 
-    def state_size(self):
+    def state_size(self) -> int:
         return sum(len(process.state_elements) for process in self.processes.values())
 
 

@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Union
 
 from torch import Tensor
 
@@ -10,7 +10,7 @@ class Measure:
         self.id = str(id)
         self.processes = {}
 
-    def add_process(self, process: Process, value: (float, Tensor, None)) -> None:
+    def add_process(self, process: Process, value: Union[float, Tensor, None]) -> None:
         """
         :param process: A Process.
         :param value: The value that's multiplied by the Process's measurable state to yield (its contribution to) the
