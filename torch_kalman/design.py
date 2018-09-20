@@ -16,12 +16,14 @@ class Design:
     def __init__(self, processes: Iterable[Process], measures: Iterable[Measure]):
 
         # processes:
+        self.state_size = 0
         self.processes = OrderedDict()
         for process in processes:
             if process.id in self.processes.keys():
                 raise ValueError(f"Duplicate process-ids: {process.id}.")
             else:
                 self.processes[process.id] = process
+                self.state_size += len(process.state_elements)
 
         # measures:
         self.measures = OrderedDict()
@@ -30,11 +32,16 @@ class Design:
                 raise ValueError(f"Duplicate measure-ids: {measure.id}.")
             else:
                 self.measures[measure.id] = measure
+        self.measure_size = len(self.measures)
 
-        #
+        # measure-covariance:
         n = len(self.measures)
         self.measure_cholesky_log_diag = Parameter(data=torch.randn(n))
         self.measure_cholesky_off_diag = Parameter(data=torch.randn(int(n * (n - 1) / 2)))
+
+    def measure_covariance(self):
+        return Covariance.from_log_cholesky(log_diag=self.measure_cholesky_log_diag,
+                                            off_diag=self.measure_cholesky_off_diag)
 
     def parameters(self) -> Generator[Parameter, None, None]:
         for process in self.processes.values():
@@ -44,12 +51,10 @@ class Design:
         yield self.measure_cholesky_log_diag
         yield self.measure_cholesky_off_diag
 
-    def for_batch(self, batch_size: int):
+    def for_batch(self, batch_size: int) -> 'DesignForBatch':
         # TODO: could this be cached? the problem is that we'll end up caching the locked version...
+        # TODO: seasons are such a common thing to use, should handle it here
         return DesignForBatch(design=self, batch_size=batch_size)
-
-    def state_size(self) -> int:
-        return sum(len(process.state_elements) for process in self.processes.values())
 
 
 class DesignForBatch:
@@ -70,13 +75,16 @@ class DesignForBatch:
         self.measure_cov_params = {'log_diag': design.measure_cholesky_log_diag,
                                    'off_diag': design.measure_cholesky_off_diag}
 
+        # size:
+        self.state_size = design.state_size
+        self.measure_size = design.measure_size
+
     def R(self) -> Tensor:
         R = Covariance.from_log_cholesky(**self.measure_cov_params)
         return R.expand(self.batch_size, -1, -1)
 
     def F(self) -> Tensor:
-        state_size = sum(len(process.state_elements) for process in self.processes.values())
-        F = torch.zeros((self.batch_size, state_size, state_size))
+        F = torch.zeros((self.batch_size, self.state_size, self.state_size))
         start = 0
         for process in self.processes.values():
             end = start + len(process.state_elements)
@@ -85,8 +93,7 @@ class DesignForBatch:
         return F
 
     def Q(self) -> Tensor:
-        state_size = sum(len(process.state_elements) for process in self.processes.values())
-        Q = torch.zeros((self.batch_size, state_size, state_size))
+        Q = torch.zeros((self.batch_size, self.state_size, self.state_size))
         start = 0
         for process in self.processes.values():
             end = start + len(process.state_elements)
@@ -96,9 +103,7 @@ class DesignForBatch:
 
     def H(self) -> Tensor:
         process_lens = [len(process.state_elements) for process in self.processes.values()]
-        state_size = sum(process_lens)
-        measure_size = len(self.measures)
-        H = torch.zeros((self.batch_size, measure_size, state_size))
+        H = torch.zeros((self.batch_size, self.measure_size, self.state_size))
 
         process_start_idx = dict(zip(self.processes.keys(), np.cumsum([0] + process_lens[:-1])))
 
