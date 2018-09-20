@@ -50,7 +50,7 @@ class Process:
             self._state_element_idx = {el: i for i, el in enumerate(self.state_elements)}
         return self._state_element_idx
 
-    def for_batch(self, batch_size):
+    def for_batch(self, batch_size: int) -> 'ProcessForBatch':
         return ProcessForBatch(process=self, batch_size=batch_size)
 
     @property

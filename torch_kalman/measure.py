@@ -20,7 +20,7 @@ class Measure:
             raise ValueError(f"Process {process.id} is already in this measure.")
         self.processes[process.id] = value
 
-    def for_batch(self, batch_size: int):
+    def for_batch(self, batch_size: int) -> 'MeasureForBatch':
         return MeasureForBatch(measure=self, batch_size=batch_size)
 
 
