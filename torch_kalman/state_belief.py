@@ -1,6 +1,7 @@
 from typing import Tuple, Sequence
 
 import torch
+
 from torch import Tensor
 
 from torch_kalman.torch_utils import batch_inverse
@@ -12,7 +13,7 @@ from torch.distributions import MultivariateNormal, Distribution
 class StateBelief:
     def __init__(self, means: Tensor, covs: Tensor):
         """
-        A batch of state-beliefs.
+        Belief in the state of the system at a particular timepoint, for a batch of time-series.
 
         :param means: The means (2D tensor)
         :param covs: The covariances (3D tensor).
@@ -31,7 +32,7 @@ class StateBelief:
         self._R = None
         self._measured = None
 
-    def measure_state(self, H: Tensor, R: Tensor) -> None:
+    def compute_measurement(self, H: Tensor, R: Tensor) -> None:
         if self._measured is None:
             self._H = H
             self._R = R
@@ -51,7 +52,7 @@ class StateBelief:
         return self._R
 
     @property
-    def measured(self) -> Tuple[Tensor, Tensor]:
+    def measurement(self) -> Tuple[Tensor, Tensor]:
         if self._measured is None:
             measured_means = torch.bmm(self.H, self.means[:, :, None]).squeeze(2)
             Ht = self.H.permute(0, 2, 1)
@@ -59,18 +60,14 @@ class StateBelief:
             self._measured = measured_means, measured_covs
         return self._measured
 
-    def predict(self, F: Tensor, Q: Tensor):
+    def predict(self, F: Tensor, Q: Tensor) -> 'StateBelief':
         raise NotImplementedError
 
-    def update(self, obs: Tensor):
-        raise NotImplementedError
-
-    @classmethod
-    def log_likelihood(self, *args, **kwargs):
+    def update(self, obs: Tensor) -> 'StateBelief':
         raise NotImplementedError
 
     @classmethod
-    def concatenate_measured_states(cls, state_beliefs: Sequence) -> Distribution:
+    def concatenate_over_time(cls, state_beliefs: Sequence) -> Distribution:
         raise NotImplementedError()
 
 
@@ -84,7 +81,7 @@ class Gaussian(StateBelief):
 
     def update(self, obs: Tensor) -> StateBelief:
         assert isinstance(obs, Tensor)
-        measured_means, system_covariance = self.measured
+        measured_means, system_covariance = self.measurement
 
         # residual:
         residual = obs - measured_means
@@ -125,10 +122,53 @@ class Gaussian(StateBelief):
         return p2 + p3
 
     @classmethod
-    def concatenate_measured_states(cls, state_beliefs: Sequence[StateBelief]) -> MultivariateNormal:
-        measured_means, measured_covs = zip(*[state_belief.measured for state_belief in state_beliefs])
-        measured_means = torch.stack(measured_means).permute(1, 0, 2)
-        measured_covs = torch.stack(measured_covs).permute(1, 0, 2, 3)
-        out = MultivariateNormal(loc=measured_means, covariance_matrix=measured_covs)
-        out.state_beliefs = state_beliefs  # TODO: better way to save this information?
-        return out
+    def concatenate_over_time(cls, state_beliefs: Sequence[StateBelief]) -> 'GaussianOverTime':
+        return GaussianOverTime(state_beliefs=state_beliefs)
+
+
+class StateBeliefOverTime:
+    def __init__(self, state_beliefs: Sequence[StateBelief]):
+        """
+        Belief in the state of the system over a range of times, for a batch of time-series.
+
+        :param state_beliefs: A sequence of StateBeliefs, ordered chronologically.
+        """
+        self.state_beliefs = state_beliefs
+        self._state_distribution = None
+        self._measurement_distribution = None
+
+    def log_prob(self, measurements):
+        return self.measurement_distribution.log_prob(measurements)
+
+    @property
+    def family(self):
+        raise NotImplementedError
+
+    @property
+    def measurements(self) -> Tensor:
+        # noinspection PyUnresolvedReferences
+        return self.measurement_distribution.loc
+
+    @property
+    def state_distribution(self) -> Distribution:
+        if self._state_distribution is None:
+            means, covs = zip(*[(state_belief.means, state_belief.covs) for state_belief in self.state_beliefs])
+            means = torch.stack(means).permute(1, 0, 2)
+            covs = torch.stack(covs).permute(1, 0, 2, 3)
+            self._state_distribution = self.family(loc=means, covariance_matrix=covs)
+        return self._state_distribution
+
+    @property
+    def measurement_distribution(self) -> Distribution:
+        if self._measurement_distribution is None:
+            means, covs = zip(*[state_belief.measurement for state_belief in self.state_beliefs])
+            means = torch.stack(means).permute(1, 0, 2)
+            covs = torch.stack(covs).permute(1, 0, 2, 3)
+            self._measurement_distribution = self.family(loc=means, covariance_matrix=covs)
+        return self._measurement_distribution
+
+
+class GaussianOverTime(StateBeliefOverTime):
+    @property
+    def family(self):
+        return MultivariateNormal

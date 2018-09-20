@@ -1,11 +1,12 @@
+from typing import Union
+
 import torch
 from torch import Tensor
-from torch.distributions import Distribution
 from torch.nn import ParameterList, Parameter
 
 from torch_kalman.covariance import Covariance
 from torch_kalman.design import Design, DesignForBatch
-from torch_kalman.state_belief import StateBelief, Gaussian
+from torch_kalman.state_belief import StateBelief, Gaussian, StateBeliefOverTime
 
 
 class KalmanFilter(torch.nn.Module):
@@ -14,48 +15,62 @@ class KalmanFilter(torch.nn.Module):
         self.design = design
 
         # initial state:
-        state_size = self.design.state_size()
-        self.init_state_mean = Parameter(torch.randn(state_size))
-        self.init_state_cholesky_log_diag = Parameter(data=torch.randn(state_size))
-        self.init_state_cholesky_off_diag = Parameter(data=torch.randn(int(state_size * (state_size - 1) / 2)))
+        ns = self.state_size
+        self.init_state_mean = Parameter(torch.randn(ns))
+        self.init_state_cholesky_log_diag = Parameter(data=torch.randn(ns))
+        self.init_state_cholesky_off_diag = Parameter(data=torch.randn(int(ns * (ns - 1) / 2)))
 
         # parameters from design:
         self.design_parameters = ParameterList()
         for param in self.design.parameters():
             self.design_parameters.append(param)
 
-        self._state_belief = None
+        # the distributional family, implemented by property (default gaussian)
+        self._family = None
 
     @property
-    def state_belief(self):
-        if self._state_belief is None:
-            self._state_belief = Gaussian
-        return self._state_belief
+    def family(self):
+        if self._family is None:
+            self._family = Gaussian
+        return self._family
 
-    def initial_state_prediction(self, input) -> StateBelief:
+    @property
+    def state_size(self) -> int:
+        return self.design.state_size
+
+    @property
+    def measure_size(self) -> int:
+        return self.design.measure_size
+
+    def initial_state_prediction(self, input: Union[Tensor, None], batch_size: Union[int, None] = None) -> StateBelief:
+        if input is not None:
+            raise NotImplementedError("The default method for `initial_state_prediction` does not take a tensor of "
+                                      "predictors; please override this method if you'd like to predict the initial state.")
         covs = Covariance.from_log_cholesky(log_diag=self.init_state_cholesky_log_diag,
                                             off_diag=self.init_state_cholesky_off_diag)
-        return self.state_belief(means=self.init_state_mean.expand(len(input), -1),
-                                 covs=covs.expand(len(input), -1, -1))
+        return self.family(means=self.init_state_mean.expand(batch_size, -1),
+                           covs=covs.expand(batch_size, -1, -1))
 
     # noinspection PyShadowingBuiltins
-    def forward(self, input: Tensor) -> Distribution:
-        """
-        :param input: A group X time X dimension Tensor.
-        :return: Tuple with:
-            Mean: A groups X time X dimension x 1 Tensor
-            Cov: A groups X time X dimension X dimension Tensor
-        """
-
+    def forward(self, input: Tensor, initial_state: Union[Tensor, StateBelief, None] = None) -> StateBeliefOverTime:
         num_groups, num_timesteps, num_dims_all = input.shape
+        if num_dims_all < self.measure_size:
+            raise ValueError(f"The design of this KalmanFilter expects a state-size of {self.measure_size}; but the input "
+                             f"shape is {(num_groups, num_timesteps, num_dims_all)} (last dim should be >= measure-size).")
 
-        state_prediction = self.initial_state_prediction(input)
+        # initial state of the system:
+        if isinstance(initial_state, StateBelief):
+            state_prediction = initial_state
+        else:
+            state_prediction = self.initial_state_prediction(input=initial_state, batch_size=num_groups)
 
+        # generate one-step-ahead predictions:
         state_predictions = []
         for t in range(num_timesteps):
             if t > 0:
                 # take state-prediction of previous t (now t-1), correct it according to what was actually measured at at t-1
-                state_belief = state_prediction.update(obs=input[:, t - 1, :])
+                measurements = input[:, t - 1, :self.measure_size]
+                state_belief = state_prediction.update(obs=measurements)
 
                 # predict the state for t, from information from t-1
                 # F at t-1 is transition *from* t-1 *to* t
@@ -65,13 +80,13 @@ class KalmanFilter(torch.nn.Module):
             batch_design = self.design_for_batch(input[:, t, :])
 
             # compute how state-prediction at t translates into measurement-prediction at t
-            state_prediction.measure_state(H=batch_design.H(), R=batch_design.R())
+            state_prediction.compute_measurement(H=batch_design.H(), R=batch_design.R())
 
             # append to output:
             state_predictions.append(state_prediction)
 
-        return self.state_belief.concatenate_measured_states(state_beliefs=state_predictions)
+        return self.family.concatenate_over_time(state_beliefs=state_predictions)
 
-    def design_for_batch(self, obs: Tensor) -> DesignForBatch:
+    def design_for_batch(self, input: Tensor) -> DesignForBatch:
         # by overriding this method, child-classes can implement batch-specific changes to design
-        return self.design.for_batch(batch_size=len(obs))
+        return self.design.for_batch(batch_size=len(input))
