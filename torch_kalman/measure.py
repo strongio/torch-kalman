@@ -10,7 +10,7 @@ class Measure:
         self.id = str(id)
         self.processes = {}
 
-    def add_process(self, process: Process, value: Union[float, Tensor, None]) -> None:
+    def add_process(self, process: Process, value: Union[float, Tensor, None] = 1.0) -> None:
         """
         :param process: A Process.
         :param value: The value that's multiplied by the Process's measurable state to yield (its contribution to) the
