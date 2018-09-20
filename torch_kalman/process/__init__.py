@@ -29,6 +29,7 @@ class Process:
         self._state_element_idx = None
 
         # state elements:
+        assert len(state_elements) == len(set(state_elements)), "Duplicate `state_elements` now allowed."
         self.state_elements = state_elements
 
         # transitions:
