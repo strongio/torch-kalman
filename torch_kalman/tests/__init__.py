@@ -24,7 +24,7 @@ def simple_mv_velocity_design(dims=2):
     return Design(processes=processes, measures=measures)
 
 
-def make_rw_data(num_timesteps=50, num_groups=5, measure_cov=((1., .5), (.5, 1.))):
+def make_rw_data(num_timesteps=100, num_groups=5, measure_cov=((1., .5), (.5, 1.))):
     num_dims = len(measure_cov)
     velocity = 1 / np.tile(np.arange(1, num_timesteps + 1), (num_groups, 1))
     velocity = np.stack([velocity] * num_dims, axis=2)

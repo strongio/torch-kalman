@@ -1,9 +1,10 @@
-from typing import Tuple
-
 import torch
 from torch import Tensor
-from torch.nn import ParameterList
-from torch_kalman.design import Design
+from torch.distributions import Distribution
+from torch.nn import ParameterList, Parameter
+
+from torch_kalman.covariance import Covariance
+from torch_kalman.design import Design, DesignForBatch
 from torch_kalman.state_belief import StateBelief, Gaussian
 
 
@@ -12,6 +13,13 @@ class KalmanFilter(torch.nn.Module):
         super().__init__()
         self.design = design
 
+        # initial state:
+        state_size = self.design.state_size()
+        self.init_state_mean = Parameter(torch.randn(state_size))
+        self.init_state_cholesky_log_diag = Parameter(data=torch.randn(state_size))
+        self.init_state_cholesky_off_diag = Parameter(data=torch.randn(int(state_size * (state_size - 1) / 2)))
+
+        # parameters from design:
         self.design_parameters = ParameterList()
         for param in self.design.parameters():
             self.design_parameters.append(param)
@@ -24,13 +32,14 @@ class KalmanFilter(torch.nn.Module):
             self._state_belief = Gaussian
         return self._state_belief
 
-    def initialize_state_belief(self, input) -> StateBelief:
-        state_size = self.design.state_size()
-        return self.state_belief(mean=torch.zeros(state_size).expand(len(input), -1),
-                                 cov=torch.eye(state_size).expand(len(input), -1, -1))
+    def initial_state_prediction(self, input) -> StateBelief:
+        covs = Covariance.from_log_cholesky(log_diag=self.init_state_cholesky_log_diag,
+                                            off_diag=self.init_state_cholesky_off_diag)
+        return self.state_belief(means=self.init_state_mean.expand(len(input), -1),
+                                 covs=covs.expand(len(input), -1, -1))
 
     # noinspection PyShadowingBuiltins
-    def forward(self, input: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, input: Tensor) -> Distribution:
         """
         :param input: A group X time X dimension Tensor.
         :return: Tuple with:
@@ -40,29 +49,29 @@ class KalmanFilter(torch.nn.Module):
 
         num_groups, num_timesteps, num_dims_all = input.shape
 
-        state_belief = self.initialize_state_belief(input)
+        state_prediction = self.initial_state_prediction(input)
 
-        # TODO: these are predictions *from* time t, but we want predictions *of* time t
-        state_beliefs = []
+        state_predictions = []
         for t in range(num_timesteps):
-            state_belief = self.kf_update(state_belief, obs=input[:, t, :])
-            state_belief = self.kf_predict(state_belief, obs=input[:, t, :])
-            state_beliefs.append(state_belief)
+            if t > 0:
+                # take state-prediction of previous t (now t-1), correct it according to what was actually measured at at t-1
+                state_belief = state_prediction.update(obs=input[:, t - 1, :])
 
-        mean, cov = zip(*[state_belief.to_tensors() for state_belief in state_beliefs])
-        return torch.stack(mean), torch.stack(cov)
+                # predict the state for t, from information from t-1
+                # F at t-1 is transition *from* t-1 *to* t
+                state_prediction = state_belief.predict(F=batch_design.F(), Q=batch_design.Q())
 
-    def kf_predict(self, state_belief: StateBelief, obs: Tensor) -> StateBelief:
-        batch_design = self.design.for_batch(batch_size=len(obs))
-        # batch-specific changes to design would go here
-        state_belief_new = state_belief.predict(F=batch_design.F(), Q=batch_design.Q())
-        return state_belief_new
+            # compute the design of the kalman filter for this timestep:
+            batch_design = self.design_for_batch(input[:, t, :])
 
-    def kf_update(self, state_belief: StateBelief, obs: Tensor) -> StateBelief:
-        batch_design = self.design.for_batch(batch_size=len(obs))
-        # batch-specific changes to design would go here
-        state_belief_new = state_belief.update(obs=obs, H=batch_design.H(), R=batch_design.R())
-        return state_belief_new
+            # compute how state-prediction at t translates into measurement-prediction at t
+            state_prediction.measure_state(H=batch_design.H(), R=batch_design.R())
 
-    def log_likelihood(self, *args, **kwargs):
-        return self.state_belief.log_likelihood(*args, **kwargs)
+            # append to output:
+            state_predictions.append(state_prediction)
+
+        return self.state_belief.concatenate_measured_states(state_beliefs=state_predictions)
+
+    def design_for_batch(self, obs: Tensor) -> DesignForBatch:
+        # by overriding this method, child-classes can implement batch-specific changes to design
+        return self.design.for_batch(batch_size=len(obs))
