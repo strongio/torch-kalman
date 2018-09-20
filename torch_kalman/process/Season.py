@@ -1,4 +1,3 @@
-from collections import defaultdict
 from typing import Generator
 
 import torch
@@ -26,9 +25,8 @@ class Season(Process):
         transitions = {}
 
         # the first element is special:
-        state_elements.append('measured')
-        transitions['measured'] = {el: 1.0 for el in state_elements}
-        transitions['measured'].update(measured=-1.0)
+        transitions['measured'] = dict.fromkeys(state_elements, -1.0)
+        transitions['measured'].pop(state_elements[-1])  # all but the last
 
         # the rest of the elements:
         for i in range(1, num_seasons):
@@ -46,7 +44,8 @@ class Season(Process):
         yield self.log_std_dev
 
     def covariance(self) -> Covariance:
-        cov = Covariance()
+        state_size = len(self.state_elements)
+        cov = Covariance(size=(state_size, state_size))
         cov[:] = 0.
         cov[0, 0] = torch.pow(torch.exp(self.log_std_dev), 2)
         return cov
