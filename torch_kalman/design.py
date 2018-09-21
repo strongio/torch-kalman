@@ -127,13 +127,11 @@ class DesignForBatch:
         R = Covariance.from_log_cholesky(**self.measure_cov_params)
         return R.expand(self.batch_size, -1, -1)
 
-
     def F(self) -> Tensor:
         F = torch.zeros((self.batch_size, self.state_size, self.state_size))
         for process_id, idx in self.state_mat_idx().items():
             F[idx] = self.processes[process_id].F()
         return F
-
 
     def Q(self) -> Tensor:
         if self._Q is not None:

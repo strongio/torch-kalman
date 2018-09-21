@@ -1,6 +1,7 @@
-from typing import Generator
+from typing import Generator, Tuple
 
 import torch
+from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.covariance import Covariance
@@ -17,9 +18,14 @@ class Velocity(Process):
                        'velocity': {'velocity': 1.0}}
 
         # process-covariance:
-        n = len(state_elements)
-        self.cholesky_log_diag = Parameter(data=torch.randn(n))
-        self.cholesky_off_diag = Parameter(data=torch.randn(int(n * (n - 1) / 2)))
+        ns = len(state_elements)
+        self.cholesky_log_diag = Parameter(data=torch.randn(ns))
+        self.cholesky_off_diag = Parameter(data=torch.randn(int(ns * (ns - 1) / 2)))
+
+        # initial state:
+        self.initial_state_mean_params = Parameter(torch.randn(ns))
+        self.initial_state_cov_params = dict(log_diag=Parameter(data=torch.randn(ns)),
+                                             off_diag=Parameter(data=torch.randn(int(ns * (ns - 1) / 2))))
 
         # super:
         super().__init__(id=id, state_elements=state_elements, transitions=transitions)
@@ -27,6 +33,14 @@ class Velocity(Process):
     def parameters(self) -> Generator[Parameter, None, None]:
         yield self.cholesky_log_diag
         yield self.cholesky_off_diag
+        yield self.initial_state_mean_params
+        for param in self.initial_state_cov_params.values():
+            yield param
+
+    def initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:
+        means = self.initial_state_mean_params.expand(batch_size, -1)
+        covs = Covariance.from_log_cholesky(**self.initial_state_cov_params).expand(batch_size, -1, -1)
+        return means, covs
 
     def covariance(self) -> Covariance:
         return Covariance.from_log_cholesky(log_diag=self.cholesky_log_diag,

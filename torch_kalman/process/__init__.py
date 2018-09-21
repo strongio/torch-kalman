@@ -1,4 +1,4 @@
-from typing import Generator, Sequence, Dict, Union
+from typing import Generator, Sequence, Dict, Union, Tuple
 
 import torch
 from torch import Tensor
@@ -49,8 +49,8 @@ class Process:
         # if no per-batch modification, can avoid repeated computations:
         self.F_base = None
 
-    def align_initial_state(self, state_belief: StateBelief, **kwargs) -> StateBelief:
-        return state_belief
+    def initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:
+        raise NotImplementedError
 
     def add_measure(self, measure: str, state_element: str, value: Union[float, Tensor, None]) -> None:
         assert state_element in self.state_elements

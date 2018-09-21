@@ -8,17 +8,13 @@ from torch_kalman.covariance import Covariance
 from torch_kalman.design import Design, DesignForBatch
 from torch_kalman.state_belief import StateBelief, Gaussian, StateBeliefOverTime
 
+import numpy as np
+
 
 class KalmanFilter(torch.nn.Module):
     def __init__(self, design: Design) -> None:
         super().__init__()
         self.design = design
-
-        # initial state:
-        ns = self.state_size
-        self.init_state_mean = Parameter(torch.randn(ns))
-        self.init_state_cholesky_log_diag = Parameter(data=torch.randn(ns))
-        self.init_state_cholesky_off_diag = Parameter(data=torch.randn(int(ns * (ns - 1) / 2)))
 
         # parameters from design:
         self.design_parameters = ParameterList()
@@ -51,23 +47,22 @@ class KalmanFilter(torch.nn.Module):
             raise NotImplementedError("The default method for `initial_state_prediction` does not take a tensor of "
                                       "predictors; please override this method if you'd like to predict the initial state.")
 
-        # initial mean, cov, expanded for batch-size:
-        means = self.init_state_mean.expand(batch_size, -1)
-        covs = Covariance.from_log_cholesky(log_diag=self.init_state_cholesky_log_diag,
-                                            off_diag=self.init_state_cholesky_off_diag)
-        covs = covs.expand(batch_size, -1, -1)
-        state_belief = self.family(means=means, covs=covs)
+        return self.get_block_diag_initial_state(batch_size=batch_size, **kwargs)
 
-        # some processes (e.g., seasonal) requires per-group rearranging of state:
-        state_belief = self.align_initial_state(state_belief, **kwargs)
+    def get_block_diag_initial_state(self, batch_size: int, **kwargs) -> StateBelief:
+        means = torch.zeros((batch_size, self.state_size))
+        covs = torch.zeros((batch_size, self.state_size, self.state_size))
 
-        return state_belief
-
-    def align_initial_state(self, state_belief, **kwargs):
+        start = 0
         for process_id, process in self.design.processes.items():
             process_kwargs = {k: kwargs.get(k) for k in process.expected_batch_kwargs}
-            state_belief = process.align_initial_state(state_belief, **process_kwargs)
-        return state_belief
+            process_means, process_covs = process.initial_state(batch_size=batch_size, **process_kwargs)
+            end = start + process_means.shape[1]
+            means[:, start:end] = process_means
+            covs[np.ix_(range(batch_size), range(start, end), range(start, end))] = process_covs
+            start = end
+
+        return self.family(means=means, covs=covs)
 
     # noinspection PyShadowingBuiltins
     def forward(self,

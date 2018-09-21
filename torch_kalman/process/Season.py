@@ -49,6 +49,10 @@ class Season(Process):
         # process-covariance:
         self.log_std_dev = Parameter(data=torch.randn(1))
 
+        # initial state:
+        self.initial_state_mean_params = Parameter(torch.randn(num_seasons - 1))
+        self.initial_state_log_std_dev = Parameter(torch.randn(1))
+
         # super:
         super().__init__(id=id, state_elements=state_elements, transitions=transitions)
 
@@ -61,28 +65,38 @@ class Season(Process):
         # writing transition-matrix is slow, no need to do it repeatedly:
         self.transition_cache = {}
 
-    def align_initial_state(self, state_belief, start_datetimes=None, time=None):
-        delta = self.get_start_delta(start_datetimes)
-        season_shift = (delta / self.season_duration) % self.num_seasons
+    def initial_state(self, batch_size: int, start_datetimes=None, time=None):
+        ns = len(self.state_elements)
 
-        new_means = []
-        new_covs = []
+        # mean:
+        mean = Tensor(size=(ns,))
+        mean[1:] = self.initial_state_mean_params
+        mean[0] = -torch.sum(mean[1:])
+
+        delta = self.get_start_delta(start_datetimes)
+        season_shift = np.floor(delta / self.season_duration) % self.num_seasons
+
+        means = []
         for i, shift in enumerate(season_shift.astype(int)):
-            # mean:
-            vec = state_belief.means[i]
-            new_means.append(torch.cat([vec[-shift:], vec[:-shift]]))
-            # cov:
-            mat = state_belief.covs[i]
-            mat_left = torch.cat([mat[-shift:], mat[:-shift]])
-            mat_upleft = torch.cat((mat_left[:, -shift:], mat_left[:, :-shift]), dim=1)
-            new_covs.append(mat_upleft)
-        return state_belief.__class__(means=torch.stack(new_means), covs=torch.stack(new_covs))
+            if i == 0:
+                means.append(mean)
+            else:
+                means.append(torch.cat([mean[-shift:], mean[:-shift]]))
+        means = torch.stack(means)
+
+        # cov:
+        covs = torch.eye(ns).expand(batch_size, -1, -1)
+        covs[:, 0, 0] = torch.pow(torch.exp(self.initial_state_log_std_dev), 2)
+
+        return means, covs
 
     def add_measure(self, measure: str, state_element: str = 'measured', value: Union[float, Tensor, None] = 1.0):
         super().add_measure(measure=measure, state_element=state_element, value=value)
 
     def parameters(self) -> Generator[Parameter, None, None]:
         yield self.log_std_dev
+        yield self.initial_state_mean_params
+        yield self.initial_state_log_std_dev
 
     def covariance(self) -> Covariance:
         state_size = len(self.state_elements)
@@ -97,7 +111,8 @@ class Season(Process):
                   start_datetimes: Union[ndarray, None] = None):
 
         delta = self.get_start_delta(start_datetimes) + time
-        in_transition = (delta % self.season_duration) == 0.
+        #Pdb().set_trace()
+        in_transition = (delta % self.season_duration) == (self.season_duration - 1)
 
         key = in_transition.tostring()
         if key not in self.transition_cache.keys():
