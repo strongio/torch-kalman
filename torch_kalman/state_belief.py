@@ -30,14 +30,14 @@ class StateBelief:
         self.covs = covs
         self._H = None
         self._R = None
-        self._measured = None
+        self._measurement = None
 
     def compute_measurement(self, H: Tensor, R: Tensor) -> None:
-        if self._measured is None:
+        if self._measurement is None:
             self._H = H
             self._R = R
         else:
-            raise ValueError("`measure_state` has already been called for this object")
+            raise ValueError("`compute_measurement` has already been called for this object")
 
     @property
     def H(self) -> Tensor:
@@ -53,12 +53,12 @@ class StateBelief:
 
     @property
     def measurement(self) -> Tuple[Tensor, Tensor]:
-        if self._measured is None:
+        if self._measurement is None:
             measured_means = torch.bmm(self.H, self.means[:, :, None]).squeeze(2)
             Ht = self.H.permute(0, 2, 1)
             measured_covs = torch.bmm(torch.bmm(self.H, self.covs), Ht) + self.R
-            self._measured = measured_means, measured_covs
-        return self._measured
+            self._measurement = measured_means, measured_covs
+        return self._measurement
 
     def predict(self, F: Tensor, Q: Tensor) -> 'StateBelief':
         raise NotImplementedError
