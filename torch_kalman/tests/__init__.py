@@ -27,6 +27,7 @@ def make_rw_data(num_timesteps=100, num_groups=5, measure_cov=((1., .5), (.5, 1.
     num_dims = len(measure_cov)
     velocity = 1 / np.tile(np.arange(1, num_timesteps + 1), (num_groups, 1))
     velocity = np.stack([velocity] * num_dims, axis=2)
+    velocity[:, 0:10, :] -= 1.
     state_means = np.cumsum(velocity, axis=1)
     white_noise = np.random.multivariate_normal(size=(num_groups, num_timesteps),
                                                 mean=np.zeros(num_dims),
