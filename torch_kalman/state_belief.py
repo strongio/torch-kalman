@@ -73,6 +73,7 @@ class StateBelief:
 
 # noinspection PyPep8Naming
 class Gaussian(StateBelief):
+
     def predict(self, F: Tensor, Q: Tensor) -> StateBelief:
         Ft = F.permute(0, 2, 1)
         means = torch.bmm(F, self.means[:, :, None]).squeeze(2)
@@ -97,7 +98,7 @@ class Gaussian(StateBelief):
 
         # handle kalman-update for groups w/missing values:
         isnan = (residual != residual)
-        groups_with_nan = [i for i in range(len(obs)) if isnan[i].data.any()]
+        groups_with_nan = [i for i in range(len(obs)) if isnan[i].data.any()]  # TODO: can avoid list-comprehension
         if groups_with_nan:
             raise NotImplementedError("TODO: Handle missing valuees")
 

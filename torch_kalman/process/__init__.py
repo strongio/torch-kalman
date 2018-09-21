@@ -46,6 +46,9 @@ class Process:
         # expected kwargs
         self.expected_batch_kwargs = ()
 
+        # if no per-batch modification, can avoid repeated computations:
+        self.F_base = None
+
     def align_initial_state(self, state_belief: StateBelief, **kwargs) -> StateBelief:
         return state_belief
 
@@ -80,6 +83,7 @@ class ProcessForBatch:
         self.process = process
 
         # a bit over-protective: batch process gets these, but they're copies so no one will accidentally modify originals
+        self.id = str(self.process.id)
         self.state_elements = list(self.process.state_elements)
         self.state_element_idx = dict(self.process.state_element_idx)
 
@@ -88,19 +92,23 @@ class ProcessForBatch:
         self.batch_measures = {}
 
     def F(self) -> Tensor:
+        if not self.batch_transitions and self.process.F_base is not None:
+            return self.process.F_base.expand(self.batch_size, -1, -1)
+
         # fill in template:
         F = torch.zeros(size=(self.batch_size, len(self.process.state_elements), len(self.process.state_elements)))
         for to_el, from_els in self.transitions().items():
-            for from_el, value in from_els.items():
+            for from_el, values in from_els.items():
                 r, c = self.process.state_element_idx[to_el], self.process.state_element_idx[from_el]
-                if value is None:
+                if values is None:
                     raise ValueError(f"The transition from '{from_el}' to '{to_el}' is None, which means this process "
                                      f"('{self.process.__class__.__name__}') requires you set it on a per-batch basis using "
                                      f"the `set_transition` method.")
-                F[:, r, c] = value
+                F[:, r, c] = values
 
-        # expand for batch:
-        return F.expand(self.batch_size, -1, -1)
+        if not self.batch_transitions:
+            self.process.F_base = F[0]
+        return F
 
     def Q(self) -> Tensor:
         # generate covariance:

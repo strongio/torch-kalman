@@ -12,8 +12,6 @@ from torch.nn import Parameter
 from torch_kalman.covariance import Covariance
 from torch_kalman.process import Process
 
-from pdb import Pdb
-
 
 class Season(Process):
     def __init__(self,
@@ -60,6 +58,9 @@ class Season(Process):
         else:
             self.expected_batch_kwargs = ()
 
+        # writing transition-matrix is slow, no need to do it repeatedly:
+        self.transition_cache = {}
+
     def align_initial_state(self, state_belief, start_datetimes=None, time=None):
         delta = self.get_start_delta(start_datetimes)
         season_shift = (delta / self.season_duration) % self.num_seasons
@@ -95,16 +96,18 @@ class Season(Process):
                   time: Union[int, None] = None,
                   start_datetimes: Union[ndarray, None] = None):
 
-        for_batch = super().for_batch(batch_size=batch_size)
-
-        if start_datetimes is None:
-            if self.start_datetime is not None:
-                raise ValueError("`start_datetimes` argument required.")
-            delta = time
-        else:
-            delta = self.get_start_delta(start_datetimes) + time
-
+        delta = self.get_start_delta(start_datetimes) + time
         in_transition = (delta % self.season_duration) == 0.
+
+        key = in_transition.tostring()
+        if key not in self.transition_cache.keys():
+            self.transition_cache[key] = self.set_batch_transitions(in_transition)
+
+        return self.transition_cache[key]
+
+    def set_batch_transitions(self, in_transition):
+        batch_size = len(in_transition)
+        for_batch = super().for_batch(batch_size=batch_size)
         to_next_state = Tensor(in_transition.astype('float'))
         to_self = 1 - to_next_state
 
@@ -128,17 +131,15 @@ class Season(Process):
         return for_batch
 
     def get_start_delta(self, start_datetimes):
-        assert start_datetimes is not None, "`start_datetimes` argument not passed."
+        if start_datetimes is None:
+            if self.start_datetime:
+                raise ValueError("`start_datetimes` argument required.")
+            return 0.
         assert isinstance(start_datetimes, ndarray), "`start_datetimes` must be a numpy.ndarray"
-        assert np.issubdtype(start_datetimes.dtype, np.datetime64), "`start_datetimes` must have dtype np.datetime64"
         if self.datetime_data != np.datetime_data(start_datetimes.dtype):
             raise ValueError(f"`start_datetimes` must have same time-unit/step as the `start_datetime` that was passed to "
                              f"seasonal process '{self.id}', which is `{np.datetime_data(self.start_datetime)}`.'")
 
         td = np.timedelta64(1, self.datetime_data)
         delta = (start_datetimes - self.start_datetime) / td
-        delta_int = delta.astype(int)
-        if np.all((delta_int - delta) == 0):
-            return delta_int
-        else:
-            raise ValueError("Error computing seasonal period.")
+        return delta.astype(int)
