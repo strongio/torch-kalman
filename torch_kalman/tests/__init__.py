@@ -7,7 +7,6 @@ import torch
 from torch import Tensor
 
 from torch_kalman.design import Design
-from torch_kalman.measure import Measure
 from torch_kalman.process.velocity import Velocity
 
 import numpy as np
@@ -17,8 +16,8 @@ def simple_mv_velocity_design(dims=2):
     processes, measures = [], []
     for i in range(dims):
         process = Velocity(id=str(i))
-        measure = Measure(id=str(i))
-        measure.add_process(process, value=1.)
+        measure = str(i)
+        process.add_measure(measure=measure)
         processes.append(process)
         measures.append(measure)
     return Design(processes=processes, measures=measures)

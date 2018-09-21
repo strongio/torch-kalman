@@ -6,7 +6,6 @@ from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.design import Design
-from torch_kalman.measure import Measure
 from torch_kalman.process.velocity import Velocity
 
 from torch_kalman.tests import TestCaseTK, simple_mv_velocity_design
@@ -16,18 +15,23 @@ from scipy.linalg import block_diag
 
 class TestDesign(TestCaseTK):
     def test_design_attrs(self):
-        with self.assertRaises(ValueError) as cm:
-            design = Design(measures=[Measure(id='same'), Measure(id='same')], processes=[])
-        self.assertEqual(cm.exception.args[0], "Duplicate measure-ids: same.")
+        with self.assertRaises(AssertionError) as cm:
+            design = Design(measures=['same', 'same'], processes=[])
+        self.assertEqual(cm.exception.args[0], "Duplicate measures.")
 
         with self.assertRaises(ValueError) as cm:
             design = Design(processes=[Velocity(id='same'), Velocity(id='same')], measures=[])
         self.assertEqual(cm.exception.args[0], "Duplicate process-ids: same.")
 
+        with self.assertRaises(ValueError) as cm:
+            design = Design(processes=[Velocity(id='1')], measures=['1'])
+        self.assertIn("The following `measures` are not in any of the `processes`:\n{'1'}",
+                      cm.exception.args[0])
+
     def test_design_f(self):
         # design
         design = simple_mv_velocity_design()
-        batch_design = design.for_batch(2)
+        batch_design = design.for_batch(2, time=0)
 
         # F doesn't require grad:
         self.assertFalse(batch_design.F().requires_grad)
@@ -68,7 +72,7 @@ class TestDesign(TestCaseTK):
     def test_design_q(self):
         # design
         design = simple_mv_velocity_design()
-        batch_design = design.for_batch(1)
+        batch_design = design.for_batch(1, time=0)
 
         # Q requires grad:
         self.assertTrue(batch_design.Q().requires_grad)
@@ -84,7 +88,7 @@ class TestDesign(TestCaseTK):
     def test_design_h(self):
         # design
         design = simple_mv_velocity_design()
-        batch_design = design.for_batch(1)
+        batch_design = design.for_batch(1, time=0)
 
         design_H = batch_design.H()
         state_mean = Tensor([[[1.], [-.5],
@@ -92,28 +96,20 @@ class TestDesign(TestCaseTK):
         measured_state = design_H.bmm(state_mean)
         self.assertListEqual(list1=measured_state.tolist(), list2=[[[1.0], [-1.5]]])
 
-        batch_design.measures['0'].add_process(process=Velocity(id='3'), values=Tensor([1.0]))
-        with self.assertRaises(KeyError):
-            batch_design.H()  # can't add this process because it's not in the design.
-
     def test_design_h_batch_process(self):
-        # processes:
+        #
         vel_1 = Velocity(id='vel_1')
+        vel_1.add_measure('measure_1')
+
         vel_2 = Velocity(id='vel_2')
+        vel_2.add_measure('measure_2')
+
         vel_common = Velocity(id='vel_common')
+        vel_common.add_measure('measure_1', value=None)
+        vel_common.add_measure('measure_2', value=None)
 
-        # measures:
-        measure_1 = Measure(id='measure_1')
-        measure_1.add_process(vel_1, value=1.)
-        measure_1.add_process(vel_common, value=None)
-
-        measure_2 = Measure(id='measure_2')
-        measure_2.add_process(vel_2, value=1.)
-        measure_2.add_process(vel_common, value=None)
-
-        # create design:
-        design = Design(processes=[vel_1, vel_2, vel_common], measures=[measure_1, measure_2])
-        batch_design = design.for_batch(batch_size=2)
+        design = Design(processes=[vel_1, vel_2, vel_common], measures=['measure_1', 'measure_2'])
+        batch_design = design.for_batch(batch_size=2, time=0)
 
         # since it's None, requires batch-specific param:
         with self.assertRaises(ValueError) as cm:
@@ -122,8 +118,10 @@ class TestDesign(TestCaseTK):
         self.assertIn(expected_msg_start, cm.exception.args[0])
 
         # add, check batch-specific param:
-        batch_design.measures['measure_1'].add_process(vel_common, values=Tensor([1.0, 0.0]))
-        batch_design.measures['measure_2'].add_process(vel_common, values=Tensor([1.0, 0.0]))
+        batch_design.processes['vel_common'].add_measure(measure='measure_1',
+                                                         state_element='position', values=Tensor([1.0, 0.0]))
+        batch_design.processes['vel_common'].add_measure(measure='measure_2',
+                                                         state_element='position', values=Tensor([1.0, 0.0]))
         design_H = batch_design.H()
 
         self.assertListEqual(list1=design_H[0].tolist(),
@@ -136,7 +134,7 @@ class TestDesign(TestCaseTK):
 
     def test_design_r(self):
         design = simple_mv_velocity_design(3)
-        batch_design = design.for_batch(1)
+        batch_design = design.for_batch(1, time=0)
 
         cov = batch_design.R()[0]
         self.assertTupleEqual(cov.size(), (3, 3))
