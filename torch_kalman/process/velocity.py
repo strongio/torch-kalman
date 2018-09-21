@@ -32,6 +32,5 @@ class Velocity(Process):
         return Covariance.from_log_cholesky(log_diag=self.cholesky_log_diag,
                                             off_diag=self.cholesky_off_diag)
 
-    @property
-    def measurable_state(self) -> str:
-        return 'position'
+    def add_measure(self, measure, state_element='position', value=1.0):
+        super().add_measure(measure=measure, state_element=state_element, value=value)
