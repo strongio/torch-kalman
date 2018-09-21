@@ -42,17 +42,39 @@ class KalmanFilter(torch.nn.Module):
     def measure_size(self) -> int:
         return self.design.measure_size
 
-    def initial_state_prediction(self, input: Union[Tensor, None], batch_size: Union[int, None] = None) -> StateBelief:
+    def initial_state_prediction(self,
+                                 input: Union[Tensor, None],
+                                 batch_size: Union[int, None] = None,
+                                 **kwargs
+                                 ) -> StateBelief:
         if input is not None:
             raise NotImplementedError("The default method for `initial_state_prediction` does not take a tensor of "
                                       "predictors; please override this method if you'd like to predict the initial state.")
+
+        # initial mean, cov, expanded for batch-size:
+        means = self.init_state_mean.expand(batch_size, -1)
         covs = Covariance.from_log_cholesky(log_diag=self.init_state_cholesky_log_diag,
                                             off_diag=self.init_state_cholesky_off_diag)
-        return self.family(means=self.init_state_mean.expand(batch_size, -1),
-                           covs=covs.expand(batch_size, -1, -1))
+        covs = covs.expand(batch_size, -1, -1)
+        state_belief = self.family(means=means, covs=covs)
+
+        # some processes (e.g., seasonal) requires per-group rearranging of state:
+        state_belief = self.align_initial_state(state_belief, **kwargs)
+
+        return state_belief
+
+    def align_initial_state(self, state_belief, **kwargs):
+        for process_id, process in self.design.processes.items():
+            process_kwargs = {k: kwargs.get(k) for k in process.expected_batch_kwargs}
+            state_belief = process.align_initial_state(state_belief, **process_kwargs)
+        return state_belief
 
     # noinspection PyShadowingBuiltins
-    def forward(self, input: Tensor, initial_state: Union[Tensor, StateBelief, None] = None) -> StateBeliefOverTime:
+    def forward(self,
+                input: Tensor,
+                initial_state: Union[Tensor, StateBelief, None] = None,
+                **kwargs
+                ) -> StateBeliefOverTime:
         num_groups, num_timesteps, num_dims_all = input.shape
         if num_dims_all < self.measure_size:
             raise ValueError(f"The design of this KalmanFilter expects a state-size of {self.measure_size}; but the input "
@@ -62,7 +84,7 @@ class KalmanFilter(torch.nn.Module):
         if isinstance(initial_state, StateBelief):
             state_prediction = initial_state
         else:
-            state_prediction = self.initial_state_prediction(input=initial_state, batch_size=num_groups)
+            state_prediction = self.initial_state_prediction(input=initial_state, batch_size=num_groups, **kwargs)
 
         # generate one-step-ahead predictions:
         state_predictions = []
@@ -77,7 +99,7 @@ class KalmanFilter(torch.nn.Module):
                 state_prediction = state_belief.predict(F=batch_design.F(), Q=batch_design.Q())
 
             # compute the design of the kalman filter for this timestep:
-            batch_design = self.design_for_batch(input[:, t, :])
+            batch_design = self.design_for_batch(input[:, t, :], time=t, **kwargs)
 
             # compute how state-prediction at t translates into measurement-prediction at t
             state_prediction.compute_measurement(H=batch_design.H(), R=batch_design.R())
@@ -87,6 +109,6 @@ class KalmanFilter(torch.nn.Module):
 
         return self.family.concatenate_over_time(state_beliefs=state_predictions)
 
-    def design_for_batch(self, input: Tensor) -> DesignForBatch:
+    def design_for_batch(self, input: Tensor, time: int, **kwargs) -> DesignForBatch:
         # by overriding this method, child-classes can implement batch-specific changes to design
-        return self.design.for_batch(batch_size=len(input))
+        return self.design.for_batch(batch_size=len(input), time=time, **kwargs)
