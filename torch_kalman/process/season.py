@@ -30,7 +30,7 @@ class Season(Process):
         self.num_seasons = num_seasons
         self.season_duration = season_duration
         self.start_datetime = start_datetime
-        self.datetime_data = np.datetime_data(self.start_datetime)
+        self.datetime_data = None if self.start_datetime is None else np.datetime_data(self.start_datetime)
 
         # state-elements:
         pad_n = len(str(num_seasons))
@@ -57,10 +57,9 @@ class Season(Process):
         super().__init__(id=id, state_elements=state_elements, transitions=transitions)
 
         # expected for_batch kwargs:
+        self.expected_batch_kwargs = ['time']
         if self.start_datetime:
-            self.expected_batch_kwargs = ('time', 'start_datetimes')
-        else:
-            self.expected_batch_kwargs = ()
+            self.expected_batch_kwargs.append('start_datetimes')
 
         # writing transition-matrix is slow, no need to do it repeatedly:
         self.transition_cache = {}
@@ -73,7 +72,12 @@ class Season(Process):
         mean[1:] = self.initial_state_mean_params
         mean[0] = -torch.sum(mean[1:])
 
-        delta = self.get_start_delta(start_datetimes)
+        if start_datetimes is None:
+            if self.start_datetime:
+                raise ValueError("`start_datetimes` argument required.")
+            delta = np.zeros(shape=(batch_size,), dtype=int)
+        else:
+            delta = self.get_start_delta(start_datetimes)
         season_shift = np.floor(delta / self.season_duration) % self.num_seasons
 
         means = []
@@ -110,8 +114,12 @@ class Season(Process):
                   time: Union[int, None] = None,
                   start_datetimes: Union[ndarray, None] = None):
 
-        delta = self.get_start_delta(start_datetimes) + time
-        #Pdb().set_trace()
+        if start_datetimes is None:
+            if self.start_datetime:
+                raise ValueError("`start_datetimes` argument required.")
+            delta = np.ones(shape=(batch_size,), dtype=int) * time
+        else:
+            delta = self.get_start_delta(start_datetimes) + time
         in_transition = (delta % self.season_duration) == (self.season_duration - 1)
 
         key = in_transition.tostring()
@@ -146,10 +154,6 @@ class Season(Process):
         return for_batch
 
     def get_start_delta(self, start_datetimes):
-        if start_datetimes is None:
-            if self.start_datetime:
-                raise ValueError("`start_datetimes` argument required.")
-            return 0.
         assert isinstance(start_datetimes, ndarray), "`start_datetimes` must be a numpy.ndarray"
         if self.datetime_data != np.datetime_data(start_datetimes.dtype):
             raise ValueError(f"`start_datetimes` must have same time-unit/step as the `start_datetime` that was passed to "
