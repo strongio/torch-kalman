@@ -1,6 +1,7 @@
 from typing import Tuple, Sequence, List, Union
 
 import torch
+from IPython.core.debugger import Pdb
 
 from torch import Tensor
 from torch.distributions.multivariate_normal import _batch_potrf_lower
@@ -214,9 +215,6 @@ class StateBeliefOverTime:
             covs = torch.stack(covs).permute(1, 0, 2, 3)
             self._measurement_distribution = self.family(loc=means, covariance_matrix=covs)
         return self._measurement_distribution
-
-
-o
 
 
 class GaussianOverTime(StateBeliefOverTime):
