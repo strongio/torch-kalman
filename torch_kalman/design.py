@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Iterable, Generator
+from typing import Iterable, Generator, Dict, Tuple
 
 import torch
 
@@ -47,11 +47,10 @@ class Design:
         self.measure_cholesky_off_diag = Parameter(data=torch.randn(int(self.measure_size * (self.measure_size - 1) / 2)))
 
         # cache:
-        self.Q_cache = {}
-        self.R_cache = {}
-        self.state_mat_idx_cache = {}
+        self.Q_cache, self.R_cache, self.state_mat_idx_cache = None, None, None
+        self.reset_cache()
 
-    def measure_covariance(self):
+    def measure_covariance(self) -> Tensor:
         return Covariance.from_log_cholesky(log_diag=self.measure_cholesky_log_diag,
                                             off_diag=self.measure_cholesky_off_diag)
 
@@ -65,13 +64,21 @@ class Design:
 
     def for_batch(self, batch_size: int, time: int, **kwargs) -> 'DesignForBatch':
         if time == 0:
-            self.Q_cache = {}
-            self.R_cache = {}
+            self.reset_cache()
         return DesignForBatch(design=self, batch_size=batch_size, time=time, **kwargs)
+
+    def reset_cache(self) -> None:
+        self.Q_cache = {}
+        self.R_cache = {}
+        self.state_mat_idx_cache = {}
 
 
 class DesignForBatch:
-    def __init__(self, design: Design, batch_size: int, **kwargs):
+    def __init__(self,
+                 design: Design,
+                 batch_size: int,
+                 **kwargs):
+
         self.batch_size = batch_size
 
         # create processes for batch:
@@ -95,31 +102,7 @@ class DesignForBatch:
         self._state_mat_idx = None
         self._Q = None
         self._R = None
-        self.set_up_cache(design)
-
-    def set_up_cache(self, design):
-        if self.batch_size not in design.state_mat_idx_cache.keys():
-            design.state_mat_idx_cache[self.batch_size] = self.state_mat_idx()
-        self._state_mat_idx = design.state_mat_idx_cache[self.batch_size]
-
-        if self.batch_size not in design.Q_cache.keys():
-            design.Q_cache[self.batch_size] = self.Q()
-        self._Q = design.Q_cache[self.batch_size]
-
-        if self.batch_size not in design.R_cache.keys():
-            design.R_cache[self.batch_size] = self.R()
-        self._R = design.R_cache[self.batch_size]
-
-    def state_mat_idx(self):
-        if self._state_mat_idx is not None:
-            return self._state_mat_idx
-        out = {}
-        start = 0
-        for process in self.processes.values():
-            end = start + len(process.state_elements)
-            out[process.id] = np.ix_(range(self.batch_size), range(start, end), range(start, end))
-            start = end
-        return out
+        self.cache_design(design)
 
     def R(self) -> Tensor:
         if self._R is not None:
@@ -158,3 +141,27 @@ class DesignForBatch:
                 c = process_start_idx[process_id] + process.state_element_idx[state_element]
                 H[:, r, c] = measure_vals
         return H
+
+    def state_mat_idx(self) -> Dict[str, Tuple]:
+        if self._state_mat_idx is not None:
+            return self._state_mat_idx
+        out = {}
+        start = 0
+        for process in self.processes.values():
+            end = start + len(process.state_elements)
+            out[process.id] = np.ix_(range(self.batch_size), range(start, end), range(start, end))
+            start = end
+        return out
+
+    def cache_design(self, design: Design) -> None:
+        if self.batch_size not in design.state_mat_idx_cache.keys():
+            design.state_mat_idx_cache[self.batch_size] = self.state_mat_idx()
+        self._state_mat_idx = design.state_mat_idx_cache[self.batch_size]
+
+        if self.batch_size not in design.Q_cache.keys():
+            design.Q_cache[self.batch_size] = self.Q()
+        self._Q = design.Q_cache[self.batch_size]
+
+        if self.batch_size not in design.R_cache.keys():
+            design.R_cache[self.batch_size] = self.R()
+        self._R = design.R_cache[self.batch_size]
