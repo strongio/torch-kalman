@@ -1,4 +1,4 @@
-from typing import Generator, Tuple
+from typing import Generator, Tuple, Union
 
 import torch
 from torch import Tensor
@@ -46,5 +46,5 @@ class Velocity(Process):
         return Covariance.from_log_cholesky(log_diag=self.cholesky_log_diag,
                                             off_diag=self.cholesky_off_diag)
 
-    def add_measure(self, measure, state_element='position', value=1.0):
+    def add_measure(self, measure: str, state_element: str = 'position', value: Union[float, None] = 1.0) -> None:
         super().add_measure(measure=measure, state_element=state_element, value=value)

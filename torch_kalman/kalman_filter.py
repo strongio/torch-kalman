@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Union
 
 import torch
@@ -12,7 +13,7 @@ import numpy as np
 
 
 class KalmanFilter(torch.nn.Module):
-    def __init__(self, design: Design) -> None:
+    def __init__(self, design: Design):
         super().__init__()
         self.design = design
 

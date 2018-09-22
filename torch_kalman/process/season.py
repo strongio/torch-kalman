@@ -1,4 +1,4 @@
-from typing import Generator, Union
+from typing import Generator, Union, Tuple, Optional
 from warnings import warn
 
 import torch
@@ -10,7 +10,7 @@ from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.covariance import Covariance
-from torch_kalman.process import Process
+from torch_kalman.process import Process, ProcessForBatch
 
 
 class Season(Process):
@@ -18,8 +18,7 @@ class Season(Process):
                  id: str,
                  num_seasons: int,
                  season_duration: int = 1,
-                 start_datetime: Union[np.datetime64, None] = None
-                 ):
+                 start_datetime: Optional[np.datetime64] = None):
 
         # parse date information:
         if start_datetime is None:
@@ -64,7 +63,10 @@ class Season(Process):
         # writing transition-matrix is slow, no need to do it repeatedly:
         self.transition_cache = {}
 
-    def initial_state(self, batch_size: int, start_datetimes=None, time=None):
+    def initial_state(self,
+                      batch_size: int,
+                      start_datetimes: Optional[ndarray] = None,
+                      time: Optional[int] = None) -> Tuple[Tensor, Tensor]:
         ns = len(self.state_elements)
 
         # mean:
@@ -94,7 +96,10 @@ class Season(Process):
 
         return means, covs
 
-    def add_measure(self, measure: str, state_element: str = 'measured', value: Union[float, Tensor, None] = 1.0):
+    def add_measure(self,
+                    measure: str,
+                    state_element: str = 'measured',
+                    value: Union[float, Tensor, None] = 1.0) -> None:
         super().add_measure(measure=measure, state_element=state_element, value=value)
 
     def parameters(self) -> Generator[Parameter, None, None]:
@@ -111,8 +116,8 @@ class Season(Process):
 
     def for_batch(self,
                   batch_size: int,
-                  time: Union[int, None] = None,
-                  start_datetimes: Union[ndarray, None] = None):
+                  time: Optional[int] = None,
+                  start_datetimes: Optional[ndarray] = None) -> ProcessForBatch:
 
         if start_datetimes is None:
             if self.start_datetime:
@@ -124,11 +129,11 @@ class Season(Process):
 
         key = in_transition.tostring()
         if key not in self.transition_cache.keys():
-            self.transition_cache[key] = self.set_batch_transitions(in_transition)
+            self.transition_cache[key] = self.make_batch_with_transitions(in_transition)
 
         return self.transition_cache[key]
 
-    def set_batch_transitions(self, in_transition):
+    def make_batch_with_transitions(self, in_transition: np.ndarray) -> ProcessForBatch:
         batch_size = len(in_transition)
         for_batch = super().for_batch(batch_size=batch_size)
         to_next_state = Tensor(in_transition.astype('float'))
@@ -153,8 +158,8 @@ class Season(Process):
 
         return for_batch
 
-    def get_start_delta(self, start_datetimes):
-        assert isinstance(start_datetimes, ndarray), "`start_datetimes` must be a numpy.ndarray"
+    def get_start_delta(self, start_datetimes: np.ndarray) -> np.ndarray:
+        assert isinstance(start_datetimes, ndarray), "`start_datetimes` must be a datetime64 numpy.ndarray"
         if self.datetime_data != np.datetime_data(start_datetimes.dtype):
             raise ValueError(f"`start_datetimes` must have same time-unit/step as the `start_datetime` that was passed to "
                              f"seasonal process '{self.id}', which is `{np.datetime_data(self.start_datetime)}`.'")

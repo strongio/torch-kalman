@@ -52,8 +52,12 @@ class Process:
     def initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:
         raise NotImplementedError
 
-    def add_measure(self, measure: str, state_element: str, value: Union[float, Tensor, None]) -> None:
-        assert state_element in self.state_elements
+    def add_measure(self,
+                    measure: str,
+                    state_element: str,
+                    value: Union[float, Tensor, None]) -> None:
+
+        assert state_element in self.state_elements, f"'{state_element}' is not in this process.'"
 
         key = (measure, state_element)
 
@@ -68,7 +72,7 @@ class Process:
         raise NotImplementedError
 
     @property
-    def state_element_idx(self) -> dict:
+    def state_element_idx(self) -> Dict[str, int]:
         if self._state_element_idx is None:
             self._state_element_idx = {el: i for i, el in enumerate(self.state_elements)}
         return self._state_element_idx
@@ -117,7 +121,8 @@ class ProcessForBatch:
         return cov.expand(self.batch_size, -1, -1)
 
     def set_transition(self, from_element: str, to_element: str, values: Tensor) -> None:
-        assert len(values) == 1 or len(values) == self.batch_size
+        length = len(values)
+        assert length == 1 or length == self.batch_size
         assert from_element in self.process.state_elements
         assert to_element in self.process.state_elements
 
@@ -136,8 +141,9 @@ class ProcessForBatch:
 
     def add_measure(self, measure, state_element, values=None):
         if values is not None:
-            assert len(values) == 1 or len(values) == self.batch_size
-        assert state_element in self.process.state_elements
+            length = len(values)
+            assert length == 1 or length == self.batch_size
+        assert state_element in self.process.state_elements, f"'{state_element}' is not in this process.'"
 
         key = (measure, state_element)
 
@@ -149,7 +155,7 @@ class ProcessForBatch:
 
         self.batch_measures[key] = values
 
-    def transitions(self):
+    def transitions(self) -> Dict[str, Dict[str, Union[Tensor, float]]]:
         # need to be careful to update "deeply", and also not modify originals
 
         out = {}
@@ -168,6 +174,6 @@ class ProcessForBatch:
 
         return out
 
-    def measures(self):
+    def measures(self) -> Dict[Tuple[str, str], Union[Tensor, float]]:
         # don't need to be as careful as w/self.transitions, since dicts of values, not dicts of dicts
         return {**self.process.measures, **self.batch_measures}
