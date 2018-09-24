@@ -4,11 +4,9 @@ import torch
 from torch import Tensor
 from torch.distributions import Distribution, MultivariateNormal
 
-from torch_kalman.state_belief import StateBelief
-
 
 class StateBeliefOverTime:
-    def __init__(self, state_beliefs: Sequence[StateBelief]):
+    def __init__(self, state_beliefs: Sequence['StateBelief']):
         """
         Belief in the state of the system over a range of times, for a batch of time-series.
 
