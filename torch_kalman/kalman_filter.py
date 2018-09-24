@@ -1,13 +1,12 @@
-from collections import defaultdict
 from typing import Union
 
 import torch
 from torch import Tensor
-from torch.nn import ParameterList, Parameter
+from torch.nn import ParameterList
 
-from torch_kalman.covariance import Covariance
 from torch_kalman.design import Design, DesignForBatch
-from torch_kalman.state_belief import StateBelief, Gaussian, StateBeliefOverTime
+from torch_kalman.state_belief import StateBelief, Gaussian
+from torch_kalman.state_belief.over_time import StateBeliefOverTime
 
 import numpy as np
 

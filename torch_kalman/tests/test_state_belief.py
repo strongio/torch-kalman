@@ -30,3 +30,7 @@ class TestStateBelief(TestCaseTK):
     def test_predict(self):
         # TODO
         pass
+
+    def test_log_likelihood(self):
+        # TODO
+        pass
