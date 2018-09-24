@@ -103,18 +103,20 @@ class Gaussian(StateBelief):
         covs_new = self.covs.clone()
 
         # handle kalman-update for groups w/missing values:
-        isnan = (obs != obs).data
-        anynan_by_group = (torch.sum(isnan, 1) > 0).data
+        isnan = (obs != obs)
+        anynan_by_group = (torch.sum(isnan, 1) > 0)
         nan_groups = anynan_by_group.nonzero().squeeze(-1)
         for i in nan_groups:
             group_isnan = isnan[i]
-            if not group_isnan.all():  # if all nan, just don't perform update
-                means_new[i], covs_new[i] = self.partial_update(valid_idx=(~group_isnan).nonzero().squeeze(1),
-                                                                mean=self.means[i], cov=self.covs[i],
-                                                                residual=residuals[i], K=K[i], H=self.H[i], R=self.R[i])
+            if group_isnan.all():  # if all nan, just don't perform update
+                continue
+            # if partial nan, perform partial update:
+            means_new[i], covs_new[i] = self.partial_update(valid_idx=(~group_isnan).nonzero().squeeze(1),
+                                                            mean=self.means[i], cov=self.covs[i],
+                                                            residual=residuals[i], K=K[i], H=self.H[i], R=self.R[i])
 
         # faster kalman-update for groups w/o missing values
-        nonan_g = (~anynan_by_group).nonzero().squeeze(-1).data
+        nonan_g = (~anynan_by_group).nonzero().squeeze(-1)
         if len(nonan_g) > 0:
             means_new[nonan_g] = self.means[nonan_g] + torch.bmm(K[nonan_g], residuals[nonan_g].unsqueeze(2)).squeeze(2)
             covs_new[nonan_g] = self.covariance_update(self.covs[nonan_g], K[nonan_g], self.H[nonan_g], self.R[nonan_g])
