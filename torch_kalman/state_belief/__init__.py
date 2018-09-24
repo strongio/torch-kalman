@@ -9,6 +9,7 @@ from torch_kalman.state_belief.over_time import GaussianOverTime
 from torch_kalman.torch_utils import batch_inverse
 
 
+# noinspection PyPep8Naming
 class StateBelief:
     def __init__(self, means: Tensor, covs: Tensor):
         """
@@ -27,6 +28,7 @@ class StateBelief:
         assert covs.shape[1] == covs.shape[2], "The cov should be symmetric in the last two dimensions."
         assert covs.shape[1] == state_size, "The state-size (2nd/3rd dimension) of cov doesn't match that of mean."
 
+        self.batch_size = batch_size
         self.means = means
         self.covs = covs
         self._H = None
@@ -72,6 +74,7 @@ class StateBelief:
         raise NotImplementedError()
 
 
+# noinspection PyPep8Naming
 class Gaussian(StateBelief):
 
     def predict(self, F: Tensor, Q: Tensor) -> StateBelief:
