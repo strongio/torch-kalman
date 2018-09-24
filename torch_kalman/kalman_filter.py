@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, Sequence, Optional
 
 import torch
 from torch import Tensor
@@ -93,7 +93,7 @@ class KalmanFilter(torch.nn.Module):
                 # F at t-1 is transition *from* t-1 *to* t
                 state_prediction = state_belief.predict(F=batch_design.F(), Q=batch_design.Q())
 
-            # compute the design of the kalman filter for this timestep:
+            # compute the design of the kalman filter for this time-point:
             batch_design = self.design_for_batch(input[:, t, :], time=t, **kwargs)
 
             # compute how state-prediction at t translates into measurement-prediction at t
@@ -104,6 +104,45 @@ class KalmanFilter(torch.nn.Module):
 
         return self.family.concatenate_over_time(state_beliefs=state_predictions)
 
-    def design_for_batch(self, input: Tensor, time: int, **kwargs) -> DesignForBatch:
+    def design_for_batch(self, input: Tensor, time: int, batch_size: Optional[int] = None, **kwargs) -> DesignForBatch:
+        batch_size = batch_size or len(input)
         # by overriding this method, child-classes can implement batch-specific changes to design
-        return self.design.for_batch(batch_size=len(input), time=time, **kwargs)
+        return self.design.for_batch(batch_size=batch_size, time=time, **kwargs)
+
+    def forecast(self,
+                 state_belief: Union[StateBelief, StateBeliefOverTime],
+                 horizon: int,
+                 **kwargs) -> StateBeliefOverTime:
+        """
+
+        :param state_belief: The output of a call to this KalmanFilter.
+        :param horizon: How many timesteps into the future is the forecast?
+        :param kwargs: Other arguments passed to this KalmanFilter's `design_for_batch` method. Note: if there are any
+        `Seasonal` processes, the `start_datetimes` you pass here will indicate the datetime of horizon=1 (i.e., one
+        time-step *after* the most recent data).
+        :return: StateBeliefOverTime consisting of forecasts.
+        """
+
+        assert horizon > 0
+
+        if isinstance(state_belief, StateBeliefOverTime):
+            state_belief = state_belief.state_beliefs[-1]
+
+        batch_size = state_belief.batch_size
+        input = kwargs.get('input', None)
+        if input is not None:
+            assert len(input) == batch_size, "The `state_belief` has batch-size != the 1st dim of the `input` tensor."
+
+        state_prediction = state_belief
+        state_predictions = []
+        for h in range(horizon):
+            batch_design = self.design_for_batch(input=None if input is None else input[:, h, :],
+                                                 batch_size=batch_size,
+                                                 time=h,
+                                                 **kwargs)
+
+            state_prediction = state_prediction.predict(F=batch_design.F(), Q=batch_design.Q())
+            state_prediction.compute_measurement(H=batch_design.H(), R=batch_design.R())
+            state_predictions.append(state_prediction)
+
+        return self.family.concatenate_over_time(state_beliefs=state_predictions)
