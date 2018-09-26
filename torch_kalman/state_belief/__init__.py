@@ -83,17 +83,26 @@ class Gaussian(StateBelief):
         covs = torch.bmm(torch.bmm(F, self.covs), Ft) + Q
         return self.__class__(means=means, covs=covs)
 
+    def kalman_gain(self, system_covariance, method='solve'):
+        Ht = self.H.permute(0, 2, 1)
+        covs_measured = torch.bmm(self.covs, Ht)
+        if method == 'solve':
+            A = system_covariance.permute(0, 2, 1)
+            B = covs_measured.permute(0, 2, 1)
+            Kt, _ = torch.gesv(B, A)
+            K = Kt.permute(0, 2, 1)
+        elif method == 'inverse':
+            Sinv = batch_inverse(system_covariance)
+            K = torch.bmm(covs_measured, Sinv)
+        else:
+            raise ValueError(f"Unrecognized method '{method}'.")
+        return K
+
     def update(self, obs: Tensor) -> StateBelief:
         assert isinstance(obs, Tensor)
         measured_means, system_covariance = self.measurement
-
-        # residual:
         residuals = obs - measured_means
-
-        # kalman-gain:
-        Sinv = batch_inverse(system_covariance)
-        Ht = self.H.permute(0, 2, 1)
-        K = torch.bmm(torch.bmm(self.covs, Ht), Sinv)  # kalman gain
+        K = self.kalman_gain(system_covariance)
 
         # clone tensors since autograd can't handle in-place changes
         means_new = self.means.clone()
