@@ -6,7 +6,6 @@ from torch import Tensor
 from torch.distributions import Distribution
 
 from torch_kalman.state_belief.over_time import GaussianOverTime
-from torch_kalman.torch_utils import batch_inverse
 
 
 # noinspection PyPep8Naming
@@ -92,7 +91,8 @@ class Gaussian(StateBelief):
             Kt, _ = torch.gesv(B, A)
             K = Kt.permute(0, 2, 1)
         elif method == 'inverse':
-            Sinv = batch_inverse(system_covariance)
+            Sinv = torch.cat([torch.inverse(system_covariance[i, :, :]).unsqueeze(0)
+                              for i in range(len(system_covariance))], 0)
             K = torch.bmm(covs_measured, Sinv)
         else:
             raise ValueError(f"Unrecognized method '{method}'.")
