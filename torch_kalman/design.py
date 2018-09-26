@@ -32,7 +32,7 @@ class Design:
             else:
                 self.processes[process.id] = process
                 self.state_size += len(process.state_elements)
-                for measure_id, _ in process.measures.keys():
+                for measure_id, _ in process.state_elements_to_measures.keys():
                     if measure_id not in self.measures:
                         raise ValueError(f"Measure '{measure_id}' found in process '{process.id}' but not in `measures`.")
                     used_measures.add(measure_id)
@@ -132,7 +132,7 @@ class DesignForBatch:
         measure_idx = {measure_id: i for i, measure_id in enumerate(self.measures)}
 
         for process_id, process in self.processes.items():
-            for (measure_id, state_element), measure_vals in process.measures().items():
+            for (measure_id, state_element), measure_vals in process.state_elements_to_measures().items():
                 if measure_vals is None:
                     raise ValueError(f"The measurement value for measure '{measure_id}' of process '{process_id}' is "
                                      f"None, which means that this needs to be set on a per-batch basis using the "

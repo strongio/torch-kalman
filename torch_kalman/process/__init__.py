@@ -30,7 +30,7 @@ class Process:
         self._state_element_idx = None
 
         # measures:
-        self.measures = {}
+        self.state_elements_to_measures = {}
 
         # state elements:
         assert len(state_elements) == len(set(state_elements)), "Duplicate `state_elements` now allowed."
@@ -49,6 +49,9 @@ class Process:
         # if no per-batch modification, can avoid repeated computations:
         self.F_base = None
 
+    def measures(self):
+        return set(measure for measure, _ in self.state_elements_to_measures.keys())
+
     def initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:
         raise NotImplementedError
 
@@ -61,9 +64,9 @@ class Process:
 
         key = (measure, state_element)
 
-        if key in self.measures.keys():
+        if key in self.state_elements_to_measures.keys():
             raise ValueError(f"The (measure, state_element) '{key}' was already added to this process.")
-        self.measures[key] = value
+        self.state_elements_to_measures[key] = value
 
     def parameters(self) -> Generator[Parameter, None, None]:
         raise NotImplementedError
@@ -93,7 +96,7 @@ class ProcessForBatch:
 
         # transitions that are specific to this batch, not the process generally:
         self.batch_transitions = {}
-        self.batch_measures = {}
+        self.batch_ses_to_measures = {}
 
     def F(self) -> Tensor:
         if not self.batch_transitions and self.process.F_base is not None:
@@ -147,13 +150,13 @@ class ProcessForBatch:
 
         key = (measure, state_element)
 
-        if self.process.measures.get(key, None):
+        if self.process.state_elements_to_measures.get(key, None):
             raise ValueError(f"The (measure, state_element) '{key}' was already added to this process, cannot modify.")
 
-        if key in self.batch_measures.keys():
+        if key in self.batch_ses_to_measures.keys():
             raise ValueError(f"The (measure, state_element) '{key}' was already added to this batch-process.")
 
-        self.batch_measures[key] = values
+        self.batch_ses_to_measures[key] = values
 
     def transitions(self) -> Dict[str, Dict[str, Union[Tensor, float]]]:
         # need to be careful to update "deeply", and also not modify originals
@@ -174,6 +177,6 @@ class ProcessForBatch:
 
         return out
 
-    def measures(self) -> Dict[Tuple[str, str], Union[Tensor, float]]:
+    def state_elements_to_measures(self) -> Dict[Tuple[str, str], Union[Tensor, float]]:
         # don't need to be as careful as w/self.transitions, since dicts of values, not dicts of dicts
-        return {**self.process.measures, **self.batch_measures}
+        return {**self.process.state_elements_to_measures, **self.batch_ses_to_measures}

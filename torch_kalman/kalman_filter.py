@@ -38,6 +38,7 @@ class KalmanFilter(torch.nn.Module):
     def measure_size(self) -> int:
         return self.design.measure_size
 
+    # noinspection PyShadowingBuiltins
     def initial_state_prediction(self,
                                  input: Union[Tensor, None],
                                  batch_size: Union[int, None] = None,
