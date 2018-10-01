@@ -1,4 +1,4 @@
-from typing import Generator, Sequence, Dict, Union, Tuple
+from typing import Generator, Sequence, Dict, Union, Tuple, Optional
 
 import torch
 from torch import Tensor
@@ -142,7 +142,11 @@ class ProcessForBatch:
 
         self.batch_transitions[to_element][from_element] = values
 
-    def add_measure(self, measure, state_element, values=None):
+    def add_measure(self,
+                    measure: str,
+                    state_element: str,
+                    values: Optional[Tensor] = None):
+
         if values is not None:
             length = len(values)
             assert length == 1 or length == self.batch_size
