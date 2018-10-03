@@ -35,12 +35,12 @@ class StateBeliefOverTime:
                         continue
                     loc = self.measurement_distribution.loc[g, t][~this_isnan].clone()
                     cov = self.measurement_distribution.covariance_matrix[g, t][~this_isnan][:, ~this_isnan].clone()
-                    dist = self.family(loc=loc, covariance_matrix=cov)
+                    dist = self.distribution(loc=loc, covariance_matrix=cov)
                     out[g, t] = dist.log_prob(measurements[g, t, ~this_isnan])
         return out
 
     @property
-    def family(self):
+    def distribution(self):
         raise NotImplementedError
 
     @property
@@ -54,7 +54,7 @@ class StateBeliefOverTime:
             means, covs = zip(*[(state_belief.means, state_belief.covs) for state_belief in self.state_beliefs])
             means = torch.stack(means).permute(1, 0, 2)
             covs = torch.stack(covs).permute(1, 0, 2, 3)
-            self._state_distribution = self.family(loc=means, covariance_matrix=covs)
+            self._state_distribution = self.distribution(loc=means, covariance_matrix=covs)
         return self._state_distribution
 
     @property
@@ -63,11 +63,11 @@ class StateBeliefOverTime:
             means, covs = zip(*[state_belief.measurement for state_belief in self.state_beliefs])
             means = torch.stack(means).permute(1, 0, 2)
             covs = torch.stack(covs).permute(1, 0, 2, 3)
-            self._measurement_distribution = self.family(loc=means, covariance_matrix=covs)
+            self._measurement_distribution = self.distribution(loc=means, covariance_matrix=covs)
         return self._measurement_distribution
 
 
 class GaussianOverTime(StateBeliefOverTime):
     @property
-    def family(self):
+    def distribution(self):
         return MultivariateNormal

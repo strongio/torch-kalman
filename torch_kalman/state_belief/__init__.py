@@ -3,7 +3,7 @@ from typing import Tuple, Sequence, Union, List
 import numpy as np
 import torch
 from torch import Tensor
-from torch.distributions import Distribution
+from torch.distributions import Distribution, MultivariateNormal
 
 from torch_kalman.state_belief.over_time import GaussianOverTime
 
@@ -72,10 +72,12 @@ class StateBelief:
     def concatenate_over_time(cls, state_beliefs: Sequence['StateBelief']) -> Distribution:
         raise NotImplementedError()
 
+    def to_distribution(self) -> Distribution:
+        raise NotImplementedError
+
 
 # noinspection PyPep8Naming
 class Gaussian(StateBelief):
-
     def predict(self, F: Tensor, Q: Tensor) -> StateBelief:
         Ft = F.permute(0, 2, 1)
         means = torch.bmm(F, self.means[:, :, None]).squeeze(2)
@@ -161,3 +163,6 @@ class Gaussian(StateBelief):
     @classmethod
     def concatenate_over_time(cls, state_beliefs: Sequence['Gaussian']) -> 'GaussianOverTime':
         return GaussianOverTime(state_beliefs=state_beliefs)
+
+    def to_distribution(self) -> Distribution:
+        return MultivariateNormal(loc=self.means, covariance_matrix=self.covs)
