@@ -43,12 +43,25 @@ class Design:
                              f"during prediction.")
 
         # measure-covariance:
-        self.measure_cholesky_log_diag = Parameter(data=torch.randn(self.measure_size))
-        self.measure_cholesky_off_diag = Parameter(data=torch.randn(int(self.measure_size * (self.measure_size - 1) / 2)))
+        self.measure_cholesky_log_diag = Parameter(data=torch.zeros(self.measure_size))
+        self.measure_cholesky_off_diag = Parameter(data=torch.zeros(int(self.measure_size * (self.measure_size - 1) / 2)))
 
         # cache:
         self.Q_cache, self.R_cache, self.state_mat_idx_cache = None, None, None
         self.reset_cache()
+
+    def all_state_elements(self):
+        for process_name, process in self.processes.items():
+            for state_element in process.state_elements:
+                yield process_name, state_element
+
+    def requires_grad_(self, requires_grad):
+        for param in self.parameters():
+            param.requires_grad_(requires_grad=requires_grad)
+
+    @property
+    def requires_grad(self):
+        return any(param.requires_grad for param in self.parameters())
 
     def measure_covariance(self) -> Tensor:
         return Covariance.from_log_cholesky(log_diag=self.measure_cholesky_log_diag,

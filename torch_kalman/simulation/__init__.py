@@ -1,9 +1,6 @@
-from copy import deepcopy
-
 from typing import TypeVar
 
 import torch
-from torch import Tensor
 
 from torch_kalman.design import Design
 from torch_kalman.state_belief import Gaussian, StateBelief
@@ -11,11 +8,7 @@ from torch_kalman.state_belief import Gaussian, StateBelief
 
 class Simulation:
     def __init__(self, design: Design):
-
-        # freeze the design:
-        design = deepcopy(design)
-        for param in design.parameters():
-            param.requires_grad_(requires_grad=False)
+        assert not design.requires_grad
         self.design = design
 
     @property
@@ -33,7 +26,8 @@ class Simulation:
 
             # realize the state:
             state.means = state.to_distribution().sample()
-            state.covs[:] = 0.
+            # virtually zero, but avoid numerical issues for those states w/o process covariance:
+            state.covs[:] = torch.eye(self.design.state_size) * 1e-10
 
             # measure the state:
             state.compute_measurement(H=design_for_batch.H(), R=design_for_batch.R())

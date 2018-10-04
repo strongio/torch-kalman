@@ -1,3 +1,4 @@
+from math import log
 from typing import Generator, Union, Tuple, Optional
 from warnings import warn
 
@@ -18,7 +19,8 @@ class Season(Process):
                  id: str,
                  num_seasons: int,
                  season_duration: int = 1,
-                 start_datetime: Optional[np.datetime64] = None):
+                 start_datetime: Optional[np.datetime64] = None,
+                 init_param_fourier_df: int = 4):
 
         # parse date information:
         if start_datetime is None:
@@ -46,11 +48,16 @@ class Season(Process):
                 transitions['measured'][prev] = None
 
         # process-covariance:
-        self.log_std_dev = Parameter(data=torch.randn(1))
+        self.log_std_dev = Parameter(-5. * torch.ones(1))
 
         # initial state:
-        self.initial_state_mean_params = Parameter(torch.randn(num_seasons - 1))
-        self.initial_state_log_std_dev = Parameter(torch.randn(1))
+        self.K = init_param_fourier_df
+        if self.K:
+            self.initial_state_mean_params = Parameter(torch.zeros((self.K, 2)))
+        else:
+            self.initial_state_mean_params = Parameter(torch.zeros(len(self.state_elements) - 1))
+
+        self.initial_state_log_std_dev = Parameter(-5. * torch.ones(1))
 
         # super:
         super().__init__(id=id, state_elements=state_elements, transitions=transitions)
@@ -63,39 +70,6 @@ class Season(Process):
         # writing transition-matrix is slow, no need to do it repeatedly:
         self.transition_cache = {}
 
-    def initial_state(self,
-                      batch_size: int,
-                      start_datetimes: Optional[ndarray] = None,
-                      time: Optional[int] = None) -> Tuple[Tensor, Tensor]:
-        ns = len(self.state_elements)
-
-        # mean:
-        mean = Tensor(size=(ns,))
-        mean[1:] = self.initial_state_mean_params
-        mean[0] = -torch.sum(mean[1:])
-
-        if start_datetimes is None:
-            if self.start_datetime:
-                raise ValueError("`start_datetimes` argument required.")
-            delta = np.zeros(shape=(batch_size,), dtype=int)
-        else:
-            delta = self.get_start_delta(start_datetimes)
-        season_shift = np.floor(delta / self.season_duration) % self.num_seasons
-
-        means = []
-        for i, shift in enumerate(season_shift.astype(int)):
-            if i == 0:
-                means.append(mean)
-            else:
-                means.append(torch.cat([mean[-shift:], mean[:-shift]]))
-        means = torch.stack(means)
-
-        # cov:
-        covs = torch.eye(ns).expand(batch_size, -1, -1)
-        covs[:, 0, 0] = torch.pow(torch.exp(self.initial_state_log_std_dev), 2)
-
-        return means, covs
-
     def add_measure(self,
                     measure: str,
                     state_element: str = 'measured',
@@ -104,8 +78,8 @@ class Season(Process):
 
     def parameters(self) -> Generator[Parameter, None, None]:
         yield self.log_std_dev
-        yield self.initial_state_mean_params
         yield self.initial_state_log_std_dev
+        yield self.initial_state_mean_params
 
     def covariance(self) -> Covariance:
         state_size = len(self.state_elements)
@@ -158,6 +132,57 @@ class Season(Process):
 
         return for_batch
 
+    def initial_state(self,
+                      batch_size: int,
+                      start_datetimes: Optional[ndarray] = None,
+                      time: Optional[int] = None) -> Tuple[Tensor, Tensor]:
+
+        # mean:
+        mean = self.initialize_state_mean()
+
+        if start_datetimes is None:
+            if self.start_datetime:
+                raise ValueError("`start_datetimes` argument required.")
+            delta = np.zeros(shape=(batch_size,), dtype=int)
+        else:
+            delta = self.get_start_delta(start_datetimes)
+        season_shift = np.floor(delta / self.season_duration) % self.num_seasons
+
+        means = []
+        for i, shift in enumerate(season_shift.astype(int)):
+            if i == 0:
+                means.append(mean)
+            else:
+                means.append(torch.cat([mean[-shift:], mean[:-shift]]))
+        means = torch.stack(means)
+
+        # cov:
+        # TODO: why ones along diag?
+        covs = torch.eye(len(self.state_elements)).expand(batch_size, -1, -1)
+        covs[:, 0, 0] = torch.pow(torch.exp(self.initial_state_log_std_dev), 2)
+
+        return means, covs
+
+    def initialize_state_mean(self):
+        ns = len(self.state_elements)
+        state = Tensor(size=(ns,))
+        if self.K:
+            # fourier series:
+            state[:] = 0.
+            season = torch.arange(float(ns))
+            for idx in range(self.K):
+                k = idx + 1
+                state += (self.initial_state_mean_params[idx, 0] * torch.sin(2. * np.pi * k * season / ns))
+                state += (self.initial_state_mean_params[idx, 1] * torch.cos(2. * np.pi * k * season / ns))
+            # adjust for df:
+            state = state - state[1:].mean()
+            state[1:] = state[1:] - state[0] / ns
+            state[0] = -torch.sum(state[1:])
+        else:
+            state[1:] = self.initial_state_mean_params
+            state[0] = -torch.sum(state[1:])
+        return state
+
     def get_start_delta(self, start_datetimes: np.ndarray) -> np.ndarray:
         assert isinstance(start_datetimes, ndarray), "`start_datetimes` must be a datetime64 numpy.ndarray"
         if self.datetime_data != np.datetime_data(start_datetimes.dtype):
@@ -167,3 +192,11 @@ class Season(Process):
         td = np.timedelta64(1, self.datetime_data)
         delta = (start_datetimes - self.start_datetime) / td
         return delta.astype(int)
+
+    def set_to_simulation_mode(self):
+        super().set_to_simulation_mode()
+
+        self.initial_state_mean_params[:] = 0.
+        self.initial_state_mean_params[0] = log(len(self.state_elements)) / 3.
+        self.initial_state_log_std_dev[:] = -10.0  # season-effect virtually identical for all groups
+        self.log_std_dev[:] = -8.0  # season-effect is very close to stationary

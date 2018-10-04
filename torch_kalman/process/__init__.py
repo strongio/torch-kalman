@@ -5,7 +5,6 @@ from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.covariance import Covariance
-from torch_kalman.state_belief import StateBelief
 
 
 class Process:
@@ -49,6 +48,14 @@ class Process:
         # if no per-batch modification, can avoid repeated computations:
         self.F_base = None
 
+    def requires_grad_(self, requires_grad):
+        for param in self.parameters():
+            param.requires_grad_(requires_grad=requires_grad)
+
+    @property
+    def requires_grad(self):
+        return any(param.requires_grad for param in self.parameters())
+
     def measures(self):
         return set(measure for measure, _ in self.state_elements_to_measures.keys())
 
@@ -82,6 +89,12 @@ class Process:
 
     def for_batch(self, batch_size: int, **kwargs) -> 'ProcessForBatch':
         return ProcessForBatch(process=self, batch_size=batch_size)
+
+    def set_to_simulation_mode(self, *args, **kwargs):
+        """
+        Set initial parameters to reasonable values s.t. generating data from this process in a simulation will be reasonable
+        """
+        self.requires_grad_(False)
 
 
 class ProcessForBatch:
