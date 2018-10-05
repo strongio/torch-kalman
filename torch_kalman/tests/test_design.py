@@ -6,7 +6,7 @@ from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.design import Design
-from torch_kalman.process.velocity import Velocity
+from torch_kalman.process.processes.velocity import Velocity
 
 from torch_kalman.tests import TestCaseTK, simple_mv_velocity_design
 
@@ -16,15 +16,15 @@ from scipy.linalg import block_diag
 class TestDesign(TestCaseTK):
     def test_design_attrs(self):
         with self.assertRaises(AssertionError) as cm:
-            design = Design(measures=['same', 'same'], processes=[])
+            Design(measures=['same', 'same'], processes=[])
         self.assertEqual(cm.exception.args[0], "Duplicate measures.")
 
         with self.assertRaises(ValueError) as cm:
-            design = Design(processes=[Velocity(id='same'), Velocity(id='same')], measures=[])
+            Design(processes=[Velocity(id='same'), Velocity(id='same')], measures=[])
         self.assertEqual(cm.exception.args[0], "Duplicate process-ids: same.")
 
         with self.assertRaises(ValueError) as cm:
-            design = Design(processes=[Velocity(id='1')], measures=['1'])
+            Design(processes=[Velocity(id='1')], measures=['1'])
         self.assertIn("The following `measures` are not in any of the `processes`:\n{'1'}",
                       cm.exception.args[0])
 

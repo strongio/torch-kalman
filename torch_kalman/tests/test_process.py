@@ -1,21 +1,15 @@
 import torch
-from numpy import datetime64
+from numpy import datetime64, array
 from torch import Tensor
 
-from torch_kalman.process.season import Season
-from torch_kalman.process.velocity import Velocity
+from torch_kalman.design import Design
+from torch_kalman.process.processes.season import Season
+from torch_kalman.process.processes.velocity import Velocity
 
 from torch_kalman.tests import TestCaseTK
 
 
 class TestProcess(TestCaseTK):
-    def test_velocity_covariance(self):
-        vel = Velocity(id='test')
-        batch_vel = vel.for_batch(batch_size=1)
-
-        self.check_covariance_chol(cov=batch_vel.Q()[0],
-                                   cholesky_log_diag=vel.cholesky_log_diag,
-                                   cholesky_off_diag=vel.cholesky_off_diag)
 
     def test_velocity_transition(self):
         batch_vel = Velocity(id='test').for_batch(batch_size=1)
@@ -34,11 +28,24 @@ class TestProcess(TestCaseTK):
 
         # need to include start_datetimes since included above
         with self.assertRaises(ValueError) as cm:
-            s1_batch = season.for_batch(batch_size=1, time=0)
+            season.for_batch(batch_size=1, time=0)
         self.assertEqual(cm.exception.args[0], "`start_datetimes` argument required.")
 
-        # TODO: test F
+        batch_season = season.for_batch(batch_size=1, time=0, start_datetimes=array([datetime64('2018-01-01')]))
+
+        # test transitions manually:
+        state_mean = torch.arange(0.0, 7.0)[:, None]
+        state_mean[0] = -state_mean[1:].sum()
+        for i in range(10):
+            state_mean_last = state_mean
+            state_mean = torch.mm(batch_season.F()[0], state_mean)
+            self.assertTrue((state_mean[1:] == state_mean_last[:-1]).all())
+
         # TODO: test H
+        measure = 'measure'
+        season.add_measure(measure)
+        design = Design(processes=[season], measures=[measure])
+
         # TODO: test Q
 
     def test_seasons_with_durations(self):
@@ -46,3 +53,11 @@ class TestProcess(TestCaseTK):
 
         # TODO: test F
         # TODO: test start_datetime
+        # state_mean = torch.arange(0, 7)[None, :, None].expand(2, -1, -1)
+        # self.assertTrue((state_mean[0] == state_mean[1]).all())
+        # state_mean[:, 0, :] = -state_mean[:, 1:, :].sum(1)
+        # for t in range(10):
+        #     design_for_batch = design.for_batch(batch_size=2, time=t,
+        #                                         start_datetimes=array([datetime64('2018-01-01'), datetime64('2018-01-02')]))
+        #     state_mean_last = state_mean
+        #     state_mean = torch.bmm(design_for_batch.F(), state_mean)

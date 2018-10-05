@@ -7,7 +7,7 @@ import torch
 from torch import Tensor
 
 from torch_kalman.design import Design
-from torch_kalman.process.velocity import Velocity
+from torch_kalman.process.processes.velocity import Velocity
 
 import numpy as np
 

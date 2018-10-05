@@ -11,7 +11,8 @@ from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.covariance import Covariance
-from torch_kalman.process import Process, ProcessForBatch
+from torch_kalman.process import Process
+from torch_kalman.process.for_batch import ProcessForBatch
 
 
 class Season(Process):
@@ -197,6 +198,6 @@ class Season(Process):
         super().set_to_simulation_mode()
 
         self.initial_state_mean_params[:] = 0.
-        self.initial_state_mean_params[0] = log(len(self.state_elements)) / 3.
+        self.initial_state_mean_params[:, 0] = log(len(self.state_elements)) / 2.
         self.initial_state_log_std_dev[:] = -10.0  # season-effect virtually identical for all groups
         self.log_std_dev[:] = -8.0  # season-effect is very close to stationary

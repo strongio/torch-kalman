@@ -1,12 +1,17 @@
-from typing import Sequence
+from collections import defaultdict
+from typing import Sequence, Optional, Dict, Tuple
 
 import torch
+
 from torch import Tensor
-from torch.distributions import Distribution, MultivariateNormal
+from torch.distributions import Distribution
+
+from torch_kalman.design import Design
+import numpy as np
 
 
 class StateBeliefOverTime:
-    def __init__(self, state_beliefs: Sequence['StateBelief']):
+    def __init__(self, state_beliefs: Sequence['StateBelief'], design: Optional[Design] = None):
         """
         Belief in the state of the system over a range of times, for a batch of time-series.
 
@@ -15,6 +20,7 @@ class StateBeliefOverTime:
         self.state_beliefs = state_beliefs
         self._state_distribution = None
         self._measurement_distribution = None
+        self.design = design
 
     def log_prob(self, measurements: Tensor) -> Tensor:
         isnan = torch.isnan(measurements)
@@ -66,8 +72,21 @@ class StateBeliefOverTime:
             self._measurement_distribution = self.distribution(loc=means, covariance_matrix=covs)
         return self._measurement_distribution
 
+    def components(self, design: Optional[Design] = None) -> Dict[Tuple[str, str, str], Tensor]:
+        if not design:
+            if not self.design:
+                raise Exception("Must pass design to `components` if `design` was not passed at init.")
+            design = self.design
 
-class GaussianOverTime(StateBeliefOverTime):
-    @property
-    def distribution(self):
-        return MultivariateNormal
+        states_per_measure = defaultdict(list)
+        for state_belief in self.state_beliefs:
+            for m, measure in enumerate(design.measures):
+                states_per_measure[measure].append(state_belief.H[:, m, :] * state_belief.means.data)
+
+        out = {}
+        for measure, tens in states_per_measure.items():
+            tens = torch.stack(tens).permute(1, 0, 2)
+            for s, (process_name, state_element) in enumerate(design.all_state_elements()):
+                if ~torch.isclose(tens[:, :, s].abs().max(), torch.zeros(1)):  # TODO: handle nans
+                    out[(measure, process_name, state_element)] = tens[:, :, s]
+        return out

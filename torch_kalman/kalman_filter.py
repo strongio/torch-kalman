@@ -1,20 +1,20 @@
-from typing import Union, Sequence, Optional, Tuple
+from typing import Union, Iterable
 
 import torch
 from torch import Tensor
 from torch.nn import ParameterList
 
-from torch_kalman.design import Design, DesignForBatch
+from torch_kalman.design import Design
+from torch_kalman.design.for_batch import DesignForBatch
+from torch_kalman.process import Process
 from torch_kalman.state_belief import StateBelief, Gaussian
 from torch_kalman.state_belief.over_time import StateBeliefOverTime
 
-import numpy as np
-
 
 class KalmanFilter(torch.nn.Module):
-    def __init__(self, design: Design):
+    def __init__(self, processes: Iterable[Process], measures: Iterable[str]):
         super().__init__()
-        self.design = design
+        self.design = Design(processes=processes, measures=measures)
 
         # parameters from design:
         self.design_parameters = ParameterList()
@@ -87,6 +87,7 @@ class KalmanFilter(torch.nn.Module):
 
                 # predict the state for t, from information from t-1
                 # F at t-1 is transition *from* t-1 *to* t
+                # noinspection PyUnboundLocalVariable
                 state_prediction = state_belief.predict(F=batch_design.F(), Q=batch_design.Q())
 
             # compute the design of the kalman filter for this time-point:

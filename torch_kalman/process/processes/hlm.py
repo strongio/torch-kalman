@@ -1,11 +1,12 @@
-from typing import Generator, Tuple, Sequence, Union
+from typing import Generator, Tuple, Sequence
 
 import torch
 from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.covariance import Covariance
-from torch_kalman.process import Process, ProcessForBatch
+from torch_kalman.process import Process
+from torch_kalman.process.for_batch import ProcessForBatch
 
 
 class HLM(Process):

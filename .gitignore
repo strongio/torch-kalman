@@ -99,6 +99,7 @@ ENV/
 .mypy_cache/
 .DS_Store
 
-ad_hoc/*
+examples/*
 .idea/*
 .coveragerc
+*.ipynb
