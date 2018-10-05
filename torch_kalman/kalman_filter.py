@@ -99,7 +99,7 @@ class KalmanFilter(torch.nn.Module):
             # append to output:
             state_predictions.append(state_prediction)
 
-        return self.family.concatenate_over_time(state_beliefs=state_predictions)
+        return self.family.concatenate_over_time(state_beliefs=state_predictions, design=self.design)
 
     def design_for_batch(self, batch_size: int, time: int, **kwargs) -> DesignForBatch:
         # by overriding this method, child-classes can implement batch-specific changes to design
@@ -133,4 +133,4 @@ class KalmanFilter(torch.nn.Module):
             state_prediction.compute_measurement(H=batch_design.H(), R=batch_design.R())
             state_predictions.append(state_prediction)
 
-        return self.family.concatenate_over_time(state_beliefs=state_predictions)
+        return self.family.concatenate_over_time(state_beliefs=state_predictions, design=self.design)
