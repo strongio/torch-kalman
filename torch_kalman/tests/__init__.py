@@ -15,7 +15,7 @@ import numpy as np
 def simple_mv_velocity_design(dims=2):
     processes, measures = [], []
     for i in range(dims):
-        process = Velocity(id=str(i))
+        process = Velocity(id=str(i), dampened=False)
         measure = str(i)
         process.add_measure(measure=measure)
         processes.append(process)

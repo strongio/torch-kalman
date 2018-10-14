@@ -12,7 +12,7 @@ from torch_kalman.tests import TestCaseTK
 class TestProcess(TestCaseTK):
 
     def test_velocity_transition(self):
-        batch_vel = Velocity(id='test').for_batch(batch_size=1)
+        batch_vel = Velocity(id='test', dampened=False).for_batch(batch_size=1)
 
         # check F:
         self.assertListEqual(list1=batch_vel.F()[0].tolist(), list2=[[1., 1.], [0., 1.]])
