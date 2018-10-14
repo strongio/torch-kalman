@@ -92,7 +92,9 @@ class Season(Process):
     def for_batch(self,
                   batch_size: int,
                   time: Optional[int] = None,
-                  start_datetimes: Optional[ndarray] = None) -> ProcessForBatch:
+                  start_datetimes: Optional[ndarray] = None,
+                  cache: bool = True
+                  ) -> ProcessForBatch:
 
         if start_datetimes is None:
             if self.start_datetime:
@@ -102,13 +104,18 @@ class Season(Process):
             delta = self.get_start_delta(start_datetimes) + time
         in_transition = (delta % self.season_duration) == (self.season_duration - 1)
 
-        key = in_transition.tostring()
-        if key not in self.transition_cache.keys():
-            self.transition_cache[key] = self.make_batch_with_transitions(in_transition)
+        for_batch = super().for_batch(batch_size=batch_size)
+        if cache:
+            key = in_transition.tostring()
+            if key not in self.transition_cache.keys():
+                self.transition_cache[key] = self.make_batch_transitions(in_transition)
+            for_batch.batch_transitions = self.transition_cache[key]
+        else:
+            for_batch.batch_transitions = self.make_batch_transitions(in_transition)
 
-        return self.transition_cache[key]
+        return for_batch
 
-    def make_batch_with_transitions(self, in_transition: np.ndarray) -> ProcessForBatch:
+    def make_batch_transitions(self, in_transition: np.ndarray) -> ProcessForBatch:
         batch_size = len(in_transition)
         for_batch = super().for_batch(batch_size=batch_size)
         to_next_state = Tensor(in_transition.astype('float'))
@@ -131,7 +138,7 @@ class Season(Process):
             # from state to itself:
             for_batch.set_transition(from_element=current, to_element=current, values=to_self)
 
-        return for_batch
+        return for_batch.batch_transitions
 
     def initial_state(self,
                       batch_size: int,
