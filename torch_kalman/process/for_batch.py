@@ -65,11 +65,10 @@ class ProcessForBatch:
     def add_measure(self,
                     measure: str,
                     state_element: str,
-                    values: Optional[Tensor] = None):
+                    values: Tensor):
 
-        if values is not None:
-            length = len(values)
-            assert length == 1 or length == self.batch_size
+        length = len(values)
+        assert length == 1 or length == self.batch_size
         assert state_element in self.process.state_elements, f"'{state_element}' is not in this process.'"
 
         key = (measure, state_element)
