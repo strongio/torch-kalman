@@ -66,18 +66,19 @@ class Season(Process):
                 transitions['measured'][prev] = None
 
         # process-covariance:
-        self.log_std_dev = Parameter(-5. * torch.ones(1))
+        self.log_std_dev = Parameter(torch.randn(1) - 3.)
 
         # initial state:
+        num_states = len(state_elements)
         if use_fourier_init_param is None:
-            use_fourier_init_param = 4 if len(self.state_elements) > 10 else False
+            use_fourier_init_param = 4 if num_states > 10 else False
         self.K = use_fourier_init_param
         if self.K:
-            self.initial_state_mean_params = Parameter(torch.zeros((self.K, 2)))
+            self.initial_state_mean_params = Parameter(torch.randn((self.K, 2)))
         else:
-            self.initial_state_mean_params = Parameter(torch.zeros(len(self.state_elements) - 1))
+            self.initial_state_mean_params = Parameter(torch.randn(num_states - 1))
 
-        self.initial_state_log_std_dev = Parameter(-5. * torch.ones(1))
+        self.initial_state_log_std_dev = Parameter(torch.randn(1) - 3.)
 
         # super:
         super().__init__(id=id, state_elements=state_elements, transitions=transitions)
