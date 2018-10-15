@@ -24,12 +24,12 @@ class Covariance(Tensor):
         return log_diag, off_diag
 
     @classmethod
-    def from_std_and_corr(cls, log_std_devs: Tensor, corr_tanh: Tensor) -> Tensor:
+    def from_std_and_corr(cls, log_std_devs: Tensor, corr_arctanh: Tensor) -> Tensor:
         if len(log_std_devs) != 2:
             raise ValueError("This method can only be used for 2x2 covariance mats.")
 
         std_diag = torch.diag(torch.exp(log_std_devs))
         corr_mat = torch.eye(2)
-        corr_mat[0, 1] = torch.tanh(corr_tanh)
-        corr_mat[1, 0] = torch.tanh(corr_tanh)
+        corr_mat[0, 1] = torch.tanh(corr_arctanh)
+        corr_mat[1, 0] = torch.tanh(corr_arctanh)
         return torch.mm(torch.mm(std_diag, corr_mat), std_diag)

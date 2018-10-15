@@ -4,7 +4,7 @@ from torch import Tensor
 
 from torch_kalman.design import Design
 from torch_kalman.process.processes.season import Season
-from torch_kalman.process.processes.velocity import Velocity
+from torch_kalman.process.processes.local_trend import LocalTrend
 
 from torch_kalman.tests import TestCaseTK
 
@@ -12,7 +12,7 @@ from torch_kalman.tests import TestCaseTK
 class TestProcess(TestCaseTK):
 
     def test_velocity_transition(self):
-        batch_vel = Velocity(id='test', dampened=False).for_batch(batch_size=1)
+        batch_vel = LocalTrend(id='test', decay_velocity=False).for_batch(batch_size=1)
 
         # check F:
         self.assertListEqual(list1=batch_vel.F()[0].tolist(), list2=[[1., 1.], [0., 1.]])
@@ -24,7 +24,7 @@ class TestProcess(TestCaseTK):
 
     def test_seasons(self):
         # test seasons without durations
-        season = Season(id='day_of_week', num_seasons=7, season_duration=1, start_datetime=datetime64('2018-01-01'))
+        season = Season(id='day_of_week', num_seasons=7, season_duration=1, season_start='2018-01-01', timestep_interval='D')
 
         # need to include start_datetimes since included above
         with self.assertRaises(ValueError) as cm:
@@ -49,7 +49,8 @@ class TestProcess(TestCaseTK):
         # TODO: test Q
 
     def test_seasons_with_durations(self):
-        season = Season(id='week_of_year', num_seasons=52, season_duration=7, start_datetime=datetime64('2018-12-31'))
+        season = Season(id='week_of_year', num_seasons=52, season_duration=7,
+                        season_start='2018-12-31', timestep_interval='D')
 
         # TODO: test F
         # TODO: test start_datetime

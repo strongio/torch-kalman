@@ -7,7 +7,7 @@ import torch
 from torch import Tensor
 
 from torch_kalman.design import Design
-from torch_kalman.process.processes.velocity import Velocity
+from torch_kalman.process.processes.local_trend import LocalTrend
 
 import numpy as np
 
@@ -15,7 +15,7 @@ import numpy as np
 def simple_mv_velocity_design(dims=2):
     processes, measures = [], []
     for i in range(dims):
-        process = Velocity(id=str(i), dampened=False)
+        process = LocalTrend(id=str(i), decay_velocity=False)
         measure = str(i)
         process.add_measure(measure=measure)
         processes.append(process)

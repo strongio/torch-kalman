@@ -6,7 +6,7 @@ from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.design import Design
-from torch_kalman.process.processes.velocity import Velocity
+from torch_kalman.process.processes.local_trend import LocalTrend
 
 from torch_kalman.tests import TestCaseTK, simple_mv_velocity_design
 
@@ -20,11 +20,11 @@ class TestDesign(TestCaseTK):
         self.assertEqual(cm.exception.args[0], "Duplicate measures.")
 
         with self.assertRaises(ValueError) as cm:
-            Design(processes=[Velocity(id='same'), Velocity(id='same')], measures=[])
+            Design(processes=[LocalTrend(id='same'), LocalTrend(id='same')], measures=[])
         self.assertEqual(cm.exception.args[0], "Duplicate process-ids: same.")
 
         with self.assertRaises(ValueError) as cm:
-            Design(processes=[Velocity(id='1')], measures=['1'])
+            Design(processes=[LocalTrend(id='1')], measures=['1'])
         self.assertIn("The following `measures` are not in any of the `processes`:\n{'1'}",
                       cm.exception.args[0])
 
@@ -98,13 +98,13 @@ class TestDesign(TestCaseTK):
 
     def test_design_h_batch_process(self):
         #
-        vel_1 = Velocity(id='vel_1')
+        vel_1 = LocalTrend(id='vel_1')
         vel_1.add_measure('measure_1')
 
-        vel_2 = Velocity(id='vel_2')
+        vel_2 = LocalTrend(id='vel_2')
         vel_2.add_measure('measure_2')
 
-        vel_common = Velocity(id='vel_common')
+        vel_common = LocalTrend(id='vel_common')
         vel_common.add_measure('measure_1', value=None)
         vel_common.add_measure('measure_2', value=None)
 
