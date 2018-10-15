@@ -20,18 +20,35 @@ class Season(Process):
                  id: str,
                  num_seasons: int,
                  season_duration: int = 1,
-                 start_datetime: Optional[np.datetime64] = None,
-                 init_param_fourier_df: int = 4):
+                 season_start: Optional[str] = None,
+                 timestep_interval: Optional[str] = None,
+                 use_fourier_init_param: Optional[int] = None):
+        """
+
+        :param id: Unique name for this process
+        :param num_seasons: The number of seasons (e.g. 7 for day_in_week).
+        :param season_duration: The length of each season, default 1 time-step.
+        :param season_start: A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
+        starts, which is useful to specify if season boundaries are actually meaningful, and is important to specify if
+        different groups in your dataset start on different dates.
+        :param timestep_interval: A string that is understood as a datetime-unit by numpy.
+        See: https://docs.scipy.org/doc/numpy-1.15.0/reference/arrays.datetime.html#arrays-dtypes-dateunits
+        :param use_fourier_init_param: This determines how the initial seasons are parameterized. For longer seasons, we may
+         not want a free parameter for each individual season. If an integer, then uses a fourier-series for the
+         parameterization, with that integer's (*2) degrees of freedom. If False, then each season (-1) gets a unique
+         starting value. If None, then chooses automatically based on season-length.
+        """
 
         # parse date information:
-        if start_datetime is None:
-            warn("`start_datetime` was not passed; will assume all groups start in same season.")
+        if season_start is None:
+            warn("`season_start` was not passed; will assume all groups start in same season.")
+            self.start_datetime = None
         else:
-            assert isinstance(start_datetime, np.datetime64), "`start_datetime` must be a `np.datetime64`."
+            assert timestep_interval is not None, "If passing `season_start` must also pass `timestep_interval`."
+            self.start_datetime = np.datetime64(season_start, (timestep_interval, 1))
 
         self.num_seasons = num_seasons
         self.season_duration = season_duration
-        self.start_datetime = start_datetime
         self.datetime_data = None if self.start_datetime is None else np.datetime_data(self.start_datetime)
 
         # state-elements:
@@ -52,7 +69,9 @@ class Season(Process):
         self.log_std_dev = Parameter(-5. * torch.ones(1))
 
         # initial state:
-        self.K = init_param_fourier_df
+        if use_fourier_init_param is None:
+            use_fourier_init_param = 4 if len(self.state_elements) > 10 else False
+        self.K = use_fourier_init_param
         if self.K:
             self.initial_state_mean_params = Parameter(torch.zeros((self.K, 2)))
         else:
