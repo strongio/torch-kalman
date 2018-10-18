@@ -1,6 +1,6 @@
-from numpy import ndarray
 from typing import Union, Sequence, Dict
 
+from numpy.core.multiarray import ndarray
 from torch import Tensor
 
 
