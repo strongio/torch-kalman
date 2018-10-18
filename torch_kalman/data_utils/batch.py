@@ -5,6 +5,8 @@ from torch import Tensor
 import numpy as np
 from torch_kalman.data_utils.utils import tens_to_long
 
+from math import floor
+
 
 class Batch(tuple):
     """
@@ -109,9 +111,12 @@ class TimeSeriesBatch(Batch):
         """
         time_len = self.tensor.shape[1]
         idx = floor(time_len * split_frac)
-        train_batch = self.with_new_tensor(batch.tensor[:, :idx, :])
+        train_batch = self.with_new_tensor(self.tensor[:, :idx, :])
         if idx < time_len:
-            val_batch = self.with_new_tensor(batch.tensor[:, idx:, :])
+            val_batch = self.__class__(self.tensor[:, idx:, :],
+                                       self.group_names,
+                                       self.start_datetimes + idx,
+                                       self.measures)
         else:
             raise ValueError("`split_frac` too large")
         return train_batch, val_batch
@@ -121,6 +126,7 @@ class TimeSeriesBatch(Batch):
                      group_colname: str = 'group',
                      datetime_colname: str = 'datetime',
                      measure_colname: str = 'measure',
+                     value_colname: str = 'value',
                      ) -> DataFrame:
         df = super().to_dataframe(tensor=tensor)
 
@@ -134,4 +140,7 @@ class TimeSeriesBatch(Batch):
         # measures:
         df[measure_colname] = self.measures[df.dim2.values]
 
-        return df.loc[:, [group_colname, datetime_colname, measure_colname, 'value']].copy()
+        # value:
+        df[value_colname] = df['value']
+
+        return df.loc[:, [group_colname, datetime_colname, measure_colname, value_colname]].copy()
