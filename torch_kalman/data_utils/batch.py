@@ -1,4 +1,4 @@
-from typing import Sequence, Any, Optional, Union
+from typing import Sequence, Any, Optional, Union, Tuple
 
 from pandas import DataFrame
 from torch import Tensor
@@ -99,6 +99,22 @@ class TimeSeriesBatch(Batch):
     @property
     def measures(self):
         return self[3]
+
+    def datetimes(self) -> np.ndarray:
+        return self.start_datetimes[:, None] + np.arange(0, self.tensor.shape[1])
+
+    def split(self, split_frac: float) -> Tuple['TimeSeriesBatch', 'TimeSeriesBatch']:
+        """
+        Split data along a pre-post train/validation.
+        """
+        time_len = self.tensor.shape[1]
+        idx = floor(time_len * split_frac)
+        train_batch = self.with_new_tensor(batch.tensor[:, :idx, :])
+        if idx < time_len:
+            val_batch = self.with_new_tensor(batch.tensor[:, idx:, :])
+        else:
+            raise ValueError("`split_frac` too large")
+        return train_batch, val_batch
 
     def to_dataframe(self,
                      tensor: Optional[Tensor] = None,
