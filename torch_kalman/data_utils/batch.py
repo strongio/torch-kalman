@@ -1,4 +1,4 @@
-from typing import Sequence, Any, Optional
+from typing import Sequence, Any, Optional, Union
 
 from pandas import DataFrame
 from torch import Tensor
@@ -82,6 +82,11 @@ class TimeSeriesBatch(Batch):
             measures = np.array(measures)
 
         return super(TimeSeriesBatch, cls).__new__(cls, tensor, group_names, start_datetimes, measures)
+
+    def subset(self, ind: Union[int, Sequence, slice]) -> 'TimeSeriesBatch':
+        if isinstance(ind, int):
+            ind = [ind]
+        return self.__class__(self.tensor[ind], self.group_names[ind], self.start_datetimes[ind], self.measures)
 
     @property
     def group_names(self):
