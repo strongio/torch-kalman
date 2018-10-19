@@ -8,7 +8,7 @@ from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.covariance import Covariance
-from torch_kalman.data_utils.utils import fourier_series
+from torch_kalman.utils import fourier_series
 from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.processes.season.base import DateAware
 
@@ -38,7 +38,7 @@ class Season(DateAware):
          value. If None, then chooses automatically based on season-length.
         """
 
-        self.num_seasons = seasonal_period
+        self.seasonal_period = seasonal_period
         self.season_duration = season_duration
 
         # state-elements:
@@ -59,14 +59,13 @@ class Season(DateAware):
         self.log_std_dev = Parameter(torch.randn(1) - 3.)
 
         # initial state:
-        num_states = len(state_elements)
         if use_fourier_init_param is None:
-            use_fourier_init_param = 4 if num_states > 10 else False
+            use_fourier_init_param = 4 if self.seasonal_period > 10 else False
         self.K = use_fourier_init_param
         if self.K:
             self.initial_state_mean_params = Parameter(torch.randn((self.K, 2)))
         else:
-            self.initial_state_mean_params = Parameter(torch.randn(num_states - 1))
+            self.initial_state_mean_params = Parameter(torch.randn(self.seasonal_period - 1))
 
         self.initial_state_log_std_dev = Parameter(torch.randn(1) - 3.)
 
@@ -132,7 +131,7 @@ class Season(DateAware):
         to_next_state = Tensor(in_transition.astype('float'))
         to_self = 1 - to_next_state
 
-        for i in range(1, self.num_seasons):
+        for i in range(1, self.seasonal_period):
             current = self.state_elements[i]
             prev = self.state_elements[i - 1]
 
@@ -167,7 +166,7 @@ class Season(DateAware):
             self.check_datetimes(start_datetimes)
             offset = (start_datetimes - self.start_datetime).view('int64')
 
-        season_shift = np.floor(offset / self.season_duration) % self.num_seasons
+        season_shift = np.floor(offset / self.season_duration) % self.seasonal_period
 
         means = []
         for i, shift in enumerate(season_shift.astype(int)):
@@ -184,17 +183,18 @@ class Season(DateAware):
         return means, covs
 
     def initialize_state_mean(self):
-        ns = len(self.state_elements)
         if self.K:
             # fourier series:
-            season = torch.arange(float(ns))
-            state = fourier_series(time=season, seasonal_period=ns, parameters=self.initial_state_mean_params)
+            season = torch.arange(float(self.seasonal_period))
+            state = fourier_series(time=season,
+                                   seasonal_period=self.seasonal_period,
+                                   parameters=self.initial_state_mean_params)
             # adjust for df:
             state = state - state[1:].mean()
-            state[1:] = state[1:] - state[0] / ns
+            state[1:] = state[1:] - state[0] / self.seasonal_period
             state[0] = -torch.sum(state[1:])
         else:
-            state = Tensor(size=(ns,))
+            state = Tensor(size=(self.seasonal_period,))
             state[1:] = self.initial_state_mean_params
             state[0] = -torch.sum(state[1:])
         return state

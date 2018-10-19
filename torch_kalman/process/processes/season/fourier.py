@@ -1,12 +1,12 @@
 from typing import Generator, Tuple, Optional
 
 import torch
-from IPython.core.debugger import Pdb
+
 from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.covariance import Covariance
-from torch_kalman.data_utils.utils import fourier_series
+from torch_kalman.utils import fourier_series
 from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.processes.season.base import DateAware
 
@@ -20,6 +20,8 @@ class FixedFourierSeason(DateAware):
     """
 
     def __init__(self, id: str, seasonal_period: int, K: int, **kwargs):
+        self.seasonal_period = seasonal_period
+
         # initial state:
         self.initial_state_mean_param = torch.ones(1)  # Parameter(torch.randn(1) / 5.0 + 1.0)
         self.initial_state_log_std_dev_param = Parameter(torch.randn(1) - 5.)
@@ -69,14 +71,14 @@ class FixedFourierSeason(DateAware):
         if start_datetimes is None:
             if self.start_datetime:
                 raise ValueError("`start_datetimes` argument required.")
-            delta = torch.ones((batch_size,))
+            delta = torch.empty((batch_size,))
             delta[:] = time
         else:
             self.check_datetimes(start_datetimes)
             delta = Tensor((start_datetimes - self.start_datetime).view('int64') + time)
 
         measure_values = fourier_series(time=delta,
-                                        seasonal_period=len(self.state_elements),
+                                        seasonal_period=self.seasonal_period,
                                         parameters=self.season_structure)
 
         for measure in self.measures():

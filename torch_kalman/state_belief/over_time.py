@@ -87,6 +87,6 @@ class StateBeliefOverTime:
         for measure, tens in states_per_measure.items():
             tens = torch.stack(tens).permute(1, 0, 2)
             for s, (process_name, state_element) in enumerate(design.all_state_elements()):
-                if ~torch.isclose(tens[:, :, s].abs().max(), torch.zeros(1)):  # TODO: handle nans
+                if ~torch.isclose(tens[:, :, s].abs().max(), torch.zeros(1)):
                     out[(measure, process_name, state_element)] = tens[:, :, s]
         return out
