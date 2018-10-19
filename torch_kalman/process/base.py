@@ -48,6 +48,15 @@ class Process:
         # if no per-batch modification, can avoid repeated computations:
         self.F_base = None
 
+    def link_to_design(self, design: 'Design') -> None:
+        """
+        Some processes need to know about the design they're nested within (e.g., a seasonal process whose characteristics
+        depend on another seasonal process it is nested within). This method add the necessary information to the process.
+
+        :param design: The design this process is embedded in.
+        """
+        pass
+
     def requires_grad_(self, requires_grad):
         for param in self.parameters():
             param.requires_grad_(requires_grad=requires_grad)
