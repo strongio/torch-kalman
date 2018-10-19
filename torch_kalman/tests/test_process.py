@@ -24,7 +24,8 @@ class TestProcess(TestCaseTK):
 
     def test_seasons(self):
         # test seasons without durations
-        season = Season(id='day_of_week', num_seasons=7, season_duration=1, season_start='2018-01-01', timestep_interval='D')
+        season = Season(id='day_of_week', seasonal_period=7, season_duration=1, season_start='2018-01-01',
+                        timestep_interval='D')
 
         # need to include start_datetimes since included above
         with self.assertRaises(ValueError) as cm:
@@ -49,8 +50,8 @@ class TestProcess(TestCaseTK):
         # TODO: test Q
 
     def test_seasons_with_durations(self):
-        season = Season(id='week_of_year', num_seasons=52, season_duration=7,
-                        season_start='2018-12-31', timestep_interval='D')
+        season = Season(id='week_of_year', seasonal_period=52, season_duration=7, season_start='2018-12-31',
+                        timestep_interval='D')
 
         # TODO: test F
         # TODO: test start_datetime

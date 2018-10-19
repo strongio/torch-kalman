@@ -1,63 +1,53 @@
 from math import log
-from typing import Generator, Union, Tuple, Optional
-from warnings import warn
-
-import torch
+from typing import Optional, Union, Generator, Tuple
 
 import numpy as np
-
+import torch
 from numpy.core.multiarray import ndarray
 from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.covariance import Covariance
-from torch_kalman.process import Process
+from torch_kalman.data_utils.utils import fourier_series
 from torch_kalman.process.for_batch import ProcessForBatch
+from torch_kalman.process.processes.season.base import DateAware
 
 
-class Season(Process):
+class Season(DateAware):
     def __init__(self,
                  id: str,
-                 num_seasons: int,
+                 seasonal_period: int,
                  season_duration: int = 1,
                  season_start: Optional[str] = None,
                  timestep_interval: Optional[str] = None,
                  use_fourier_init_param: Optional[int] = None):
         """
+        Process representing discrete seasons.
 
         :param id: Unique name for this process
-        :param num_seasons: The number of seasons (e.g. 7 for day_in_week).
+        :param seasonal_period: The number of seasons (e.g. 7 for day_in_week).
         :param season_duration: The length of each season, default 1 time-step.
         :param season_start: A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
         starts, which is useful to specify if season boundaries are actually meaningful, and is important to specify if
         different groups in your dataset start on different dates.
         :param timestep_interval: A string that is understood as a datetime-unit by numpy.
         See: https://docs.scipy.org/doc/numpy-1.15.0/reference/arrays.datetime.html#arrays-dtypes-dateunits
-        :param use_fourier_init_param: This determines how the initial seasons are parameterized. For longer seasons, we may
-         not want a free parameter for each individual season. If an integer, then uses a fourier-series for the
-         parameterization, with that integer's (*2) degrees of freedom. If False, then each season (-1) gets a unique
-         starting value. If None, then chooses automatically based on season-length.
+        :param use_fourier_init_param: This determines how the *initial* state-means are parameterized. For longer seasons,
+        we may not want a free parameter for each individual season. If an integer, then uses a fourier-series for the
+        parameterization, with that integer's (*2) degrees of freedom. If False, then each season (-1) gets a unique starting
+         value. If None, then chooses automatically based on season-length.
         """
 
-        # parse date information:
-        if season_start is None:
-            warn("`season_start` was not passed; will assume all groups start in same season.")
-            self.start_datetime = None
-        else:
-            assert timestep_interval is not None, "If passing `season_start` must also pass `timestep_interval`."
-            self.start_datetime = np.datetime64(season_start, (timestep_interval, 1))
-
-        self.num_seasons = num_seasons
+        self.num_seasons = seasonal_period
         self.season_duration = season_duration
-        self.datetime_data = None if self.start_datetime is None else np.datetime_data(self.start_datetime)
 
         # state-elements:
-        pad_n = len(str(num_seasons))
-        state_elements = ['measured'] + [str(i).rjust(pad_n, "0") for i in range(1, num_seasons)]
+        pad_n = len(str(seasonal_period))
+        state_elements = ['measured'] + [str(i).rjust(pad_n, "0") for i in range(1, seasonal_period)]
 
         # transitions are placeholder, filled in w/batch
         transitions = dict()
-        for i in range(num_seasons):
+        for i in range(seasonal_period):
             current = state_elements[i]
             transitions[current] = {current: None}
             if i > 0:
@@ -81,12 +71,11 @@ class Season(Process):
         self.initial_state_log_std_dev = Parameter(torch.randn(1) - 3.)
 
         # super:
-        super().__init__(id=id, state_elements=state_elements, transitions=transitions)
-
-        # expected for_batch kwargs:
-        self.expected_batch_kwargs = ['time']
-        if self.start_datetime:
-            self.expected_batch_kwargs.append('start_datetimes')
+        super().__init__(id=id,
+                         state_elements=state_elements,
+                         transitions=transitions,
+                         season_start=season_start,
+                         timestep_interval=timestep_interval)
 
         # writing transition-matrix is slow, no need to do it repeatedly:
         self.transition_cache = {}
@@ -121,7 +110,9 @@ class Season(Process):
                 raise ValueError("`start_datetimes` argument required.")
             delta = np.ones(shape=(batch_size,), dtype=int) * time
         else:
-            delta = self.get_start_delta(start_datetimes) + time
+            self.check_datetimes(start_datetimes)
+            delta = (start_datetimes - self.start_datetime).view('int64') + time
+
         in_transition = (delta % self.season_duration) == (self.season_duration - 1)
 
         for_batch = super().for_batch(batch_size=batch_size)
@@ -171,10 +162,12 @@ class Season(Process):
         if start_datetimes is None:
             if self.start_datetime:
                 raise ValueError("`start_datetimes` argument required.")
-            delta = np.zeros(shape=(batch_size,), dtype=int)
+            offset = np.zeros(shape=(batch_size,), dtype=int)
         else:
-            delta = self.get_start_delta(start_datetimes)
-        season_shift = np.floor(delta / self.season_duration) % self.num_seasons
+            self.check_datetimes(start_datetimes)
+            offset = (start_datetimes - self.start_datetime).view('int64')
+
+        season_shift = np.floor(offset / self.season_duration) % self.num_seasons
 
         means = []
         for i, shift in enumerate(season_shift.astype(int)):
@@ -185,7 +178,6 @@ class Season(Process):
         means = torch.stack(means)
 
         # cov:
-        # TODO: why ones along diag?
         covs = torch.eye(len(self.state_elements)).expand(batch_size, -1, -1)
         covs[:, 0, 0] = torch.pow(torch.exp(self.initial_state_log_std_dev), 2)
 
@@ -193,33 +185,19 @@ class Season(Process):
 
     def initialize_state_mean(self):
         ns = len(self.state_elements)
-        state = Tensor(size=(ns,))
         if self.K:
             # fourier series:
-            state[:] = 0.
             season = torch.arange(float(ns))
-            for idx in range(self.K):
-                k = idx + 1
-                state += (self.initial_state_mean_params[idx, 0] * torch.sin(2. * np.pi * k * season / ns))
-                state += (self.initial_state_mean_params[idx, 1] * torch.cos(2. * np.pi * k * season / ns))
+            state = fourier_series(time=season, seasonal_period=ns, parameters=self.initial_state_mean_params)
             # adjust for df:
             state = state - state[1:].mean()
             state[1:] = state[1:] - state[0] / ns
             state[0] = -torch.sum(state[1:])
         else:
+            state = Tensor(size=(ns,))
             state[1:] = self.initial_state_mean_params
             state[0] = -torch.sum(state[1:])
         return state
-
-    def get_start_delta(self, start_datetimes: np.ndarray) -> np.ndarray:
-        assert isinstance(start_datetimes, ndarray), "`start_datetimes` must be a datetime64 numpy.ndarray"
-        if self.datetime_data != np.datetime_data(start_datetimes.dtype):
-            raise ValueError(f"`start_datetimes` must have same time-unit/step as the `start_datetime` that was passed to "
-                             f"seasonal process '{self.id}', which is `{np.datetime_data(self.start_datetime)}`.'")
-
-        td = np.timedelta64(1, self.datetime_data)
-        delta = (start_datetimes - self.start_datetime) / td
-        return delta.astype(int)
 
     def set_to_simulation_mode(self):
         super().set_to_simulation_mode()
