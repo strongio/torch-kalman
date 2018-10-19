@@ -91,7 +91,7 @@ class KalmanFilter(torch.nn.Module):
                 state_prediction = state_belief.predict(F=batch_design.F(), Q=batch_design.Q())
 
             # compute the design of the kalman filter for this time-point:
-            batch_design = self.design_for_batch(batch_size=num_groups, time=t, **kwargs)
+            batch_design = self.design_for_batch(batch_size=num_groups, time=t, state_prediction=state_prediction, **kwargs)
 
             # compute how state-prediction at t translates into measurement-prediction at t
             state_prediction.compute_measurement(H=batch_design.H(), R=batch_design.R())
@@ -101,9 +101,14 @@ class KalmanFilter(torch.nn.Module):
 
         return self.family.concatenate_over_time(state_beliefs=state_predictions, design=self.design)
 
-    def design_for_batch(self, batch_size: int, time: int, **kwargs) -> DesignForBatch:
-        # by overriding this method, child-classes can implement batch-specific changes to design
-        return self.design.for_batch(batch_size=batch_size, time=time, **kwargs)
+    def design_for_batch(self,
+                         batch_size: int,
+                         time: int,
+                         state_prediction: StateBelief,
+                         **kwargs) -> DesignForBatch:
+        # usually, this method doesn't need to be overwritten to implement batch-specific changes to design -- it's better
+        # to implement such changes by subclasses processes and overwriting their `for_batch` method.
+        return self.design.for_batch(batch_size=batch_size, time=time, state_prediction=state_prediction, **kwargs)
 
     def forecast(self,
                  state_belief: Union[StateBelief, StateBeliefOverTime],
@@ -112,9 +117,7 @@ class KalmanFilter(torch.nn.Module):
         """
         :param state_belief: The output of a call to this KalmanFilter.
         :param horizon: How many timesteps into the future is the forecast?
-        :param kwargs: Other arguments passed to this KalmanFilter's `design_for_batch` method. Note: if there are any
-        `Seasonal` processes, the `start_datetimes` you pass here will indicate the datetime of horizon=1 (i.e., one
-        time-step *after* the most recent data).
+        :param kwargs: Other arguments passed to this KalmanFilter's `design_for_batch` method.
         :return: A StateBeliefOverTime consisting of forecasts.
         """
 
@@ -128,7 +131,7 @@ class KalmanFilter(torch.nn.Module):
         state_prediction = state_belief
         state_predictions = []
         for h in range(horizon):
-            batch_design = self.design_for_batch(batch_size=batch_size, time=h, **kwargs)
+            batch_design = self.design_for_batch(batch_size=batch_size, time=h, state_prediction=state_prediction, **kwargs)
             state_prediction = state_prediction.predict(F=batch_design.F(), Q=batch_design.Q())
             state_prediction.compute_measurement(H=batch_design.H(), R=batch_design.R())
             state_predictions.append(state_prediction)
