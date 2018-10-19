@@ -1,10 +1,7 @@
 from typing import Union, Sequence, Dict
 
-import torch
 from numpy.core.multiarray import ndarray
 from torch import Tensor
-
-from math import pi
 
 
 def tens_to_long(tens: Union[ndarray, Tensor], **kwargs) -> Sequence[Dict[str, Union[float, int]]]:

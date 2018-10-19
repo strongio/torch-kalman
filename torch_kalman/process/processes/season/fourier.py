@@ -23,11 +23,11 @@ class FixedFourierSeason(DateAware):
         self.seasonal_period = seasonal_period
 
         # initial state:
-        self.initial_state_mean_param = torch.ones(1)  # Parameter(torch.randn(1) / 5.0 + 1.0)
+        self.initial_state_mean_param = Parameter(torch.randn(1) / 5.0 + 1.0)
         self.initial_state_log_std_dev_param = Parameter(torch.randn(1) - 5.)
 
         # process covariance:
-        self.log_std_dev = -10 * torch.ones(1)  # Parameter(torch.randn(1) - 2.)
+        self.log_std_dev = Parameter(torch.randn(1) - 2.)
 
         # season structure:
         self.seasonal_period = seasonal_period
@@ -46,9 +46,9 @@ class FixedFourierSeason(DateAware):
         return means, covs
 
     def parameters(self) -> Generator[Parameter, None, None]:
-        # yield self.log_std_dev
+        yield self.log_std_dev
         yield self.season_structure
-        # yield self.initial_state_mean_param
+        yield self.initial_state_mean_param
         yield self.initial_state_log_std_dev_param
 
     def covariance(self) -> Covariance:
