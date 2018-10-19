@@ -15,19 +15,15 @@ import numpy as np
 
 class FixedFourierSeason(DateAware):
     """
-    A low-dimensional season representation. The seasonal structure is represented as a fourier series. The shape of this
-    series is fixed, and the only allowed evolution of the system is a drift in the amplitude of the fixed shape.
+    A low-dimensional season representation. The seasonal structure is represented as a fourier series, with a fixed shape
+    that doesn't change over time.
     """
 
     def __init__(self, id: str, seasonal_period: int, K: int, **kwargs):
         self.seasonal_period = seasonal_period
 
         # initial state:
-        self.initial_state_mean_param = Parameter(torch.randn(1) / 5.0 + 1.0)
         self.initial_state_log_std_dev_param = Parameter(torch.randn(1) - 5.)
-
-        # process covariance:
-        self.log_std_dev = Parameter(torch.randn(1) - 2.)
 
         # season structure:
         self.seasonal_period = seasonal_period
@@ -40,21 +36,17 @@ class FixedFourierSeason(DateAware):
                          **kwargs)
 
     def initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:
-        means = torch.ones((batch_size, 1)) * self.initial_state_mean_param
+        means = torch.ones((batch_size, 1))
         covs = Covariance(size=(batch_size, 1, 1))
         covs[:, 0, 0] = torch.pow(torch.exp(self.initial_state_log_std_dev_param), 2)
         return means, covs
 
     def parameters(self) -> Generator[Parameter, None, None]:
-        yield self.log_std_dev
         yield self.season_structure
-        yield self.initial_state_mean_param
         yield self.initial_state_log_std_dev_param
 
     def covariance(self) -> Covariance:
-        cov = Covariance([[0.]])
-        cov[0, 0] = torch.pow(torch.exp(self.log_std_dev), 2)
-        return cov
+        return Covariance([[0.]])
 
     # noinspection PyMethodOverriding
     def add_measure(self, measure: str) -> None:
