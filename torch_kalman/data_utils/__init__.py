@@ -1,1 +1,1 @@
-from .batch import Batch, TimeSeriesBatch
+from .batch import TimeSeriesBatch
