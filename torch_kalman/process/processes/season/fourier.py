@@ -1,4 +1,4 @@
-from typing import Generator, Tuple, Optional
+from typing import Generator, Tuple, Optional, Union
 
 import torch
 
@@ -19,7 +19,7 @@ class FixedFourierSeason(DateAware):
     that doesn't change over time.
     """
 
-    def __init__(self, id: str, seasonal_period: int, K: int, **kwargs):
+    def __init__(self, id: str, seasonal_period: Union[int, float], K: int, **kwargs):
         self.seasonal_period = seasonal_period
 
         # initial state:

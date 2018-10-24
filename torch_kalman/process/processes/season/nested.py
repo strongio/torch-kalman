@@ -15,7 +15,7 @@ class NestedSeason(Season):
     these seasons, without (or in addition to) any multiplicative effect in the rest of the model/error-terms.
     """
 
-    def __init__(self, outer_season_id: int, *args, **kwargs):
+    def __init__(self, outer_season_id: str, *args, **kwargs):
         self.outer_season_id = outer_season_id
         self.outer_season_state_idx = None
         self.outer_state_to_measure_param = Parameter(torch.zeros(1))
