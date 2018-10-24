@@ -1,5 +1,6 @@
 from typing import Sequence, Any, Optional, Union, Tuple
 
+import torch
 from pandas import DataFrame
 from torch import Tensor
 import numpy as np
@@ -106,3 +107,46 @@ class TimeSeriesBatch:
         df[value_colname] = df['value']
 
         return df.loc[:, [group_colname, datetime_colname, measure_colname, value_colname]].copy()
+
+    @classmethod
+    def from_dataframe(cls,
+                       dataframe: DataFrame,
+                       group_col: str,
+                       datetime_col: str,
+                       measure_cols: Sequence[str],
+                       time_unit: str) -> 'TimeSeriesBatch':
+        assert isinstance(group_col, str)
+        assert isinstance(datetime_col, str)
+        assert isinstance(measure_cols, (list, tuple))
+
+        # sort by datetime:
+        dataframe = dataframe.sort_values(datetime_col)
+
+        # first pass for info:
+        arrays, time_idxs, group_names, start_datetimes = [], [], [], []
+        for g, df in dataframe.groupby(group_col):
+            # group-names:
+            group_names.append(g)
+
+            # times:
+            times = df[datetime_col].values
+            min_time = times[0]
+            start_datetimes.append(min_time)
+            time_idx = (times - min_time).astype(f'timedelta64[{time_unit}]').view('int64')
+            time_idxs.append(time_idx)
+
+            # values:
+            arrays.append(df.loc[:, measure_cols].values)
+
+        # second pass organizes into tensor
+        time_len = max(time_idx[-1] + 1 for time_idx in time_idxs)
+        tens = torch.empty((len(arrays), time_len, len(measure_cols)))
+        tens[:] = np.nan
+        for i, (array, time_idx) in enumerate(zip(arrays, time_idxs)):
+            tens[i, time_idx, :] = Tensor(array)
+
+        return cls(tensor=tens,
+                   group_names=group_names,
+                   start_datetimes=start_datetimes,
+                   measures=measure_cols,
+                   time_unit=time_unit)
