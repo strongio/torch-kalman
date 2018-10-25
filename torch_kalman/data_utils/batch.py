@@ -45,7 +45,11 @@ class TimeSeriesBatch:
             ind = [ind]
         return self.__class__(self.tensor[ind], self.group_names[ind], self.start_datetimes[ind], self.measures)
 
-    def subset_by_groups(self, groups: Sequence[Any]):
+    def subset_by_groups(self, groups: Sequence[Any]) -> 'TimeSeriesBatch':
+        """
+        Get the subset of the batch corresponding to groups. Note that the ordering in the output will match the original
+        ordering (not that of `group`), and that duplicates will be dropped.
+        """
         group_idx = np.where(np.isin(self.group_names, groups))[0]
         return self.subset(group_idx)
 
@@ -111,36 +115,36 @@ class TimeSeriesBatch:
     @classmethod
     def from_dataframe(cls,
                        dataframe: DataFrame,
-                       group_col: str,
-                       datetime_col: str,
-                       measure_cols: Sequence[str],
+                       group_colname: str,
+                       datetime_colname: str,
+                       measure_colnames: Sequence[str],
                        time_unit: str) -> 'TimeSeriesBatch':
-        assert isinstance(group_col, str)
-        assert isinstance(datetime_col, str)
-        assert isinstance(measure_cols, (list, tuple))
+        assert isinstance(group_colname, str)
+        assert isinstance(datetime_colname, str)
+        assert isinstance(measure_colnames, (list, tuple))
 
         # sort by datetime:
-        dataframe = dataframe.sort_values(datetime_col)
+        dataframe = dataframe.sort_values(datetime_colname)
 
         # first pass for info:
         arrays, time_idxs, group_names, start_datetimes = [], [], [], []
-        for g, df in dataframe.groupby(group_col):
+        for g, df in dataframe.groupby(group_colname):
             # group-names:
             group_names.append(g)
 
             # times:
-            times = df[datetime_col].values
+            times = df[datetime_colname].values
             min_time = times[0]
             start_datetimes.append(min_time)
             time_idx = (times - min_time).astype(f'timedelta64[{time_unit}]').view('int64')
             time_idxs.append(time_idx)
 
             # values:
-            arrays.append(df.loc[:, measure_cols].values)
+            arrays.append(df.loc[:, measure_colnames].values)
 
         # second pass organizes into tensor
         time_len = max(time_idx[-1] + 1 for time_idx in time_idxs)
-        tens = torch.empty((len(arrays), time_len, len(measure_cols)))
+        tens = torch.empty((len(arrays), time_len, len(measure_colnames)))
         tens[:] = np.nan
         for i, (array, time_idx) in enumerate(zip(arrays, time_idxs)):
             tens[i, time_idx, :] = Tensor(array)
@@ -148,5 +152,5 @@ class TimeSeriesBatch:
         return cls(tensor=tens,
                    group_names=group_names,
                    start_datetimes=start_datetimes,
-                   measures=measure_cols,
+                   measures=measure_colnames,
                    time_unit=time_unit)
