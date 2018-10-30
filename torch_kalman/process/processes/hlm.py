@@ -1,4 +1,4 @@
-from typing import Generator, Tuple, Sequence
+from typing import Generator, Tuple, Sequence, Optional
 
 import torch
 from torch import Tensor
@@ -10,7 +10,10 @@ from torch_kalman.process.for_batch import ProcessForBatch
 
 
 class HLM(Process):
-    def __init__(self, id: str, covariates: Sequence[str]):
+    def __init__(self,
+                 id: str,
+                 covariates: Sequence[str],
+                 model_mat_kwarg_name: Optional[str] = None):
         # transitions:
         transitions = {covariate: {covariate: 1.0} for covariate in covariates}
 
@@ -24,7 +27,8 @@ class HLM(Process):
         super().__init__(id=id, state_elements=covariates, transitions=transitions)
 
         # expected kwargs
-        self.expected_batch_kwargs = ('time', 're_model_mat')
+        model_mat_kwarg_name = model_mat_kwarg_name or id  # use the id if they didn't specify
+        self.expected_batch_kwargs = ('time', model_mat_kwarg_name)
 
     # noinspection PyMethodOverriding
     def add_measure(self, measure: str) -> None:
@@ -47,11 +51,13 @@ class HLM(Process):
         out[:, :] = 0.
         return out
 
-    def for_batch(self, batch_size: int, time=None, re_model_mat=None) -> ProcessForBatch:
+    def for_batch(self, batch_size: int, time=None, **kwargs) -> ProcessForBatch:
         assert self.state_elements_to_measures, f"HLM process '{self.id}' has no measures."
 
+        re_model_mat = kwargs.get(self.expected_batch_kwargs[1], None)
+
         if re_model_mat is None:
-            raise ValueError("Required argument `re_model_mat` not found.")
+            raise ValueError(f"Required argument `{self.expected_batch_kwargs[1]}` not found.")
         else:
             re_model_mat = re_model_mat[:, time, :]
 
