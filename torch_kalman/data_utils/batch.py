@@ -1,10 +1,9 @@
 from typing import Sequence, Any, Optional, Union, Tuple
 
 import torch
-from pandas import DataFrame
+import pandas as pd
 from torch import Tensor
 import numpy as np
-from torch_kalman.data_utils.utils import tens_to_long
 
 
 class TimeSeriesBatch:
@@ -88,33 +87,30 @@ class TimeSeriesBatch:
     def to_dataframe(self,
                      tensor: Optional[Union[Tensor, np.ndarray]] = None,
                      group_colname: str = 'group',
-                     datetime_colname: str = 'datetime',
-                     measure_colname: str = 'measure',
-                     value_colname: str = 'value',
-                     ) -> DataFrame:
+                     datetime_colname: str = 'datetime'
+                     ) -> pd.DataFrame:
         if tensor is None:
             tensor = self.tensor
+        else:
+            assert tensor.shape == self.tensor.shape, f"The `tensor` has wrong shape, expected `{self.tensor.shape}`."
 
-        df = DataFrame(tens_to_long(tensor))
+        dfs = []
+        for g, group_name in enumerate(self.group_names):
+            # get values, don't store trailing nans:
+            values = tensor[g, :, :].detach().numpy()
+            all_nan_per_row = np.min(np.isnan(values), axis=1)
+            end_idx = np.max(np.where(~all_nan_per_row)[0]) + 1
+            # convert to dataframe:
+            df = pd.DataFrame(data=values[:end_idx, :], columns=self.measures)
+            df[group_colname] = group_name
+            df[datetime_colname] = self.start_datetimes[g] + np.arange(0, len(df.index))
+            dfs.append(df)
 
-        # datetimes:
-        time_unit, _ = np.datetime_data(self.start_datetimes[0])
-        df[datetime_colname] = self.start_datetimes[df.dim0.values] + df.dim1.values.astype(f'timedelta64[{time_unit}]')
-
-        # group:
-        df[group_colname] = self.group_names[df.dim0.values]
-
-        # measures:
-        df[measure_colname] = self.measures[df.dim2.values]
-
-        # value:
-        df[value_colname] = df['value']
-
-        return df.loc[:, [group_colname, datetime_colname, measure_colname, value_colname]].copy()
+        return pd.concat(dfs)
 
     @classmethod
     def from_dataframe(cls,
-                       dataframe: DataFrame,
+                       dataframe: pd.DataFrame,
                        group_colname: str,
                        datetime_colname: str,
                        measure_colnames: Sequence[str],

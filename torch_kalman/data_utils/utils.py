@@ -6,7 +6,8 @@ from torch import Tensor
 
 def tens_to_long(tens: Union[ndarray, Tensor], **kwargs) -> Sequence[Dict[str, Union[float, int]]]:
     """
-    Convert a multidimensional array into "long" format.
+    Convert a multidimensional array into "long" format. Useful because it generalizes to tensors of any dimensionality, but
+    be warned this is not particularly fast or memory-efficient.
 
     :param tens: A multidimensional array, e.g. a numpy ndarray, pytorch Tensor, etc.
     :return: A list of dictionaries, with keys dim0-N specifying the index, and a 'value' key specifying the value at that
