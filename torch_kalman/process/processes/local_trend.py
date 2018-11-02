@@ -8,6 +8,7 @@ from torch.nn import Parameter
 from torch_kalman.covariance import Covariance
 from torch_kalman.process import Process
 from torch_kalman.process.for_batch import ProcessForBatch
+from torch_kalman.utils import itervalues_sorted_keys
 
 
 class LocalTrend(Process):
@@ -51,9 +52,9 @@ class LocalTrend(Process):
         yield self.log_std_devs
         yield self.corr_arctanh
         yield self.initial_state_mean_params
-        for param in self.initial_state_cov_params.values():
+        for param in itervalues_sorted_keys(self.initial_state_cov_params):
             yield param
-        for param in self.transition_params.values():
+        for param in itervalues_sorted_keys(self.transition_params):
             yield param
 
     def initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:

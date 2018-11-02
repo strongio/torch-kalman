@@ -36,8 +36,8 @@ class Season(DateAware):
         See: https://docs.scipy.org/doc/numpy-1.15.0/reference/arrays.datetime.html#arrays-dtypes-dateunits
         :param use_fourier_init_param: This determines how the *initial* state-means are parameterized. For longer seasons,
         we may not want a free parameter for each individual season. If an integer, then uses a fourier-series for the
-        parameterization, with that integer's (*2) degrees of freedom. If False, then each season (-1) gets a unique starting
-         value. If None, then chooses automatically based on season-length.
+        parameterization, with that integer's (*2) degrees of freedom. If False, then there are seasonal_period - 1 unique
+         initial values (-1 b/c constrained to sum to zero). Default (None) chooses automatically (fourier if >12 period).
         """
 
         self.seasonal_period = seasonal_period

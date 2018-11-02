@@ -1,4 +1,5 @@
 from math import pi
+from typing import Dict
 
 import torch
 from numpy import prod
@@ -19,3 +20,8 @@ def fourier_series(time: Tensor, seasonal_period: float, K: int) -> Tensor:
             out[:, idx, sincos] = torch.sin(val) if sincos == 0 else torch.cos(val)
 
     return out
+
+
+def itervalues_sorted_keys(adict: Dict):
+    for k in sorted(adict.keys()):
+        yield adict[k]

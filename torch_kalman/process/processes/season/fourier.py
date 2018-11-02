@@ -14,7 +14,7 @@ from torch_kalman.process.processes.season.base import DateAware
 
 import numpy as np
 
-from torch_kalman.utils import fourier_series
+from torch_kalman.utils import fourier_series, itervalues_sorted_keys
 
 
 class FourierSeason(DateAware):
@@ -68,7 +68,7 @@ class FourierSeason(DateAware):
             yield self.cov_cholesky_log_diag
         if self.cov_cholesky_log_diag is not None:
             yield self.cov_cholesky_off_diag
-        for param in self.initial_state_cov_params.values():
+        for param in itervalues_sorted_keys(self.initial_state_cov_params):
             yield param
 
     def covariance(self) -> Covariance:

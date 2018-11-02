@@ -7,6 +7,7 @@ from torch.nn import Parameter
 from torch_kalman.covariance import Covariance
 from torch_kalman.process import Process
 from torch_kalman.process.for_batch import ProcessForBatch
+from torch_kalman.utils import itervalues_sorted_keys
 
 
 class HLM(Process):
@@ -42,7 +43,7 @@ class HLM(Process):
 
     def parameters(self) -> Generator[Parameter, None, None]:
         yield self.initial_state_mean_params
-        for param in self.initial_state_cov_params.values():
+        for param in itervalues_sorted_keys(self.initial_state_cov_params):
             yield param
 
     def covariance(self) -> Covariance:

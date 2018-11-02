@@ -10,8 +10,9 @@ from torch.nn import Parameter
 from torch_kalman.covariance import Covariance
 from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.processes.season.base import DateAware
-from torch_kalman.utils import fourier_series
+from torch_kalman.utils import fourier_series, itervalues_sorted_keys
 
+from IPython.core.debugger import Pdb
 
 
 def zpad(x, n):
@@ -159,7 +160,7 @@ class NestedSeason(DateAware):
         yield self.cov_cholesky_log_diag
         yield self.cov_cholesky_off_diag
         yield self.initial_state_mean_params
-        for param in self.initial_state_cov_params.values():
+        for param in itervalues_sorted_keys(self.initial_state_cov_params):
             yield param
 
     def block_diag_cov(self, block: Covariance) -> Covariance:
