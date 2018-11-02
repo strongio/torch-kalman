@@ -46,10 +46,30 @@ class Process:
         # expected kwargs
         self.expected_batch_kwargs = ()
 
-        # if no per-batch modification, can avoid repeated computations:
-        self.F_base = None
-
+        # device:
         self.device = False
+
+        # F before any batch-transitions:
+        self._F_base = None
+        # don't silently fail if we forget to fill a transition, but keep track:
+        self.transitions_to_fill = set()
+
+    def set_transition(self, from_el: str, to_el: str, value: Union[float, None]) -> None:
+        if self._F_base is not None:
+            raise RuntimeError("Can't set_transition for this process once `F_base` is called.")
+        if from_el in self.transitions.keys():
+            if self.transitions[from_el].get(to_el, None):
+                raise ValueError(f"The transition from '{from_el}' to '{to_el}' is already set.")
+        else:
+            self.transitions[from_el] = {}
+        self.transitions[from_el][to_el] = value
+
+    def has_batch_transitions(self) -> bool:
+        for to_el, from_els in self.transitions.items():
+            for value in from_els.values():
+                if value is None:
+                    return True
+        return False
 
     def set_device(self, device: torch.device) -> None:
         self.device = device
@@ -111,3 +131,20 @@ class Process:
         Set initial parameters to reasonable values s.t. generating data from this process in a simulation will be reasonable
         """
         self.requires_grad_(False)
+
+    @property
+    def F_base(self) -> Tensor:
+        if self._F_base is None:
+            if self.device is False:
+                raise RuntimeError("Can't call `F_base` until `set_device` is called.")
+            F_base = torch.zeros(size=(len(self.state_elements), len(self.state_elements)), device=self.device)
+            for to_el, from_els in self.transitions.items():
+                for from_el, value in from_els.items():
+                    r, c = self.state_element_idx[to_el], self.state_element_idx[from_el]
+                    if value is None:
+                        self.transitions_to_fill.add((to_el, from_el))
+                    else:
+                        F_base[r, c] = value
+
+            self._F_base = F_base
+        return self._F_base.clone()

@@ -35,11 +35,20 @@ class DesignForBatch:
         self.state_size = design.state_size
         self.measure_size = design.measure_size
 
-        # these can't change from batch to batch, so cache:
+        # cache the things that can't change:
         self._state_mat_idx = None
         self._Q = None
         self._R = None
+        self._F = None
+        self._processes_with_batch_transitions = None
         self.cache_design(design)
+
+    @property
+    def processes_with_batch_transitions(self):
+        if self._processes_with_batch_transitions is None:
+            self._processes_with_batch_transitions = [process_id for process_id, process in self.processes.items()
+                                                      if process.has_batch_transitions()]
+        return self._processes_with_batch_transitions
 
     def R(self) -> Tensor:
         if self._R is not None:
@@ -47,10 +56,17 @@ class DesignForBatch:
         R = Covariance.from_log_cholesky(**self.measure_cov_params, device=self.device)
         return R.expand(self.batch_size, -1, -1)
 
+
     def F(self) -> Tensor:
-        F = torch.zeros((self.batch_size, self.state_size, self.state_size), device=self.device)
-        for process_id, idx in self.state_mat_idx().items():
-            F[idx] = self.processes[process_id].F()
+        state_mat_idx = self.state_mat_idx()
+        if self._F is not None:
+            F = self._F.clone()
+            for process_id in self.processes_with_batch_transitions:
+                F[state_mat_idx[process_id]] = self.processes[process_id].F()
+        else:
+            F = torch.zeros((self.batch_size, self.state_size, self.state_size), device=self.device)
+            for process_id, process in self.processes.items():
+                F[state_mat_idx[process_id]] = process.F()
         return F
 
     def Q(self) -> Tensor:
@@ -92,14 +108,25 @@ class DesignForBatch:
 
     def cache_design(self, design: 'Design') -> None:
         # TODO: OK with device?
-        if self.batch_size not in design.state_mat_idx_cache.keys():
-            design.state_mat_idx_cache[self.batch_size] = self.state_mat_idx()
-        self._state_mat_idx = design.state_mat_idx_cache[self.batch_size]
+        key = self.batch_size, str(self.device)
 
-        if self.batch_size not in design.Q_cache.keys():
-            design.Q_cache[self.batch_size] = self.Q()
-        self._Q = design.Q_cache[self.batch_size]
+        if key not in design.state_mat_idx_cache.keys():
+            design.state_mat_idx_cache[key] = self.state_mat_idx()
+        self._state_mat_idx = design.state_mat_idx_cache[key]
 
-        if self.batch_size not in design.R_cache.keys():
-            design.R_cache[self.batch_size] = self.R()
-        self._R = design.R_cache[self.batch_size]
+        if key not in design.Q_cache.keys():
+            design.Q_cache[key] = self.Q()
+        self._Q = design.Q_cache[key]
+
+        if key not in design.R_cache.keys():
+            design.R_cache[key] = self.R()
+        self._R = design.R_cache[key]
+
+        if key not in design.F_cache.keys():
+            state_mat_idx = self.state_mat_idx()
+            F_base = torch.zeros((self.batch_size, self.state_size, self.state_size), device=self.device)
+            for process_id, process in self.processes.items():
+                if not process.has_batch_transitions():
+                    F_base[state_mat_idx[process_id]] = process.F()
+            design.F_cache[key] = F_base
+        self._F = design.F_cache[key]

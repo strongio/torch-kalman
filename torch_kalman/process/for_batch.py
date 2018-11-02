@@ -18,24 +18,21 @@ class ProcessForBatch:
         self.batch_transitions = {}
         self.batch_ses_to_measures = {}
 
-    def F(self) -> Tensor:
-        if not self.batch_transitions and self.process.F_base is not None:
-            return self.process.F_base.expand(self.batch_size, -1, -1)
 
+    def F(self) -> Tensor:
+        leftover_transitions = self.process.transitions_to_fill.copy()
         # fill in template:
-        F = torch.zeros(size=(self.batch_size, len(self.process.state_elements), len(self.process.state_elements)),
-                        device=self.process.device)
-        for to_el, from_els in self.transitions().items():
+        F = self.process.F_base.expand(self.batch_size, -1, -1)
+        for to_el, from_els in self.batch_transitions.items():
             for from_el, values in from_els.items():
+                if (to_el, from_el) in leftover_transitions:
+                    leftover_transitions.remove((to_el, from_el))
                 r, c = self.process.state_element_idx[to_el], self.process.state_element_idx[from_el]
-                if values is None:
-                    raise ValueError(f"The transition from '{from_el}' to '{to_el}' is None, which means this process "
-                                     f"('{self.process.__class__.__name__}') requires you set it on a per-batch basis using "
-                                     f"the `set_transition` method.")
                 F[:, r, c] = values
 
-        if not self.batch_transitions:
-            self.process.F_base = F[0]
+        if leftover_transitions:
+            raise ValueError(f"Following transitions need to filled in the batch:\n{leftover_transitions}")
+
         return F
 
     def Q(self) -> Tensor:
@@ -53,7 +50,10 @@ class ProcessForBatch:
         if to_element in self.process.transitions.keys():
             if self.process.transitions[to_element].get(from_element, None):
                 raise ValueError(f"The transition from '{from_element}' to '{to_element}' was already set for this Process,"
-                                 f" so can't give it batch-specific values.")
+                                 f" so can't give it batch-specific values (unless set to `None`).")
+        else:
+            raise ValueError(f"The transition from '{from_element}' to '{to_element}' must be `None` in the process in order"
+                             " to set transitions on a per-batch basis; use `Process.set_transition(value=None)`.")
 
         if to_element not in self.batch_transitions.keys():
             self.batch_transitions[to_element] = {}
@@ -82,25 +82,9 @@ class ProcessForBatch:
 
         self.batch_ses_to_measures[key] = values
 
-    def transitions(self) -> Dict[str, Dict[str, Union[Tensor, float]]]:
-        # need to be careful to update "deeply", and also not modify originals
-
-        out = {}
-        # non-batch:
-        for to_el, from_els in self.process.transitions.items():
-            out[to_el] = dict()
-            for from_el, value in from_els.items():
-                out[to_el][from_el] = value
-
-        # batch:
-        for to_el, from_els in self.batch_transitions.items():
-            if to_el not in out.keys():
-                out[to_el] = dict()
-            for from_el, values in from_els.items():
-                out[to_el][from_el] = values
-
-        return out
-
     def state_elements_to_measures(self) -> Dict[Tuple[str, str], Union[Tensor, float]]:
         # don't need to be as careful as w/self.transitions, since dicts of values, not dicts of dicts
         return {**self.process.state_elements_to_measures, **self.batch_ses_to_measures}
+
+    def has_batch_transitions(self):
+        return self.process.has_batch_transitions()

@@ -62,7 +62,7 @@ class Design:
         self.measure_cholesky_off_diag = Parameter(data=torch.zeros(int(self.measure_size * (self.measure_size - 1) / 2)))
 
         # cache:
-        self.Q_cache, self.R_cache, self.state_mat_idx_cache = None, None, None
+        self.Q_cache, self.R_cache, self.F_cache, self.state_mat_idx_cache = None, None, None, None
         self.reset_cache()
 
     def all_state_elements(self) -> Generator[Tuple[str, str], None, None]:
@@ -98,6 +98,7 @@ class Design:
     def reset_cache(self) -> None:
         self.Q_cache = {}
         self.R_cache = {}
+        self.F_cache = {}
         self.state_mat_idx_cache = {}
 
     def get_block_diag_initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:
