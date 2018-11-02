@@ -17,7 +17,7 @@ class KalmanFilter(torch.nn.Module):
                  measures: Iterable[str],
                  device: Optional[torch.device] = None):
         super().__init__()
-        self.design = Design(processes=processes, measures=measures)
+        self.design = Design(processes=processes, measures=measures, device=device)
 
         # parameters from design:
         self.design_parameters = ParameterList()
