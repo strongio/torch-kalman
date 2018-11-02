@@ -120,7 +120,8 @@ class Season(DateAware):
         return self.season_transitioner.for_batch(for_batch=super().for_batch(batch_size=len(in_transition)),
                                                   in_transition=in_transition)
 
-    def get_season(self, delta: np.ndarray) -> np.ndarray:
+    def get_season(self, batch_size: int, time: int, start_datetimes: Optional[np.ndarray]) -> np.ndarray:
+        delta = self.get_delta(batch_size=batch_size, time=time, start_datetimes=start_datetimes)
         return np.floor(delta / self.season_duration) % self.seasonal_period
 
     def initial_state(self,
@@ -131,8 +132,7 @@ class Season(DateAware):
         # mean:
         mean = self.initialize_state_mean()
 
-        delta = self.get_delta(batch_size=batch_size, time=0, start_datetimes=start_datetimes)
-        season_shift = self.get_season(delta)
+        season_shift = self.get_season(batch_size=batch_size, time=0, start_datetimes=start_datetimes)
 
         means = []
         for i, shift in enumerate(season_shift.astype(int)):

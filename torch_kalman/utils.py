@@ -1,5 +1,5 @@
 from math import pi
-from typing import Dict
+from typing import Dict, Union, Any
 
 import torch
 from numpy import prod
@@ -25,3 +25,20 @@ def fourier_series(time: Tensor, seasonal_period: float, K: int) -> Tensor:
 def itervalues_sorted_keys(adict: Dict):
     for k in sorted(adict.keys()):
         yield adict[k]
+
+
+def dict_key_replace(obj: Union[Dict, Any], old: str, new: str) -> Dict:
+    if not isinstance(obj, Dict):
+        return obj
+
+    out = {}
+    for key, value in obj.items():
+        if key == old:
+            out[new] = dict_key_replace(value, old=old, new=new)
+        else:
+            out[key] = dict_key_replace(value, old=old, new=new)
+    return out
+
+
+def zpad(x, n):
+    return str(x).rjust(n, "0")
