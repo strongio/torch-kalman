@@ -42,7 +42,7 @@ class Process:
             self.validate_state_elements(state_elements, transitions)
 
         # device:
-        self.device = False
+        self._device = None
 
         # F before any batch-transitions:
         self._F_base = None
@@ -60,6 +60,12 @@ class Process:
             assert to_el in self.state_elements, f"`{to_el}` is in transitions but not state_elements"
             for from_el in from_els.keys():
                 assert to_el in self.state_elements, f"`{from_el}` is in transitions but not state_elements"
+
+    @property
+    def device(self):
+        if self._device is None:
+            raise RuntimeError("Must call `set_device` first.")
+        return self._device
 
     @property
     def transitions(self):
@@ -87,7 +93,7 @@ class Process:
         return False
 
     def set_device(self, device: torch.device) -> None:
-        self.device = device
+        self._device = device
 
     def link_to_design(self, design: 'Design') -> None:
         """
