@@ -37,6 +37,16 @@ class DateAware(Process):
         if self.start_datetime:
             self.expected_batch_kwargs.append('start_datetimes')
 
+    def get_delta(self, batch_size: int, time: int, start_datetimes: np.ndarray) -> np.ndarray:
+        if start_datetimes is None:
+            if self.start_datetime:
+                raise ValueError("`start_datetimes` argument required.")
+            delta = np.full(fill_value=time, shape=(batch_size,), dtype=int)
+        else:
+            self.check_datetimes(start_datetimes)
+            delta = (start_datetimes - self.start_datetime).view('int64') + time
+        return delta
+
     def check_datetimes(self, datetimes: np.ndarray) -> None:
         expected_dtype = self.start_datetime.dtype
         if datetimes.dtype != expected_dtype:
@@ -53,3 +63,5 @@ class DateAware(Process):
 
     def covariance(self) -> Covariance:
         raise NotImplementedError
+
+

@@ -100,13 +100,7 @@ class Season(DateAware):
                   cache: bool = True
                   ) -> ProcessForBatch:
 
-        if start_datetimes is None:
-            if self.start_datetime:
-                raise ValueError("`start_datetimes` argument required.")
-            delta = np.ones(shape=(batch_size,), dtype=int) * time
-        else:
-            self.check_datetimes(start_datetimes)
-            delta = (start_datetimes - self.start_datetime).view('int64') + time
+        delta = self.get_delta(batch_size=batch_size, time=time, start_datetimes=start_datetimes)
 
         in_transition = (delta % self.season_duration) == (self.season_duration - 1)
 
@@ -134,15 +128,8 @@ class Season(DateAware):
         # mean:
         mean = self.initialize_state_mean()
 
-        if start_datetimes is None:
-            if self.start_datetime:
-                raise ValueError("`start_datetimes` argument required.")
-            offset = np.zeros(shape=(batch_size,), dtype=int)
-        else:
-            self.check_datetimes(start_datetimes)
-            offset = (start_datetimes - self.start_datetime).view('int64')
-
-        season_shift = np.floor(offset / self.season_duration) % self.seasonal_period
+        delta = self.get_delta(batch_size=batch_size, time=time, start_datetimes=start_datetimes)
+        season_shift = np.floor(delta / self.season_duration) % self.seasonal_period
 
         means = []
         for i, shift in enumerate(season_shift.astype(int)):

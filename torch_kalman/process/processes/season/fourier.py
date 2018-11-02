@@ -97,13 +97,7 @@ class FourierSeason(DateAware):
         for_batch = super().for_batch(batch_size=batch_size)
 
         # determine the delta (integer time accounting for different groups having different start datetimes)
-        if start_datetimes is None:
-            if self.start_datetime:
-                raise ValueError("`start_datetimes` argument required.")
-            delta = np.ones(shape=(batch_size,), dtype=int) * time
-        else:
-            self.check_datetimes(start_datetimes)
-            delta = (start_datetimes - self.start_datetime).view('int64') + time
+        delta = self.get_delta(batch_size=batch_size, time=time, start_datetimes=start_datetimes)
 
         # determine season:
         season = delta % self.seasonal_period
