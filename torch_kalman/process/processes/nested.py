@@ -85,12 +85,14 @@ class Nested(Process):
                 self.expected_batch_kwargs.append(kwarg)
 
         state_elements = []
-        transitions = self.sub_process.transitions
+        transitions = {}
         for i in range(self.discrete_process.seasonal_period):
+            sub_transitions = self.sub_process.transitions.copy()
             for sub_el in self.sub_process.state_elements:
                 new_el = self.sub_state_element_rename(sub_el, i)
-                transitions = dict_key_replace(transitions, sub_el, new_el)
+                sub_transitions = dict_key_replace(sub_transitions, sub_el, new_el)
                 state_elements.append(new_el)
+            transitions.update(sub_transitions)
 
         self._state_elements = state_elements
         self._transitions = transitions
