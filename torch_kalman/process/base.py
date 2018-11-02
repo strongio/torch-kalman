@@ -1,4 +1,4 @@
-from typing import Generator, Sequence, Dict, Union, Tuple
+from typing import Generator, Sequence, Dict, Union, Tuple, Set
 
 import torch
 from torch import Tensor
@@ -32,19 +32,14 @@ class Process:
         # measures:
         self.state_elements_to_measures = {}
 
-        # state elements:
-        assert len(state_elements) == len(set(state_elements)), "Duplicate `state_elements` now allowed."
-        self.state_elements = state_elements
-
-        # transitions:
-        self.transitions = transitions
-        for to_el, from_els in self.transitions.items():
-            assert to_el in self.state_elements, f"`{to_el}` is in transitions but not state_elements"
-            for from_el in from_els.keys():
-                assert to_el in self.state_elements, f"`{from_el}` is in transitions but not state_elements"
-
         # expected kwargs
         self.expected_batch_kwargs = ()
+
+        # in some cases, these won't be generated at init, but later in link_to_design; if created at init then validate
+        self._state_elements = state_elements
+        self._transitions = transitions
+        if state_elements and transitions:
+            self.validate_state_elements(state_elements, transitions)
 
         # device:
         self.device = False
@@ -53,6 +48,26 @@ class Process:
         self._F_base = None
         # don't silently fail if we forget to fill a transition, but keep track:
         self.transitions_to_fill = set()
+
+    def validate_state_elements(self,
+                                state_elements: Sequence[str],
+                                transitions: Dict[str, Dict[str, Union[float, None]]]):
+        # state elements:
+        assert len(state_elements) == len(set(state_elements)), "Duplicate `state_elements` not allowed."
+
+        # transitions:
+        for to_el, from_els in transitions.items():
+            assert to_el in self.state_elements, f"`{to_el}` is in transitions but not state_elements"
+            for from_el in from_els.keys():
+                assert to_el in self.state_elements, f"`{from_el}` is in transitions but not state_elements"
+
+    @property
+    def transitions(self):
+        return self._transitions
+
+    @property
+    def state_elements(self):
+        return self._state_elements
 
     def set_transition(self, from_el: str, to_el: str, value: Union[float, None]) -> None:
         if self._F_base is not None:
@@ -91,7 +106,7 @@ class Process:
     def requires_grad(self):
         return any(param.requires_grad for param in self.parameters())
 
-    def measures(self):
+    def measures(self) -> Set[str]:
         return set(measure for measure, _ in self.state_elements_to_measures.keys())
 
     def initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:
