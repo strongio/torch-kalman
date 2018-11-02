@@ -58,11 +58,13 @@ class LocalTrend(Process):
 
     def initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:
         means = self.initial_state_mean_params.expand(batch_size, -1)
-        covs = Covariance.from_std_and_corr(**self.initial_state_cov_params).expand(batch_size, -1, -1)
+        covs = Covariance.from_std_and_corr(**self.initial_state_cov_params, device=self.device).expand(batch_size, -1, -1)
         return means, covs
 
     def covariance(self) -> Covariance:
-        return Covariance.from_std_and_corr(log_std_devs=self.log_std_devs, corr_arctanh=self.corr_arctanh)
+        return Covariance.from_std_and_corr(log_std_devs=self.log_std_devs,
+                                            corr_arctanh=self.corr_arctanh,
+                                            device=self.device)
 
     def add_measure(self, measure: str, state_element: str = 'position', value: Union[float, None] = 1.0) -> None:
         super().add_measure(measure=measure, state_element=state_element, value=value)

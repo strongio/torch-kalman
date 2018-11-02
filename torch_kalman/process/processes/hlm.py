@@ -37,7 +37,7 @@ class HLM(Process):
 
     def initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:
         means = self.initial_state_mean_params.expand(batch_size, -1)
-        covs = Covariance.from_log_cholesky(**self.initial_state_cov_params).expand(batch_size, -1, -1)
+        covs = Covariance.from_log_cholesky(**self.initial_state_cov_params, device=self.device).expand(batch_size, -1, -1)
         return means, covs
 
     def parameters(self) -> Generator[Parameter, None, None]:

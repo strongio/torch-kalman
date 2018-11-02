@@ -1,6 +1,6 @@
 import itertools
 from math import pi
-from typing import Generator, Tuple, Optional, Union
+from typing import Generator, Tuple, Optional, Union, Dict
 
 import torch
 
@@ -13,6 +13,8 @@ from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.processes.season.base import DateAware
 
 import numpy as np
+
+from torch_kalman.utils import fourier_series
 
 
 class FourierSeason(DateAware):
@@ -52,9 +54,12 @@ class FourierSeason(DateAware):
 
         super().__init__(id=id, state_elements=state_elements, transitions=transitions, **kwargs)
 
+        # writing measure-matrix is slow, no need to do it repeatedly:
+        self.measure_cache = {}
+
     def initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:
         means = self.initial_state_mean_params.expand(batch_size, -1)
-        covs = Covariance.from_log_cholesky(**self.initial_state_cov_params).expand(batch_size, -1, -1)
+        covs = Covariance.from_log_cholesky(**self.initial_state_cov_params, device=self.device).expand(batch_size, -1, -1)
         return means, covs
 
     def parameters(self) -> Generator[Parameter, None, None]:
@@ -68,26 +73,19 @@ class FourierSeason(DateAware):
 
     def covariance(self) -> Covariance:
         if self.cov_cholesky_log_diag is not None:
-            return Covariance.from_log_cholesky(log_diag=self.cov_cholesky_log_diag, off_diag=self.cov_cholesky_off_diag)
+            return Covariance.from_log_cholesky(log_diag=self.cov_cholesky_log_diag,
+                                                off_diag=self.cov_cholesky_off_diag,
+                                                device=self.device)
         else:
             ns = self.K * 2
-            cov = Covariance(size=(ns, ns))
+            cov = Covariance(size=(ns, ns), device=self.device)
             cov[:] = 0.
             return cov
 
     # noinspection PyMethodOverriding
-    def add_measure(self, measure: str, state_element=None) -> None:
-        """
-        Rare that we we would only want a subset of the fourier components to contribute to a measurement, so allow an
-        iterable of state_elements.
-        """
-        if state_element is None:
-            state_element = [f"{r},{c}" for r, c in itertools.product(range(self.K), range(2))]
-        if isinstance(state_element, str):
+    def add_measure(self, measure: str) -> None:
+        for state_element in self.state_elements:
             super().add_measure(measure=measure, state_element=state_element, value=None)
-        else:
-            for se in state_element:
-                super().add_measure(measure=measure, state_element=se, value=None)
 
     def for_batch(self,
                   batch_size: int,
@@ -95,22 +93,43 @@ class FourierSeason(DateAware):
                   start_datetimes: Optional[np.ndarray] = None,
                   cache: bool = True
                   ) -> ProcessForBatch:
-        for_batch = super().for_batch(batch_size=batch_size, time=time, start_datetimes=start_datetimes, cache=cache)
+        # super:
+        for_batch = super().for_batch(batch_size=batch_size)
 
+        # determine the delta (integer time accounting for different groups having different start datetimes)
         if start_datetimes is None:
             if self.start_datetime:
                 raise ValueError("`start_datetimes` argument required.")
-            delta = torch.empty((batch_size,))
-            delta[:] = time
+            delta = np.ones(shape=(batch_size,), dtype=int) * time
         else:
             self.check_datetimes(start_datetimes)
-            delta = Tensor((start_datetimes - self.start_datetime).view('int64') + time)
+            delta = (start_datetimes - self.start_datetime).view('int64') + time
 
+        # determine season:
+        season = delta % self.seasonal_period
+
+        # determine measurement function:
+        assert not for_batch.batch_ses_to_measures, "Please report this error to the package maintainer."
+        if cache:
+            key = season.tostring()
+            if key not in self.measure_cache.keys():
+                self.measure_cache[key] = self.make_batch_measures(season)
+            for_batch.batch_ses_to_measures = self.measure_cache[key]
+        else:
+            for_batch.batch_ses_to_measures = self.make_batch_measures(season)
+
+        return for_batch
+
+    def make_batch_measures(self, season: np.ndarray) -> Dict[Tuple[str, str], Tensor]:
+        for_batch = super().for_batch(batch_size=len(season))
+
+        # generate the fourier matrix:
+        fourier_mat = fourier_series(time=Tensor(season), seasonal_period=self.seasonal_period, K=self.K)
+
+        # for each state-element, use fourier values only if we are in the discrete-season (se_discrete_season)
         for measure in self.measures():
             for state_element in self.state_elements:
                 r, c = (int(x) for x in state_element.split(sep=","))
-                values = 2. * pi * r * delta / self.seasonal_period
-                values = torch.sin(values) if c == 0 else torch.cos(values)
-                for_batch.add_measure(measure=measure, state_element=state_element, values=values)
+                for_batch.add_measure(measure=measure, state_element=state_element, values=fourier_mat[:, r, c])
 
-        return for_batch
+        return for_batch.batch_ses_to_measures

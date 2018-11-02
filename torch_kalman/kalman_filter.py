@@ -1,4 +1,4 @@
-from typing import Union, Iterable
+from typing import Union, Iterable, Optional
 
 import torch
 from torch import Tensor
@@ -12,7 +12,10 @@ from torch_kalman.state_belief.over_time import StateBeliefOverTime
 
 
 class KalmanFilter(torch.nn.Module):
-    def __init__(self, processes: Iterable[Process], measures: Iterable[str]):
+    def __init__(self,
+                 processes: Iterable[Process],
+                 measures: Iterable[str],
+                 device: Optional[torch.device] = None):
         super().__init__()
         self.design = Design(processes=processes, measures=measures)
 
@@ -23,6 +26,8 @@ class KalmanFilter(torch.nn.Module):
 
         # the distributional family, implemented by property (default gaussian)
         self._family = None
+
+        self.to(device=self.design.device)
 
     @property
     def family(self):

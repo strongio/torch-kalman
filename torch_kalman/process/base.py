@@ -1,5 +1,6 @@
 from typing import Generator, Sequence, Dict, Union, Tuple
 
+import torch
 from torch import Tensor
 from torch.nn import Parameter
 
@@ -48,14 +49,19 @@ class Process:
         # if no per-batch modification, can avoid repeated computations:
         self.F_base = None
 
+        self.device = False
+
+    def set_device(self, device: torch.device) -> None:
+        self.device = device
+
     def link_to_design(self, design: 'Design') -> None:
         """
-        Some processes need to know about the design they're nested within (e.g., a seasonal process whose characteristics
-        depend on another seasonal process it is nested within). This method add the necessary information to the process.
+        In addition to what's done here, this method is useful for processes that need to know about the design they're
+        nested within.
 
         :param design: The design this process is embedded in.
         """
-        pass
+        self.set_device(design.device)
 
     def requires_grad_(self, requires_grad):
         for param in self.parameters():
@@ -97,6 +103,7 @@ class Process:
         return self._state_element_idx
 
     def for_batch(self, batch_size: int, **kwargs) -> 'ProcessForBatch':
+        assert self.measures(), f"The process {self.id} has no measures."
         return ProcessForBatch(process=self, batch_size=batch_size)
 
     def set_to_simulation_mode(self, *args, **kwargs):

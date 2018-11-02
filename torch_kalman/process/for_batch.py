@@ -23,7 +23,8 @@ class ProcessForBatch:
             return self.process.F_base.expand(self.batch_size, -1, -1)
 
         # fill in template:
-        F = torch.zeros(size=(self.batch_size, len(self.process.state_elements), len(self.process.state_elements)))
+        F = torch.zeros(size=(self.batch_size, len(self.process.state_elements), len(self.process.state_elements)),
+                        device=self.process.device)
         for to_el, from_els in self.transitions().items():
             for from_el, values in from_els.items():
                 r, c = self.process.state_element_idx[to_el], self.process.state_element_idx[from_el]

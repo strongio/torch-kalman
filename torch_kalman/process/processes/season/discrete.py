@@ -1,13 +1,15 @@
 from math import log
-from typing import Optional, Union, Generator, Tuple
+from typing import Optional, Union, Generator, Tuple, Dict
 
 import numpy as np
 import torch
+
 from numpy.core.multiarray import ndarray
 from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.covariance import Covariance
+from torch_kalman.process.processes.season.season_transition_helper import SeasonTransitionHelper
 from torch_kalman.utils import fourier_series
 from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.processes.season.base import DateAware
@@ -45,22 +47,16 @@ class Season(DateAware):
         pad_n = len(str(seasonal_period))
         state_elements = ['measured'] + [str(i).rjust(pad_n, "0") for i in range(1, seasonal_period)]
 
-        # transitions are placeholder, filled in w/batch
-        transitions = dict()
-        for i in range(seasonal_period):
-            current = state_elements[i]
-            transitions[current] = {current: None}
-            if i > 0:
-                prev = state_elements[i - 1]
-                transitions[current][prev] = None
-                transitions['measured'][prev] = None
+        # transitions for this type of process are complicated and shared across various types of seasonality
+        self.season_transitioner = SeasonTransitionHelper(state_elements=state_elements)
+        transitions = self.season_transitioner.initialize()
 
         # process-covariance:
         self.log_std_dev = Parameter(torch.randn(1) - 3.)
 
         # initial state:
         if use_fourier_init_param is None:
-            use_fourier_init_param = 4 if self.seasonal_period > 10 else False
+            use_fourier_init_param = 4 if self.seasonal_period > 12 else False
         self.K = use_fourier_init_param
         if self.K:
             self.initial_state_mean_params = Parameter(torch.randn((self.K, 2)))
@@ -92,7 +88,7 @@ class Season(DateAware):
 
     def covariance(self) -> Covariance:
         state_size = len(self.state_elements)
-        cov = Covariance(size=(state_size, state_size))
+        cov = Covariance(size=(state_size, state_size), device=self.device)
         cov[:] = 0.
         cov[0, 0] = torch.pow(torch.exp(self.log_std_dev), 2)
         return cov
@@ -115,6 +111,7 @@ class Season(DateAware):
         in_transition = (delta % self.season_duration) == (self.season_duration - 1)
 
         for_batch = super().for_batch(batch_size=batch_size)
+        assert not for_batch.batch_transitions, "Please report this error to the package maintainer."
         if cache:
             key = in_transition.tostring()
             if key not in self.transition_cache.keys():
@@ -125,30 +122,9 @@ class Season(DateAware):
 
         return for_batch
 
-    def make_batch_transitions(self, in_transition: np.ndarray) -> ProcessForBatch:
-        batch_size = len(in_transition)
-        for_batch = super().for_batch(batch_size=batch_size)
-        to_next_state = Tensor(in_transition.astype('float'))
-        to_self = 1 - to_next_state
-
-        for i in range(1, self.seasonal_period):
-            current = self.state_elements[i]
-            prev = self.state_elements[i - 1]
-
-            # from state to next state
-            for_batch.set_transition(from_element=prev, to_element=current, values=to_next_state)
-
-            # from state to measured:
-            if prev == 'measured':  # first requires special-case
-                to_measured = Tensor(np.where(in_transition, -1.0, 1.0))
-            else:
-                to_measured = -to_next_state
-            for_batch.set_transition(from_element=prev, to_element='measured', values=to_measured)
-
-            # from state to itself:
-            for_batch.set_transition(from_element=current, to_element=current, values=to_self)
-
-        return for_batch.batch_transitions
+    def make_batch_transitions(self, in_transition: np.ndarray) -> Dict[str, Dict[str, Tensor]]:
+        return self.season_transitioner.for_batch(for_batch=super().for_batch(batch_size=len(in_transition)),
+                                                  in_transition=in_transition)
 
     def initial_state(self,
                       batch_size: int,
@@ -177,7 +153,7 @@ class Season(DateAware):
         means = torch.stack(means)
 
         # cov:
-        covs = torch.eye(len(self.state_elements)).expand(batch_size, -1, -1)
+        covs = torch.eye(len(self.state_elements), device=self.device).expand(batch_size, -1, -1)
         covs[:, 0, 0] = torch.pow(torch.exp(self.initial_state_log_std_dev), 2)
 
         return means, covs
@@ -185,16 +161,15 @@ class Season(DateAware):
     def initialize_state_mean(self):
         if self.K:
             # fourier series:
-            season = torch.arange(float(self.seasonal_period))
-            state = fourier_series(time=season,
-                                   seasonal_period=self.seasonal_period,
-                                   parameters=self.initial_state_mean_params)
+            season = torch.arange(float(self.seasonal_period), device=self.device)
+            fourier_mat = fourier_series(time=season, seasonal_period=self.seasonal_period, K=self.K)
+            state = torch.sum(fourier_mat * self.initial_state_mean_params.expand_as(fourier_mat), dim=(1, 2))
             # adjust for df:
             state = state - state[1:].mean()
             state[1:] = state[1:] - state[0] / self.seasonal_period
             state[0] = -torch.sum(state[1:])
         else:
-            state = Tensor(size=(self.seasonal_period,))
+            state = Tensor(size=(self.seasonal_period,), device=self.device)
             state[1:] = self.initial_state_mean_params
             state[0] = -torch.sum(state[1:])
         return state

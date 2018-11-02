@@ -16,6 +16,7 @@ class DesignForBatch:
                  **kwargs):
 
         self.batch_size = batch_size
+        self.device = design.device
 
         # create processes for batch:
         self.processes = OrderedDict()
@@ -43,11 +44,11 @@ class DesignForBatch:
     def R(self) -> Tensor:
         if self._R is not None:
             return self._R
-        R = Covariance.from_log_cholesky(**self.measure_cov_params)
+        R = Covariance.from_log_cholesky(**self.measure_cov_params, device=self.device)
         return R.expand(self.batch_size, -1, -1)
 
     def F(self) -> Tensor:
-        F = torch.zeros((self.batch_size, self.state_size, self.state_size))
+        F = torch.zeros((self.batch_size, self.state_size, self.state_size), device=self.device)
         for process_id, idx in self.state_mat_idx().items():
             F[idx] = self.processes[process_id].F()
         return F
@@ -55,13 +56,13 @@ class DesignForBatch:
     def Q(self) -> Tensor:
         if self._Q is not None:
             return self._Q
-        Q = torch.zeros((self.batch_size, self.state_size, self.state_size))
+        Q = torch.zeros((self.batch_size, self.state_size, self.state_size), device=self.device)
         for process_id, idx in self.state_mat_idx().items():
             Q[idx] = self.processes[process_id].Q()
         return Q
 
     def H(self) -> Tensor:
-        H = torch.zeros((self.batch_size, self.measure_size, self.state_size))
+        H = torch.zeros((self.batch_size, self.measure_size, self.state_size), device=self.device)
 
         process_lens = [len(process.state_elements) for process in self.processes.values()]
         process_start_idx = dict(zip(self.processes.keys(), np.cumsum([0] + process_lens[:-1])))
@@ -90,6 +91,7 @@ class DesignForBatch:
         return out
 
     def cache_design(self, design: 'Design') -> None:
+        # TODO: OK with device?
         if self.batch_size not in design.state_mat_idx_cache.keys():
             design.state_mat_idx_cache[self.batch_size] = self.state_mat_idx()
         self._state_mat_idx = design.state_mat_idx_cache[self.batch_size]

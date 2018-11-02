@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Iterable, Generator, Tuple
+from typing import Iterable, Generator, Tuple, Optional
 
 import torch
 
@@ -16,7 +16,12 @@ from torch_kalman.process import Process
 class Design:
     def __init__(self,
                  processes: Iterable[Process],
-                 measures: Iterable[str]):
+                 measures: Iterable[str],
+                 device: Optional[torch.device] = None):
+
+        if device is None:
+            device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        self.device = device
 
         # measures:
         self.measures = tuple(measures)

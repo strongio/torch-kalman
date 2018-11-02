@@ -1,17 +1,21 @@
 from math import pi
 
 import torch
+from numpy import prod
 from torch import Tensor
 
 
-def fourier_series(time: Tensor, seasonal_period: int, parameters: Tensor):
-    dim1, dim2 = parameters.shape
-    assert dim2 == 2, f"Expected K X 2 matrix, got {(dim1, dim2)}."
+def fourier_series(time: Tensor, seasonal_period: float, K: int) -> Tensor:
+    batch_size, *other_dims = time.shape
+    if prod(other_dims) > 1.0:
+        raise ValueError("`time` should be one-dimensional")
+    time = time.squeeze()
 
-    out = torch.zeros_like(time)
-    for idx in range(dim1):
+    out = torch.empty((batch_size, K, 2))
+    for idx in range(K):
         k = idx + 1
-        out += (parameters[idx, 0] * torch.sin(2. * pi * k * time / seasonal_period))
-        out += (parameters[idx, 1] * torch.cos(2. * pi * k * time / seasonal_period))
+        for sincos in range(2):
+            val = 2. * pi * k * time / seasonal_period
+            out[:, idx, sincos] = torch.sin(val) if sincos == 0 else torch.cos(val)
 
     return out
