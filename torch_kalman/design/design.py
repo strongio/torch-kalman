@@ -28,9 +28,7 @@ class Design:
         assert len(self.measures) == len(set(self.measures)), "Duplicate measures."
         self.measure_size = len(self.measures)
 
-        # processes:
-        used_measures = set()
-        self.state_size = 0
+        # add processes:
         self.processes = OrderedDict()
         for process in processes:
             if process.id in self.processes.keys():
@@ -38,17 +36,22 @@ class Design:
             else:
                 # add process:
                 self.processes[process.id] = process
-                # increase state-size:
-                self.state_size += len(process.state_elements)
-                # check measures:
-                for measure_id, _ in process.state_elements_to_measures.keys():
-                    if measure_id not in self.measures:
-                        raise ValueError(f"Measure '{measure_id}' found in process '{process.id}' but not in `measures`.")
-                    used_measures.add(measure_id)
 
-        # some processes need to know about the design they're in:
+        # now that they're all added, loop through again to get details
+        used_measures = set()
+        self.state_size = 0
         for process_name in self.processes.keys():
+            # link to design:
             self.processes[process_name].link_to_design(self)
+
+            # increase state-size:
+            self.state_size += len(self.processes[process_name].state_elements)
+
+            # check measures:
+            for measure_id, _ in self.processes[process_name].state_elements_to_measures.keys():
+                if measure_id not in self.measures:
+                    raise ValueError(f"Measure '{measure_id}' found in process '{process.id}' but not in `measures`.")
+                used_measures.add(measure_id)
 
         # any measures unused?
         unused_measures = set(self.measures).difference(used_measures)
