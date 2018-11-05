@@ -38,7 +38,7 @@ class Process:
         # in some cases, these won't be generated at init, but later in link_to_design; if created at init then validate
         self._state_elements = state_elements
         self._transitions = transitions
-        if state_elements and transitions:
+        if (state_elements is not None) and (transitions is not None):
             self.validate_state_elements(state_elements, transitions)
 
         # device:
