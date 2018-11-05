@@ -114,10 +114,13 @@ class TimeSeriesBatch:
                        group_colname: str,
                        datetime_colname: str,
                        measure_colnames: Sequence[str],
-                       time_unit: str) -> 'TimeSeriesBatch':
+                       time_unit: str,
+                       missing: Optional[float] = None,
+                       ) -> 'TimeSeriesBatch':
         assert isinstance(group_colname, str)
         assert isinstance(datetime_colname, str)
         assert isinstance(measure_colnames, (list, tuple))
+        assert len(measure_colnames) == len(set(measure_colnames))
 
         # sort by datetime:
         dataframe = dataframe.sort_values(datetime_colname)
@@ -144,6 +147,9 @@ class TimeSeriesBatch:
         tens[:] = np.nan
         for i, (array, time_idx) in enumerate(zip(arrays, time_idxs)):
             tens[i, time_idx, :] = Tensor(array)
+
+        if missing is not None:
+            tens[torch.isnan(tens)] = missing
 
         return cls(tensor=tens,
                    group_names=group_names,
