@@ -56,6 +56,8 @@ class HLM(Process):
         assert self.state_elements_to_measures, f"HLM process '{self.id}' has no measures."
 
         re_model_mat = kwargs.get(self.expected_batch_kwargs[1], None)
+        if torch.isnan(re_model_mat).any():
+            raise ValueError(f"nans not allowed in `{self.expected_batch_kwargs[1]}` tensor")
 
         if re_model_mat is None:
             raise ValueError(f"Required argument `{self.expected_batch_kwargs[1]}` not found.")

@@ -18,7 +18,6 @@ class ProcessForBatch:
         self.batch_transitions = {}
         self.batch_ses_to_measures = {}
 
-
     def F(self) -> Tensor:
         leftover_transitions = self.process.transitions_to_fill.copy()
         # fill in template:
