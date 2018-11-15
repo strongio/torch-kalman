@@ -20,7 +20,7 @@ class Design:
                  device: Optional[torch.device] = None):
 
         if device is None:
-            device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+            device = torch.device('cpu')
         self.device = device
 
         # measures:
