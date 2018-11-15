@@ -18,8 +18,13 @@ class Simulation:
     def simulate(self, num_groups: int, num_timesteps: int, **kwargs):
         state = self.family(*self.design.get_block_diag_initial_state(batch_size=num_groups, **kwargs))
 
+        iterator = range(num_timesteps)
+        if kwargs.get('progress', None):
+            from tqdm import tqdm
+            iterator = tqdm(iterator)
+
         states = []
-        for t in range(num_timesteps):
+        for t in iterator:
             design_for_batch = self.design.for_batch(batch_size=num_groups, time=t, **kwargs)
             # move sim forward one step:
             state = state.predict(F=design_for_batch.F(), Q=design_for_batch.Q())

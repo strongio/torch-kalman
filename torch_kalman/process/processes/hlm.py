@@ -48,7 +48,7 @@ class HLM(Process):
 
     def covariance(self) -> Covariance:
         ns = len(self.state_elements)
-        out = torch.empty(size=(ns, ns))
+        out = torch.empty(size=(ns, ns), device=self.device)
         out[:, :] = 0.
         return out
 
