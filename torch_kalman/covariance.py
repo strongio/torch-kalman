@@ -13,12 +13,12 @@ class Covariance(Tensor):
                           off_diag: Parameter,
                           device: Optional[torch.device] = None) -> 'Covariance':
         n = len(log_diag)
-        L = Tensor(size=(n, n), device=device)
+        L = torch.empty(size=(n, n), device=device)
         L[np.diag_indices(n)] = torch.exp(log_diag)
         L[np.tril_indices(n=n, k=-1)] = off_diag
         L[np.triu_indices(n=n, k=1)] = 0.
 
-        out = Covariance(size=(n, n), device=device)
+        out = Covariance(size=(n, n)).to(device)
         out[:] = L.mm(L.t())
         return out
 
