@@ -22,6 +22,8 @@ def fourier_model_mat(dt: np.ndarray,
             period = np.timedelta64(7, 'D')
         elif period == 'yearly':
             period = np.timedelta64(int(365.25 * 24), 'h')
+        elif period == 'daily':
+            period = np.timedelta64(24,'h')
         else:
             raise ValueError("Unrecognized `period`.")
 
