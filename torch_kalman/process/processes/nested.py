@@ -111,8 +111,8 @@ class Nested(Process):
 
         ns = len(self.state_elements)
 
-        means = torch.zeros((batch_size, ns))
-        covs = torch.zeros((batch_size, ns, ns))
+        means = torch.zeros((batch_size, ns), device=self.device)
+        covs = torch.zeros((batch_size, ns, ns), device=self.device)
 
         start = 0
         for _ in range(self.discrete_process.seasonal_period):
@@ -134,7 +134,7 @@ class Nested(Process):
 
     def covariance(self) -> Covariance:
         ns = len(self.state_elements)
-        cov = torch.zeros((ns, ns))
+        cov = torch.zeros((ns, ns), device=self.device)
         subcov = self.sub_process.covariance()
 
         start = 0
