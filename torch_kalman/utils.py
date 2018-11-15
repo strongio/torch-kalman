@@ -1,24 +1,47 @@
-from math import pi
-from typing import Dict, Union, Any
+from typing import Dict, Union, Any, Optional
 
-import torch
-from numpy import prod
-from torch import Tensor
+from pandas import Series
+
+import numpy as np
 
 
-def fourier_series(time: Tensor, seasonal_period: float, K: int) -> Tensor:
-    batch_size, *other_dims = time.shape
-    if prod(other_dims) > 1.0:
-        raise ValueError("`time` should be one-dimensional")
-    time = time.squeeze()
+def fourier_model_mat(dt: np.ndarray,
+                      K: int,
+                      period: Union[np.timedelta64, str],
+                      start_dt: Optional[np.datetime64] = None) -> np.ndarray:
+    """
+    Sometimes it is useful to specify a seasonal structure via the 'HLM' process, rather than the 'Fourier' process, because
+    in the former case we can allow the seasonal structure to interact with other aspects of the HLM process (e.g., an hour-
+    in-day seasonality interacts with a 'weather' predictor). This utility function constructs a model-matrix that can be
+    passed to an HLM process (or concatenated to a larger model-matrix that's then passed).
+    """
 
-    out = torch.empty((batch_size, K, 2))
+    # parse period:
+    if isinstance(period, str):
+        if period == 'weekly':
+            period = np.timedelta64(7, 'D')
+        elif period == 'yearly':
+            period = np.timedelta64(int(365.25 * 24), 'h')
+        else:
+            raise ValueError("Unrecognized `period`.")
+
+    # convert datetimes and period into ints:
+    if isinstance(dt, Series):
+        dt = dt.values
+    time_unit = np.datetime_data(period)[0]
+    if start_dt is None:
+        time = dt.astype(f'datetime64[{time_unit}]').view('int64')
+    else:
+        time = (dt - start_dt).astype(f'timedelta64[{time_unit}]').view('int64')
+    period_int = period.view('int64')
+
+    # fourier matrix:
+    out = np.empty((len(dt), K * 2))
     for idx in range(K):
         k = idx + 1
         for sincos in range(2):
-            val = 2. * pi * k * time / seasonal_period
-            out[:, idx, sincos] = torch.sin(val) if sincos == 0 else torch.cos(val)
-
+            val = 2. * np.pi * k * time / period_int
+            out[:, idx * 2 + sincos] = np.sin(val) if sincos == 0 else np.cos(val)
     return out
 
 

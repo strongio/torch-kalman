@@ -14,7 +14,8 @@ from torch_kalman.process.processes.season.base import DateAware
 
 import numpy as np
 
-from torch_kalman.utils import fourier_series, itervalues_sorted_keys
+from torch_kalman.utils import itervalues_sorted_keys
+from torch_kalman.process.utils.fourier import fourier_tensor
 
 
 class FourierSeason(DateAware):
@@ -118,7 +119,7 @@ class FourierSeason(DateAware):
         for_batch = super().for_batch(batch_size=len(season))
 
         # generate the fourier matrix:
-        fourier_mat = fourier_series(time=Tensor(season), seasonal_period=self.seasonal_period, K=self.K)
+        fourier_mat = fourier_tensor(time=Tensor(season), seasonal_period=self.seasonal_period, K=self.K)
 
         # for each state-element, use fourier values only if we are in the discrete-season (se_discrete_season)
         for measure in self.measures():

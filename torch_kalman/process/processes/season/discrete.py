@@ -9,8 +9,8 @@ from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.covariance import Covariance
-from torch_kalman.process.processes.season.season_transition_helper import SeasonTransitionHelper
-from torch_kalman.utils import fourier_series
+from torch_kalman.process.utils.season_transition_helper import SeasonTransitionHelper
+from torch_kalman.process.utils.fourier import fourier_tensor
 from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.processes.season.base import DateAware
 
@@ -152,7 +152,7 @@ class Season(DateAware):
         if self.K:
             # fourier series:
             season = torch.arange(float(self.seasonal_period), device=self.device)
-            fourier_mat = fourier_series(time=season, seasonal_period=self.seasonal_period, K=self.K)
+            fourier_mat = fourier_tensor(time=season, seasonal_period=self.seasonal_period, K=self.K)
             state = torch.sum(fourier_mat * self.initial_state_mean_params.expand_as(fourier_mat), dim=(1, 2))
             # adjust for df:
             state = state - state[1:].mean()
