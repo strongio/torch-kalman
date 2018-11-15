@@ -1,4 +1,5 @@
 from typing import Sequence, Any, Optional, Union, Tuple
+from warnings import warn
 
 import torch
 import pandas as pd
@@ -156,3 +157,52 @@ class TimeSeriesBatch:
                    start_datetimes=start_datetimes,
                    measures=measure_colnames,
                    time_unit=time_unit)
+
+    def with_time_unit(self, new_time_unit: str) -> 'TimeSeriesBatch':
+        """
+        Upsample or downsample this batch, so that it's mapped onto a new time-unit (e.g., from 'D' to 'h' by taking the mean
+        , or 'h' to 'D' by repeating).
+        """
+        num_groups, num_timesteps, num_measures = self.tensor.shape
+        old_time_unit = np.datetime_data(self.start_datetimes[0])[0]
+
+        new_over_old = np.timedelta64(1, new_time_unit) / np.timedelta64(1, old_time_unit)
+
+        if new_over_old == 1:
+            warn("New time-unit is same as old")
+            new_tens = self.tensor.clone()
+        elif new_over_old > 1:
+            ids_all = self.datetimes().astype(f'datetime64[{new_time_unit}]').astype('int64')
+            ids_all = torch.from_numpy(ids_all - np.min(ids_all, 1, keepdims=True))
+
+            new_tens_items = []
+            for g in range(num_groups):
+                new_tens_items.append([])
+                for m in range(num_measures):
+                    ids = ids_all[g]
+                    weights = self.tensor[g, :, m].clone()
+                    isnan = torch.isnan(weights)
+                    weights[isnan] = 0.
+                    numer = torch.bincount(ids, weights).to(torch.float64)
+                    denom = torch.bincount(ids, 1 - isnan).to(torch.float64)
+                    new_tens_items[g].append(numer / denom)
+                new_tens_items[g] = torch.stack(new_tens_items[g], 1)
+
+            new_num_timesteps = max(len(t) for t in new_tens_items)
+            new_tens = torch.empty((num_groups, new_num_timesteps, num_measures))
+            new_tens[:] = np.nan
+            for g, item in enumerate(new_tens_items):
+                new_tens[g, 0:len(item), :] = item
+        else:
+            old_over_new = 1. / new_over_old
+            if not old_over_new.is_integer():
+                raise ValueError("If old time-unit > new time-unit, then ratio must be an integer.")
+            new_tens = self.tensor[:, np.repeat(np.arange(0, num_timesteps), int(old_over_new)), :].clone()
+
+        new_start_datetimes = self.start_datetimes.astype(f'datetime64[{new_time_unit}]')
+
+        return self.__class__(tensor=new_tens,
+                              group_names=self.group_names,
+                              start_datetimes=new_start_datetimes,
+                              measures=self.measures,
+                              time_unit=new_time_unit)
