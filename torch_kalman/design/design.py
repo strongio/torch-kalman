@@ -61,8 +61,9 @@ class Design:
                              f"during prediction.")
 
         # measure-covariance:
-        self.measure_cholesky_log_diag = Parameter(data=torch.zeros(self.measure_size))
-        self.measure_cholesky_off_diag = Parameter(data=torch.zeros(int(self.measure_size * (self.measure_size - 1) / 2)))
+        upper_tri = int(self.measure_size * (self.measure_size - 1) / 2)
+        self.measure_cholesky_log_diag = Parameter(data=torch.zeros(self.measure_size, device=self.device))
+        self.measure_cholesky_off_diag = Parameter(data=torch.zeros(upper_tri, device=self.device))
 
         # cache:
         self.Q_cache, self.R_cache, self.F_cache, self.state_mat_idx_cache = None, None, None, None
