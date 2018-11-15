@@ -105,8 +105,8 @@ class Design:
         self.state_mat_idx_cache = {}
 
     def get_block_diag_initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:
-        means = torch.zeros((batch_size, self.state_size))
-        covs = torch.zeros((batch_size, self.state_size, self.state_size))
+        means = torch.zeros((batch_size, self.state_size), device=self.device)
+        covs = torch.zeros((batch_size, self.state_size, self.state_size), device=self.device)
 
         start = 0
         for process_id, process in self.processes.items():
