@@ -78,7 +78,7 @@ class FourierSeason(DateAware):
                                                 device=self.device)
         else:
             ns = self.K * 2
-            cov = Covariance(size=(ns, ns), device=self.device)
+            cov = torch.empty(size=(ns, ns), device=self.device)
             cov[:] = 0.
             return cov
 

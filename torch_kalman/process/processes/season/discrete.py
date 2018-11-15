@@ -88,7 +88,7 @@ class Season(DateAware):
 
     def covariance(self) -> Covariance:
         state_size = len(self.state_elements)
-        cov = Covariance(size=(state_size, state_size), device=self.device)
+        cov = torch.empty(size=(state_size, state_size), device=self.device)
         cov[:] = 0.
         cov[0, 0] = torch.pow(torch.exp(self.log_std_dev), 2)
         return cov
