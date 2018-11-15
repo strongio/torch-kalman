@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Iterable, Generator, Tuple, Optional
+from typing import Iterable, Generator, Tuple, Optional, Dict
 
 import torch
 
@@ -68,6 +68,15 @@ class Design:
         # cache:
         self.Q_cache, self.R_cache, self.F_cache, self.state_mat_idx_cache = None, None, None, None
         self.reset_cache()
+
+    def process_idx(self) -> Dict[str, list]:
+        out = {}
+        start = 0
+        for process in self.processes.values():
+            end = start + len(process.state_elements)
+            out[process.id] = list(range(start, end))
+            start = end
+        return out
 
     def all_state_elements(self) -> Generator[Tuple[str, str], None, None]:
         for process_name, process in self.processes.items():

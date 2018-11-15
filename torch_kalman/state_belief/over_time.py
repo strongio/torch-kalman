@@ -1,4 +1,5 @@
 from collections import defaultdict
+from pdb import Pdb
 from typing import Sequence, Optional, Dict, Tuple
 
 import torch
@@ -53,6 +54,29 @@ class StateBeliefOverTime:
     def measurements(self) -> Tensor:
         # noinspection PyUnresolvedReferences
         return self.measurement_distribution.loc
+
+    def partial_measurements(self, processes: Sequence[str], exclude: bool = True):
+        process_idx = self.design.process_idx()
+        assert all(process_id in process_idx.keys() for process_id in processes), "Not all `processes` in design."
+        if exclude:
+            processes = set(process_idx.keys()) - set(processes)
+
+        measurements = []
+        covariances = []
+        for state_belief in self.state_beliefs:
+            # only some states contribute:
+            H_partial = torch.zeros_like(state_belief.H)
+            for process_id in processes:
+                H_partial[:, :, process_idx[process_id]] = state_belief.H[:, :, process_idx[process_id]]
+
+            # mean:
+            measurements.append(torch.bmm(H_partial, state_belief.means[:, :, None]).squeeze(2))
+
+            # cov:
+            Ht_partial = H_partial.permute(0, 2, 1)
+            covariances.append(torch.bmm(torch.bmm(H_partial, state_belief.covs), Ht_partial) + state_belief.R)
+
+        return torch.stack(measurements).permute(1, 0, 2), torch.stack(covariances).permute(1, 0, 2, 3)
 
     @property
     def state_distribution(self) -> Distribution:

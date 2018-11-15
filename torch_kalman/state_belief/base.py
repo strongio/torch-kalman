@@ -44,13 +44,13 @@ class StateBelief:
     @property
     def H(self) -> Tensor:
         if self._H is None:
-            raise ValueError("This StateBelief hasn't been measured; use the `measure_state` method.")
+            raise ValueError("This StateBelief hasn't been measured; use the `compute_measurement` method.")
         return self._H
 
     @property
     def R(self) -> Tensor:
         if self._R is None:
-            raise ValueError("This StateBelief hasn't been measured; use the `measure_state` method.")
+            raise ValueError("This StateBelief hasn't been measured; use the `compute_measurement` method.")
         return self._R
 
     @property
