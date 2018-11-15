@@ -94,6 +94,8 @@ class Process:
 
     def set_device(self, device: torch.device) -> None:
         self._device = device
+        for param in self.parameters():
+            param.data = param.data.to(device)
 
     def link_to_design(self, design: 'Design') -> None:
         """
