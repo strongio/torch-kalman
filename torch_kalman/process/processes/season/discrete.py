@@ -20,9 +20,8 @@ class Season(DateAware):
                  id: str,
                  seasonal_period: int,
                  season_duration: int = 1,
-                 season_start: Optional[str] = None,
-                 timestep_interval: Optional[str] = None,
-                 use_fourier_init_param: Optional[int] = None):
+                 use_fourier_init_param: Optional[int] = None,
+                 *args, **kwargs):
         """
         Process representing discrete seasons.
 
@@ -32,7 +31,7 @@ class Season(DateAware):
         :param season_start: A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
         starts, which is useful to specify if season boundaries are actually meaningful, and is important to specify if
         different groups in your dataset start on different dates.
-        :param timestep_interval: A string that is understood as a datetime-unit by numpy.
+        :param dt_unit: A string that is understood as a datetime-unit by numpy.
         See: https://docs.scipy.org/doc/numpy-1.15.0/reference/arrays.datetime.html#arrays-dtypes-dateunits
         :param use_fourier_init_param: This determines how the *initial* state-means are parameterized. For longer seasons,
         we may not want a free parameter for each individual season. If an integer, then uses a fourier-series for the
@@ -69,8 +68,7 @@ class Season(DateAware):
         super().__init__(id=id,
                          state_elements=state_elements,
                          transitions=transitions,
-                         season_start=season_start,
-                         timestep_interval=timestep_interval)
+                         *args, **kwargs)
 
         # writing transition-matrix is slow, no need to do it repeatedly:
         self.transition_cache = {}
