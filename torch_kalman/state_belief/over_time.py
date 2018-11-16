@@ -55,19 +55,22 @@ class StateBeliefOverTime:
         # noinspection PyUnresolvedReferences
         return self.measurement_distribution.loc
 
-    def partial_measurements(self, processes: Sequence[str], exclude: bool = True):
-        process_idx = self.design.process_idx()
-        assert all(process_id in process_idx.keys() for process_id in processes), "Not all `processes` in design."
-        if exclude:
-            processes = set(process_idx.keys()) - set(processes)
+    def partial_measurements(self, exclude: Sequence[Tuple[str, str]]):
+        remaining = set(exclude)
+        exclude_idx = []
+        for i, ps in enumerate(self.design.all_state_elements()):
+            if ps in exclude:
+                exclude_idx.append(i)
+                remaining.remove(ps)
+        if remaining:
+            raise ValueError(f"The following were in `exclude` but weren't found in design:\n{remaining}.")
 
         measurements = []
         covariances = []
         for state_belief in self.state_beliefs:
             # only some states contribute:
-            H_partial = torch.zeros_like(state_belief.H)
-            for process_id in processes:
-                H_partial[:, :, process_idx[process_id]] = state_belief.H[:, :, process_idx[process_id]]
+            H_partial = state_belief.H.clone()
+            H_partial[:, :, exclude_idx] = 0.
 
             # mean:
             measurements.append(torch.bmm(H_partial, state_belief.means[:, :, None]).squeeze(2))
