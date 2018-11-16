@@ -12,7 +12,7 @@ import numpy as np
 
 
 class StateBeliefOverTime:
-    def __init__(self, state_beliefs: Sequence['StateBelief'], design: Optional[Design] = None):
+    def __init__(self, state_beliefs: Sequence['StateBelief'], design: Design):
         """
         Belief in the state of the system over a range of times, for a batch of time-series.
 
