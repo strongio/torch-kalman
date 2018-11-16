@@ -14,21 +14,29 @@ class DateAware(Process):
     Any date-aware process, serves as a base-class for seasons without being committed to a particular seasonal structure
     (e.g., discrete, fourier, etc.).
     """
+    supported_dt_units = {'Y', 'D', 'h', 'm', 's'}
 
     def __init__(self,
                  id: str,
                  state_elements: Sequence[str],
                  transitions: Dict[str, Dict[str, Union[float, None]]],
                  season_start: Optional[str] = None,
-                 timestep_interval: Optional[str] = None):
+                 dt_unit: Optional[str] = None):
 
         # parse date information:
+        self.dt_unit = dt_unit
         if season_start is None:
             warn("`season_start` was not passed; will assume all groups start in same season.")
             self.start_datetime = None
         else:
-            assert timestep_interval is not None, "If passing `season_start` must also pass `timestep_interval`."
-            self.start_datetime = np.datetime64(season_start, (timestep_interval, 1))
+            assert dt_unit is not None, "If passing `season_start` must also pass `dt_unit`."
+            if dt_unit in self.supported_dt_units:
+                self.start_datetime = np.datetime64(season_start, (dt_unit, 1))
+            elif dt_unit == 'W':
+                # need to keep daily due to bug: https://github.com/numpy/numpy/issues/12404
+                self.start_datetime = np.datetime64(season_start, ('D', 1))
+            else:
+                raise ValueError(f"dt_unit {dt_unit} not currently supported; please report this to the package maintainer.")
 
         super().__init__(id=id, state_elements=state_elements, transitions=transitions)
 
@@ -44,13 +52,21 @@ class DateAware(Process):
             delta = np.full(fill_value=time, shape=(batch_size,), dtype=int)
         else:
             self.check_datetimes(start_datetimes)
-            delta = (start_datetimes - self.start_datetime).view('int64') + time
+            offset = (start_datetimes - self.start_datetime).view('int64')
+            if self.dt_unit == 'W':
+                # special-case handling due to bug: https://github.com/numpy/numpy/issues/12404
+                offset = offset / 7
+                bad_freq = (np.mod(offset, 1) != 0)
+                if np.any(bad_freq):
+                    raise ValueError(f"start_datetimes has dates with unexpected day-of-week:\n{start_datetimes[bad_freq]}")
+
+            delta = offset + time
         return delta
 
     def check_datetimes(self, datetimes: np.ndarray) -> None:
-        expected_dtype = self.start_datetime.dtype
-        if datetimes.dtype != expected_dtype:
-            raise ValueError(f"The datetimes dtype should be '{expected_dtype}'.")
+        act = datetimes.dtype
+        exp = self.start_datetime.dtype
+        assert act == exp, f"Expected datetimes with dtype {exp}, got {act}."
 
     def initial_state(self,
                       batch_size: int,
@@ -63,5 +79,3 @@ class DateAware(Process):
 
     def covariance(self) -> Covariance:
         raise NotImplementedError
-
-

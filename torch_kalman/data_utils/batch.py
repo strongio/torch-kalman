@@ -13,24 +13,32 @@ class TimeSeriesBatch:
     first dimension, the start datetime and datetime-unit for the second dimension, and the name of the measures for the
     third dimension.
     """
+    supported_dt_units = {'Y', 'D', 'h', 'm', 's'}
 
     def __init__(self,
                  tensor: Tensor,
                  group_names: Sequence[Any],
                  start_datetimes: Sequence[np.datetime64],
                  measures: Sequence[str],
-                 time_unit: Optional[str] = None):
+                 dt_unit: str):
 
         if not isinstance(group_names, np.ndarray):
             group_names = np.array(group_names)
 
         if not isinstance(start_datetimes, np.ndarray):
             start_datetimes = np.array(start_datetimes)
-            if time_unit is None:
-                time_unit, _ = np.datetime_data(start_datetimes[0])
-                if time_unit == 'ns':  # since it's the default, we can't assume this is the interval they wanted
-                    raise RuntimeError("Please pass an `interval` argument to specify the datetime-interval.")
-            start_datetimes = start_datetimes.astype(f"datetime64[{time_unit}]")
+
+        self.dt_unit = dt_unit
+        if dt_unit in self.supported_dt_units:
+            start_datetimes = start_datetimes.astype(f"datetime64[{dt_unit}]")
+        elif dt_unit == 'W':
+            weekdays = pd.Series(start_datetimes).dt.day_name().value_counts()
+            if len(weekdays) > 1:
+                raise ValueError(f"For weekly data, all start_datetimes must be same day-of-week. Got:\n{weekdays}")
+            # need to keep daily due to bug: https://github.com/numpy/numpy/issues/12404
+            start_datetimes = start_datetimes.astype('datetime64[D]')
+        else:
+            raise ValueError(f"Time-unit of {dt_unit} not currently supported; please report to package maintainer.")
 
         if not isinstance(measures, np.ndarray):
             measures = np.array(measures)
@@ -43,7 +51,11 @@ class TimeSeriesBatch:
     def subset(self, ind: Union[int, Sequence, slice]) -> 'TimeSeriesBatch':
         if isinstance(ind, int):
             ind = [ind]
-        return self.__class__(self.tensor[ind], self.group_names[ind], self.start_datetimes[ind], self.measures)
+        return self.__class__(self.tensor[ind],
+                              self.group_names[ind],
+                              self.start_datetimes[ind],
+                              self.measures,
+                              dt_unit=self.dt_unit)
 
     def subset_by_groups(self, groups: Sequence[Any]) -> 'TimeSeriesBatch':
         """
@@ -62,7 +74,8 @@ class TimeSeriesBatch:
         return self.__class__(tensor,
                               group_names=self.group_names,
                               start_datetimes=self.start_datetimes,
-                              measures=self.measures)
+                              measures=self.measures,
+                              dt_unit=self.dt_unit)
 
     def datetimes(self) -> np.ndarray:
         return self.start_datetimes[:, None] + np.arange(0, self.tensor.shape[1])
@@ -80,7 +93,8 @@ class TimeSeriesBatch:
             val_batch = self.__class__(self.tensor[:, idx:, :],
                                        self.group_names,
                                        self.start_datetimes + idx,
-                                       self.measures)
+                                       self.measures,
+                                       dt_unit=self.dt_unit)
         else:
             raise ValueError("`split_frac` too extreme, results in empty tensor.")
         return train_batch, val_batch
@@ -115,7 +129,7 @@ class TimeSeriesBatch:
                        group_colname: str,
                        datetime_colname: str,
                        measure_colnames: Sequence[str],
-                       time_unit: str,
+                       dt_unit: str,
                        missing: Optional[float] = None,
                        ) -> 'TimeSeriesBatch':
         assert isinstance(group_colname, str)
@@ -136,7 +150,7 @@ class TimeSeriesBatch:
             times = df[datetime_colname].values
             min_time = times[0]
             start_datetimes.append(min_time)
-            time_idx = (times - min_time).astype(f'timedelta64[{time_unit}]').view('int64')
+            time_idx = (times - min_time).astype(f'timedelta64[{dt_unit}]').view('int64')
             time_idxs.append(time_idx)
 
             # values:
@@ -156,23 +170,25 @@ class TimeSeriesBatch:
                    group_names=group_names,
                    start_datetimes=start_datetimes,
                    measures=measure_colnames,
-                   time_unit=time_unit)
+                   dt_unit=dt_unit)
 
-    def with_time_unit(self, new_time_unit: str) -> 'TimeSeriesBatch':
+    def with_dt_unit(self, new_dt_unit: str) -> 'TimeSeriesBatch':
         """
         Upsample or downsample this batch, so that it's mapped onto a new time-unit (e.g., from 'D' to 'h' by taking the mean
         , or 'h' to 'D' by repeating).
         """
         num_groups, num_timesteps, num_measures = self.tensor.shape
-        old_time_unit = np.datetime_data(self.start_datetimes[0])[0]
 
-        new_over_old = np.timedelta64(1, new_time_unit) / np.timedelta64(1, old_time_unit)
+        if new_dt_unit not in self.supported_dt_units:
+            raise ValueError(f"Time-unit of {new_dt_unit} not currently supported; please report to package maintainer.")
+
+        new_over_old = np.timedelta64(1, new_dt_unit) / np.timedelta64(1, self.dt_unit)
 
         if new_over_old == 1:
             warn("New time-unit is same as old")
             new_tens = self.tensor.clone()
         elif new_over_old > 1:
-            ids_all = self.datetimes().astype(f'datetime64[{new_time_unit}]').astype('int64')
+            ids_all = self.datetimes().astype(f'datetime64[{new_dt_unit}]').astype('int64')
             ids_all = torch.from_numpy(ids_all - np.min(ids_all, 1, keepdims=True))
 
             new_tens_items = []
@@ -199,10 +215,10 @@ class TimeSeriesBatch:
                 raise ValueError("If old time-unit > new time-unit, then ratio must be an integer.")
             new_tens = self.tensor[:, np.repeat(np.arange(0, num_timesteps), int(old_over_new)), :].clone()
 
-        new_start_datetimes = self.start_datetimes.astype(f'datetime64[{new_time_unit}]')
+        new_start_datetimes = self.start_datetimes.astype(f'datetime64[{new_dt_unit}]')
 
         return self.__class__(tensor=new_tens,
                               group_names=self.group_names,
                               start_datetimes=new_start_datetimes,
                               measures=self.measures,
-                              time_unit=new_time_unit)
+                              dt_unit=new_dt_unit)
