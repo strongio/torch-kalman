@@ -3,6 +3,7 @@ from warnings import warn
 
 import torch
 import pandas as pd
+
 from torch import Tensor
 import numpy as np
 
@@ -68,8 +69,6 @@ class TimeSeriesBatch:
     def with_new_tensor(self, tensor: Tensor) -> 'TimeSeriesBatch':
         """
         Create a new Batch with a different Tensor, but all other attributes the same.
-        :param tensor:
-        :return:
         """
         return self.__class__(tensor,
                               group_names=self.group_names,
@@ -78,7 +77,11 @@ class TimeSeriesBatch:
                               dt_unit=self.dt_unit)
 
     def datetimes(self) -> np.ndarray:
-        return self.start_datetimes[:, None] + np.arange(0, self.tensor.shape[1])
+        offset = np.arange(0, self.tensor.shape[1])
+        if self.dt_unit == 'W':
+            # special-case handling due to https://github.com/numpy/numpy/issues/12404
+            offset *= 7
+        return self.start_datetimes[:, None] + offset
 
     def split(self, split_frac: float) -> Tuple['TimeSeriesBatch', 'TimeSeriesBatch']:
         """
@@ -92,7 +95,7 @@ class TimeSeriesBatch:
             train_batch = self.with_new_tensor(self.tensor[:, :idx, :])
             val_batch = self.__class__(self.tensor[:, idx:, :],
                                        self.group_names,
-                                       self.start_datetimes + idx,
+                                       self.datetimes()[:, idx],
                                        self.measures,
                                        dt_unit=self.dt_unit)
         else:
@@ -109,6 +112,8 @@ class TimeSeriesBatch:
         else:
             assert tensor.shape == self.tensor.shape, f"The `tensor` has wrong shape, expected `{self.tensor.shape}`."
 
+        datetimes = self.datetimes()
+
         dfs = []
         for g, group_name in enumerate(self.group_names):
             # get values, don't store trailing nans:
@@ -118,7 +123,7 @@ class TimeSeriesBatch:
             # convert to dataframe:
             df = pd.DataFrame(data=values[:end_idx, :], columns=self.measures)
             df[group_colname] = group_name
-            df[datetime_colname] = self.start_datetimes[g] + np.arange(0, len(df.index))
+            df[datetime_colname] = datetimes[g, 0:len(df.index)]
             dfs.append(df)
 
         return pd.concat(dfs)
