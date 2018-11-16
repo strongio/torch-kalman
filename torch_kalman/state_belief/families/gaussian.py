@@ -1,8 +1,9 @@
 from typing import Union, Tuple, Sequence, Optional
+from warnings import warn
 
 import torch
 from torch import Tensor
-from torch.distributions import MultivariateNormal, Distribution
+from torch.distributions import MultivariateNormal as TorchMultivariateNormal, Distribution
 
 from torch_kalman.design import Design
 from torch_kalman.state_belief import StateBelief
@@ -110,3 +111,42 @@ class GaussianOverTime(StateBeliefOverTime):
     @property
     def distribution(self):
         return MultivariateNormal
+
+
+class MultivariateNormal(TorchMultivariateNormal):
+    """
+    Workaround for https://github.com/pytorch/pytorch/issues/11333
+    """
+
+    def __init__(self, loc: Tensor, covariance_matrix: Tensor, validate_args: bool = False):
+        assert loc.dim() == 3
+        if loc.shape[2] == 1:
+            self.univariate = True
+            self.loc = loc
+            self.covariance_matrix = covariance_matrix
+        else:
+            self.univariate = False
+            if loc.device != torch.device('cpu'):
+                warn("`MultivariateNormal` not recommended for gpu, consider moving Tensors to cpu. "
+                     "See https://github.com/pytorch/pytorch/issues/11333")
+            super().__init__(loc=loc, covariance_matrix=covariance_matrix, validate_args=validate_args)
+
+    def log_prob(self, value):
+        if self.univariate:
+            assert value.shape[2] == 1
+            value = torch.squeeze(value, 2)
+            mean = torch.squeeze(self.loc, 2)
+            var = self.covariance_matrix[:, :, 0, 0]
+            numer = -torch.pow(value - mean, 2) / (2. * var)
+            denom = .5 * torch.log(2. * np.pi * var)
+            log_prob = numer - denom
+        else:
+            log_prob = super().log_prob(value)
+        return log_prob
+
+    def rsample(self, sample_shape):
+        raise NotImplementedError("TODO")
+        # if self.univariate:
+        #     return torch.sqrt(self.covariance_matrix) * torch.randn(sample_shape) + self.loc
+        # else:
+        #     return super().rsample(sample_shape=sample_shape)

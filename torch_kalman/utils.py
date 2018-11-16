@@ -3,6 +3,7 @@ from typing import Dict, Union, Any, Optional
 from pandas import Series
 
 import numpy as np
+from torch import Tensor
 
 
 def fourier_model_mat(dt: np.ndarray,
@@ -23,7 +24,7 @@ def fourier_model_mat(dt: np.ndarray,
         elif period == 'yearly':
             period = np.timedelta64(int(365.25 * 24), 'h')
         elif period == 'daily':
-            period = np.timedelta64(24,'h')
+            period = np.timedelta64(24, 'h')
         else:
             raise ValueError("Unrecognized `period`.")
 
@@ -65,5 +66,12 @@ def dict_key_replace(obj: Union[Dict, Any], old: str, new: str) -> Dict:
     return out
 
 
-def zpad(x, n):
+def zpad(x: Any, n: int) -> str:
     return str(x).rjust(n, "0")
+
+
+def batch_diag(bmat: Tensor) -> Tensor:
+    """
+    Returns the diagonals of a batch of square matrices; from torch.distributions.MultivariateNormal
+    """
+    return bmat.reshape(bmat.shape[:-2] + (-1,))[..., ::bmat.size(-1) + 1]
