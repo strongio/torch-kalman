@@ -90,7 +90,7 @@ class Gaussian(StateBelief):
         "Joseph stabilized" covariance correction.
         """
         rank = covariance.shape[1]
-        I = torch.eye(rank, rank).expand(len(covariance), -1, -1)
+        I = torch.eye(rank, rank, device=covariance.device).expand(len(covariance), -1, -1)
         p1 = (I - torch.bmm(K, H))
         p2 = torch.bmm(torch.bmm(p1, covariance), p1.permute(0, 2, 1))
         p3 = torch.bmm(torch.bmm(K, R), K.permute(0, 2, 1))
