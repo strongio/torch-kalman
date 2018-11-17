@@ -70,6 +70,7 @@ class TimeSeriesBatch:
         """
         Create a new Batch with a different Tensor, but all other attributes the same.
         """
+        assert tensor.shape == self.tensor.shape
         return self.__class__(tensor,
                               group_names=self.group_names,
                               start_datetimes=self.start_datetimes,
@@ -119,6 +120,9 @@ class TimeSeriesBatch:
             # get values, don't store trailing nans:
             values = tensor[g, :, :].detach().numpy()
             all_nan_per_row = np.min(np.isnan(values), axis=1)
+            if all_nan_per_row.all():
+                warn("Group {group_name} has only missing values.")
+                continue
             end_idx = np.max(np.where(~all_nan_per_row)[0]) + 1
             # convert to dataframe:
             df = pd.DataFrame(data=values[:end_idx, :], columns=self.measures)
@@ -135,8 +139,7 @@ class TimeSeriesBatch:
                        datetime_colname: str,
                        measure_colnames: Sequence[str],
                        dt_unit: str,
-                       missing: Optional[float] = None,
-                       ) -> 'TimeSeriesBatch':
+                       missing: Optional[float] = None) -> 'TimeSeriesBatch':
         assert isinstance(group_colname, str)
         assert isinstance(datetime_colname, str)
         assert isinstance(measure_colnames, (list, tuple))
