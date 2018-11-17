@@ -70,7 +70,8 @@ class TimeSeriesBatch:
         """
         Create a new Batch with a different Tensor, but all other attributes the same.
         """
-        assert tensor.shape == self.tensor.shape
+        assert tensor.shape[2] == len(self.measures)
+        assert tensor.shape[0] == len(self.group_names)
         return self.__class__(tensor,
                               group_names=self.group_names,
                               start_datetimes=self.start_datetimes,
@@ -121,7 +122,7 @@ class TimeSeriesBatch:
             values = tensor[g, :, :].detach().numpy()
             all_nan_per_row = np.min(np.isnan(values), axis=1)
             if all_nan_per_row.all():
-                warn("Group {group_name} has only missing values.")
+                warn(f"Group {group_name} has only missing values.")
                 continue
             end_idx = np.max(np.where(~all_nan_per_row)[0]) + 1
             # convert to dataframe:
