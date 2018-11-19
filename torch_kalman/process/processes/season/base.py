@@ -33,34 +33,32 @@ class DateAware(Process):
             if dt_unit in self.supported_dt_units:
                 self.start_datetime = np.datetime64(season_start, (dt_unit, 1))
             elif dt_unit == 'W':
-                # need to keep daily due to bug: https://github.com/numpy/numpy/issues/12404
                 self.start_datetime = np.datetime64(season_start, ('D', 1))
             else:
-                raise ValueError(f"dt_unit {dt_unit} not currently supported; please report this to the package maintainer.")
+                raise ValueError(f"dt_unit {dt_unit} not currently supported")
 
         super().__init__(id=id, state_elements=state_elements, transitions=transitions)
 
         # expected for_batch kwargs:
-        self.expected_batch_kwargs = ['time']
+        self.expected_batch_kwargs = []
         if self.start_datetime:
             self.expected_batch_kwargs.append('start_datetimes')
 
-    def get_delta(self, batch_size: int, time: int, start_datetimes: np.ndarray) -> np.ndarray:
+    def get_delta(self, num_groups: int, num_timesteps: int, start_datetimes: np.ndarray) -> np.ndarray:
         if start_datetimes is None:
             if self.start_datetime:
                 raise ValueError("`start_datetimes` argument required.")
-            delta = np.full(fill_value=time, shape=(batch_size,), dtype=int)
+            delta = np.broadcast_to(np.arange(0, num_timesteps), shape=(num_groups, num_timesteps))
         else:
             self.check_datetimes(start_datetimes)
             offset = (start_datetimes - self.start_datetime).view('int64')
             if self.dt_unit == 'W':
-                # special-case handling due to bug: https://github.com/numpy/numpy/issues/12404
                 offset = offset / 7
                 bad_freq = (np.mod(offset, 1) != 0)
                 if np.any(bad_freq):
                     raise ValueError(f"start_datetimes has dates with unexpected day-of-week:\n{start_datetimes[bad_freq]}")
 
-            delta = offset + time
+            delta = offset.reshape((num_groups, 1)) + np.arange(0, num_timesteps)
         return delta
 
     def check_datetimes(self, datetimes: np.ndarray) -> None:
@@ -68,10 +66,7 @@ class DateAware(Process):
         exp = self.start_datetime.dtype
         assert act == exp, f"Expected datetimes with dtype {exp}, got {act}."
 
-    def initial_state(self,
-                      batch_size: int,
-                      start_datetimes: Optional[np.ndarray] = None,
-                      time: Optional[int] = None) -> Tuple[Tensor, Tensor]:
+    def initial_state(self) -> Tuple[Tensor, Tensor]:
         raise NotImplementedError
 
     def parameters(self) -> Generator[Parameter, None, None]:

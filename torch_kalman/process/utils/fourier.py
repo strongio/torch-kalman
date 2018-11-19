@@ -1,24 +1,20 @@
 from math import pi
 
 import torch
-from numpy import prod
 from torch import Tensor
 
 
 def fourier_tensor(time: Tensor, seasonal_period: float, K: int) -> Tensor:
     """
-    Create a 3D tensor with terms for a fourier series. Used internally by seasonal processes.
+    Given an N-dimensional tensor, create an N+2 dimensional tensor with the 2nd to last dimension corresponding to the Ks
+    and the last dimension corresponding to sin/cosine.
     """
-    batch_size, *other_dims = time.shape
-    if prod(other_dims) > 1.0:
-        raise ValueError("`time` should be one-dimensional")
-    time = time.squeeze()
-
-    out = torch.empty((batch_size, K, 2))
+    out = torch.empty((*time.shape, K, 2))
+    base_index = tuple(slice(0, x) for x in time.shape)
     for idx in range(K):
         k = idx + 1
         for sincos in range(2):
             val = 2. * pi * k * time / seasonal_period
-            out[:, idx, sincos] = torch.sin(val) if sincos == 0 else torch.cos(val)
-
+            index = base_index + (idx, sincos)
+            out[index] = torch.sin(val) if sincos == 0 else torch.cos(val)
     return out

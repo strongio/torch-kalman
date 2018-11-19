@@ -65,10 +65,6 @@ class Design:
         self.measure_cholesky_log_diag = Parameter(data=torch.zeros(self.measure_size, device=self.device))
         self.measure_cholesky_off_diag = Parameter(data=torch.zeros(upper_tri, device=self.device))
 
-        # cache:
-        self.Q_cache, self.R_cache, self.F_cache, self.state_mat_idx_cache = None, None, None, None
-        self.reset_cache()
-
     def process_idx(self) -> Dict[str, list]:
         out = {}
         start = 0
@@ -103,28 +99,5 @@ class Design:
         yield self.measure_cholesky_log_diag
         yield self.measure_cholesky_off_diag
 
-    def for_batch(self, batch_size: int, time: int, **kwargs) -> 'DesignForBatch':
-        if time == 0:
-            self.reset_cache()
-        return DesignForBatch(design=self, batch_size=batch_size, time=time, **kwargs)
-
-    def reset_cache(self) -> None:
-        self.Q_cache = {}
-        self.R_cache = {}
-        self.F_cache = {}
-        self.state_mat_idx_cache = {}
-
-    def get_block_diag_initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:
-        means = torch.zeros((batch_size, self.state_size), device=self.device)
-        covs = torch.zeros((batch_size, self.state_size, self.state_size), device=self.device)
-
-        start = 0
-        for process_id, process in self.processes.items():
-            process_kwargs = {k: kwargs.get(k) for k in process.expected_batch_kwargs}
-            process_means, process_covs = process.initial_state(batch_size=batch_size, **process_kwargs)
-            end = start + process_means.shape[1]
-            means[:, start:end] = process_means
-            covs[np.ix_(range(batch_size), range(start, end), range(start, end))] = process_covs
-            start = end
-
-        return means, covs
+    def for_batch(self, input: Tensor, **kwargs) -> 'DesignForBatch':
+        return DesignForBatch(design=self, input=input, **kwargs)

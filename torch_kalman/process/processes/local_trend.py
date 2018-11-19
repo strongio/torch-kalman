@@ -57,9 +57,9 @@ class LocalTrend(Process):
         for param in itervalues_sorted_keys(self.transition_params):
             yield param
 
-    def initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:
-        means = self.initial_state_mean_params.expand(batch_size, -1)
-        covs = Covariance.from_std_and_corr(**self.initial_state_cov_params, device=self.device).expand(batch_size, -1, -1)
+    def initial_state(self, **kwargs) -> Tuple[Tensor, Tensor]:
+        means = self.initial_state_mean_params
+        covs = Covariance.from_std_and_corr(**self.initial_state_cov_params, device=self.device)
         return means, covs
 
     def covariance(self) -> Covariance:
@@ -82,8 +82,8 @@ class LocalTrend(Process):
         self.log_std_devs[:] = torch.tensor([-2.0, -9.0])
         self.corr_arctanh[:] = 0.
 
-    def for_batch(self, batch_size: int, **kwargs) -> 'ProcessForBatch':
-        for_batch = super().for_batch(batch_size=batch_size, **kwargs)
+    def for_batch(self, input: Tensor, **kwargs) -> 'ProcessForBatch':
+        for_batch = super().for_batch(input, **kwargs)
 
         for state_element, param in self.transition_params.items():
             # gradient too flat for <.5 (transitions cause state to vanish to zero), so helpful to shift starting point:

@@ -1,15 +1,14 @@
 from math import log
-from typing import Optional, Union, Generator, Tuple, Dict
+from typing import Optional, Union, Generator, Tuple
 
 import numpy as np
 import torch
+from IPython.core.debugger import Pdb
 
-from numpy.core.multiarray import ndarray
 from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.covariance import Covariance
-from torch_kalman.process.utils.season_transition_helper import SeasonTransitionHelper
 from torch_kalman.process.utils.fourier import fourier_tensor
 from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.processes.season.base import DateAware
@@ -46,9 +45,9 @@ class Season(DateAware):
         pad_n = len(str(seasonal_period))
         state_elements = ['measured'] + [str(i).rjust(pad_n, "0") for i in range(1, seasonal_period)]
 
-        # transitions for this type of process are complicated and shared across various types of seasonality
-        self.season_transitioner = SeasonTransitionHelper(state_elements=state_elements)
-        transitions = self.season_transitioner.initialize()
+        #
+        self.measured_name = self.state_elements[0]
+        transitions = self.initialize_transitions()
 
         # process-covariance:
         self.log_std_dev = Parameter(torch.randn(1) - 3.)
@@ -86,81 +85,84 @@ class Season(DateAware):
 
     def covariance(self) -> Covariance:
         state_size = len(self.state_elements)
-        cov = torch.empty(size=(state_size, state_size), device=self.device)
-        cov[:] = 0.
+        cov = torch.zeros(size=(state_size, state_size), device=self.device)
         cov[0, 0] = torch.pow(torch.exp(self.log_std_dev), 2)
         return cov
 
-    def for_batch(self,
-                  batch_size: int,
-                  time: Optional[int] = None,
-                  start_datetimes: Optional[ndarray] = None,
-                  cache: bool = True
-                  ) -> ProcessForBatch:
+    def for_batch(self, input, start_datetimes: Optional[np.ndarray] = None) -> ProcessForBatch:
+        for_batch = super().for_batch(input=input)
+        delta = self.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
 
-        delta = self.get_delta(batch_size=batch_size, time=time, start_datetimes=start_datetimes)
+        in_transition = torch.from_numpy((delta % self.season_duration) == (self.season_duration - 1))
+        to_next_state = in_transition.to(torch.float)
+        to_self = 1 - to_next_state
+        for i in range(1, len(self.state_elements)):
+            current = self.state_elements[i]
+            prev = self.state_elements[i - 1]
 
-        in_transition = (delta % self.season_duration) == (self.season_duration - 1)
+            # from state to next state
+            for_batch.set_transition(from_element=prev, to_element=current, values=to_next_state)
 
-        for_batch = super().for_batch(batch_size=batch_size)
-        assert not for_batch.batch_transitions, "Please report this error to the package maintainer."
-        if cache:
-            key = in_transition.tostring()
-            if key not in self.transition_cache.keys():
-                self.transition_cache[key] = self.make_batch_transitions(in_transition)
-            for_batch.batch_transitions = self.transition_cache[key]
-        else:
-            for_batch.batch_transitions = self.make_batch_transitions(in_transition)
+            # from state to measured:
+            if prev == self.measured_name:  # first requires special-case
+                to_measured = torch.where(in_transition, -1.0, 1.0)
+            else:
+                to_measured = -to_next_state
+            for_batch.set_transition(from_element=prev, to_element=self.measured_name, values=to_measured)
+
+            # from state to itself:
+            for_batch.set_transition(from_element=current, to_element=current, values=to_self)
 
         return for_batch
 
-    def make_batch_transitions(self, in_transition: np.ndarray) -> Dict[str, Dict[str, Tensor]]:
-        return self.season_transitioner.for_batch(for_batch=super().for_batch(batch_size=len(in_transition)),
-                                                  in_transition=in_transition)
-
-    def get_season(self, batch_size: int, time: int, start_datetimes: Optional[np.ndarray]) -> np.ndarray:
-        delta = self.get_delta(batch_size=batch_size, time=time, start_datetimes=start_datetimes)
-        return np.floor(delta / self.season_duration) % self.seasonal_period
-
-    def initial_state(self,
-                      batch_size: int,
-                      start_datetimes: Optional[ndarray] = None,
-                      time: Optional[int] = None) -> Tuple[Tensor, Tensor]:
-
-        # mean:
-        mean = self.initialize_state_mean()
-
-        season_shift = self.get_season(batch_size=batch_size, time=0, start_datetimes=start_datetimes)
-
-        means = []
-        for i, shift in enumerate(season_shift.astype(int)):
-            if i == 0:
-                means.append(mean)
-            else:
-                means.append(torch.cat([mean[-shift:], mean[:-shift]]))
-        means = torch.stack(means)
-
-        # cov:
-        covs = torch.eye(len(self.state_elements), device=self.device).expand(batch_size, -1, -1)
-        covs[:, 0, 0] = torch.pow(torch.exp(self.initial_state_log_std_dev), 2)
-
-        return means, covs
-
-    def initialize_state_mean(self):
+    def initial_state(self):
         if self.K:
             # fourier series:
             season = torch.arange(float(self.seasonal_period), device=self.device)
             fourier_mat = fourier_tensor(time=season, seasonal_period=self.seasonal_period, K=self.K)
-            state = torch.sum(fourier_mat * self.initial_state_mean_params.expand_as(fourier_mat), dim=(1, 2))
+            init_mean = torch.sum(fourier_mat * self.initial_state_mean_params.expand_as(fourier_mat), dim=(1, 2))
             # adjust for df:
-            state = state - state[1:].mean()
-            state[1:] = state[1:] - state[0] / self.seasonal_period
-            state[0] = -torch.sum(state[1:])
+            init_mean = init_mean - init_mean[1:].mean()
+            init_mean[1:] = init_mean[1:] - init_mean[0] / self.seasonal_period
+            init_mean[0] = -torch.sum(init_mean[1:])
         else:
-            state = Tensor(size=(self.seasonal_period,), device=self.device)
-            state[1:] = self.initial_state_mean_params
-            state[0] = -torch.sum(state[1:])
-        return state
+            init_mean = Tensor(size=(self.seasonal_period,), device=self.device)
+            init_mean[1:] = self.initial_state_mean_params
+            init_mean[0] = -torch.sum(init_mean[1:])
+
+        init_cov = torch.eye(len(self.state_elements), device=self.device)
+        init_cov[0, 0] = torch.pow(torch.exp(self.initial_state_log_std_dev), 2)
+
+        return init_mean, init_cov
+
+    def initial_state_for_batch(self, num_groups: int, start_datetimes: Optional[np.ndarray] = None):
+        delta = self.get_delta(num_groups, 1, start_datetimes=start_datetimes).squeeze(1)
+
+        init_mean, init_cov = self.initial_state()
+        season_shift = (np.floor(delta / self.season_duration) % self.seasonal_period).astype('int')
+
+        Pdb().set_trace()
+        means = torch.stack([torch.cat([init_mean[-shift:], init_mean[:-shift]]) if i > 0 else init_mean
+                             for i, shift in enumerate(season_shift)])
+
+        covs = init_cov.expand(num_groups, -1, -1)
+
+        return means, covs
+
+    def initialize_transitions(self):
+        seasonal_period = len(self.state_elements)
+
+        # transitions are placeholder, filled in w/batch
+        transitions = dict()
+        for i in range(seasonal_period):
+            current = self.state_elements[i]
+            transitions[current] = {current: None}
+            if i > 0:
+                prev = self.state_elements[i - 1]
+                transitions[current][prev] = None
+                transitions[self.measured_name][prev] = None
+
+        return transitions
 
     def set_to_simulation_mode(self):
         super().set_to_simulation_mode()

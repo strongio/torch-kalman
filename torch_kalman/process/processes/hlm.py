@@ -29,16 +29,16 @@ class HLM(Process):
 
         # expected kwargs
         model_mat_kwarg_name = model_mat_kwarg_name or id  # use the id if they didn't specify
-        self.expected_batch_kwargs = ('time', model_mat_kwarg_name)
+        self.expected_batch_kwargs = (model_mat_kwarg_name,)
 
     # noinspection PyMethodOverriding
     def add_measure(self, measure: str) -> None:
         for state_element in self.state_elements:
             self.state_elements_to_measures[(measure, state_element)] = None
 
-    def initial_state(self, batch_size: int, **kwargs) -> Tuple[Tensor, Tensor]:
-        means = self.initial_state_mean_params.expand(batch_size, -1)
-        covs = Covariance.from_log_cholesky(**self.initial_state_cov_params, device=self.device).expand(batch_size, -1, -1)
+    def initial_state(self, **kwargs) -> Tuple[Tensor, Tensor]:
+        means = self.initial_state_mean_params
+        covs = Covariance.from_log_cholesky(**self.initial_state_cov_params, device=self.device)
         return means, covs
 
     def parameters(self) -> Generator[Parameter, None, None]:
@@ -52,22 +52,20 @@ class HLM(Process):
         out[:, :] = 0.
         return out
 
-    def for_batch(self, batch_size: int, time=None, **kwargs) -> ProcessForBatch:
+    def for_batch(self, input: Tensor, **kwargs) -> ProcessForBatch:
         assert self.state_elements_to_measures, f"HLM process '{self.id}' has no measures."
 
-        re_model_mat = kwargs.get(self.expected_batch_kwargs[1], None)
-        if torch.isnan(re_model_mat).any():
-            raise ValueError(f"nans not allowed in `{self.expected_batch_kwargs[1]}` tensor")
+        re_model_mat = kwargs.get(self.expected_batch_kwargs[0], None)
 
         if re_model_mat is None:
-            raise ValueError(f"Required argument `{self.expected_batch_kwargs[1]}` not found.")
-        else:
-            re_model_mat = re_model_mat[:, time, :]
+            raise ValueError(f"Required argument `{self.expected_batch_kwargs[0]}` not found.")
+        elif torch.isnan(re_model_mat).any():
+            raise ValueError(f"nans not allowed in `{self.expected_batch_kwargs[0]}` tensor")
 
-        for_batch = super().for_batch(batch_size=batch_size)
+        for_batch = super().for_batch(input)
 
         for i, covariate in enumerate(self.state_elements):
             for measure in self.measures():
-                for_batch.add_measure(measure=measure, state_element=covariate, values=re_model_mat[:, i])
+                for_batch.add_measure(measure=measure, state_element=covariate, values=re_model_mat[:, :, i])
 
         return for_batch

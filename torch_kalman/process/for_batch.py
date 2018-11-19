@@ -5,11 +5,16 @@ from torch import Tensor
 
 
 class ProcessForBatch:
-    def __init__(self, process: 'Process', batch_size: int):
-        self.batch_size = batch_size
-        self.process = process
+    def __init__(self,
+                 process: 'Process',
+                 num_groups: int,
+                 num_timesteps: int,
+                 initial_state: Tuple[Tensor, Tensor]):
 
-        # a bit over-protective: batch process gets these, but they're copies so no one will accidentally modify originals
+        self.process = process
+        self.num_groups = num_groups
+        self.num_timesteps = num_timesteps
+
         self.id = str(self.process.id)
         self.state_elements = list(self.process.state_elements)
         self.state_element_idx = dict(self.process.state_element_idx)
@@ -18,31 +23,12 @@ class ProcessForBatch:
         self.batch_transitions = {}
         self.batch_ses_to_measures = {}
 
-    def F(self) -> Tensor:
-        leftover_transitions = self.process.transitions_to_fill.copy()
-        # fill in template:
-        F = self.process.F_base.expand(self.batch_size, -1, -1)
-        for to_el, from_els in self.batch_transitions.items():
-            for from_el, values in from_els.items():
-                if (to_el, from_el) in leftover_transitions:
-                    leftover_transitions.remove((to_el, from_el))
-                r, c = self.process.state_element_idx[to_el], self.process.state_element_idx[from_el]
-                F[:, r, c] = values
-
-        if leftover_transitions:
-            raise ValueError(f"Following transitions need to filled in the batch:\n{leftover_transitions}")
-
-        return F
-
-    def Q(self) -> Tensor:
-        # generate covariance:
-        cov = self.process.covariance()
-        # expand for batch:
-        return cov.expand(self.batch_size, -1, -1)
+        # initial state:
+        self.initial_state = initial_state
 
     def set_transition(self, from_element: str, to_element: str, values: Tensor) -> None:
-        length = len(values)
-        assert length == 1 or length == self.batch_size
+        if values.numel() != 1:
+            assert list(values.shape) == [self.num_groups, self.num_timesteps]
         assert from_element in self.process.state_elements
         assert to_element in self.process.state_elements
 
@@ -67,8 +53,8 @@ class ProcessForBatch:
                     state_element: str,
                     values: Tensor):
 
-        length = len(values)
-        assert length == 1 or length == self.batch_size
+        if values.numel() != 1:
+            assert list(values.shape) == [self.num_groups, self.num_timesteps]
         assert state_element in self.process.state_elements, f"'{state_element}' is not in this process.'"
 
         key = (measure, state_element)
@@ -82,8 +68,19 @@ class ProcessForBatch:
         self.batch_ses_to_measures[key] = values
 
     def state_elements_to_measures(self) -> Dict[Tuple[str, str], Union[Tensor, float]]:
-        # don't need to be as careful as w/self.transitions, since dicts of values, not dicts of dicts
         return {**self.process.state_elements_to_measures, **self.batch_ses_to_measures}
 
-    def has_batch_transitions(self):
-        return self.process.has_batch_transitions()
+    def F(self) -> Tensor:
+        F = torch.zeros(self.num_groups, self.num_timesteps, len(self.state_elements), len(self.state_elements))
+        for to_el, from_els in {**self.process.transitions, **self.batch_transitions}.items():
+            for from_el, values in from_els.items():
+                r, c = self.process.state_element_idx[to_el], self.process.state_element_idx[from_el]
+                if values is None:
+                    raise ValueError(f"The value for transition from '{from_el}' to '{to_el}' is None, which means that this"
+                                     f" needs to be set on a per-batch basis using the `set_transition` method.")
+                F[:, :, r, c] = values
+        return F
+
+    def Q(self) -> Tensor:
+        cov = self.process.covariance()
+        return cov.view(1, 1, *cov.shape).expand(self.num_groups, self.num_timesteps, -1, -1)
