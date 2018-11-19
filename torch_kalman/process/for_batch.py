@@ -2,7 +2,7 @@ from typing import Union, Tuple, Sequence, Dict
 
 from torch import Tensor
 
-from torch_kalman.design.design_matrix import TensorOverTime
+from torch_kalman.design_matrix import TensorOverTime
 
 
 class ProcessForBatch:

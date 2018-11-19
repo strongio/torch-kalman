@@ -5,7 +5,7 @@ import torch
 from torch import Tensor
 
 from torch_kalman.covariance import Covariance
-from torch_kalman.design.design_matrix import DesignMatOverTime
+from torch_kalman.design_matrix import DesignMatOverTime
 
 
 class DesignForBatch:
