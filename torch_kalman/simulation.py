@@ -16,26 +16,31 @@ class Simulation:
         return Gaussian
 
     def simulate(self, num_groups: int, num_timesteps: int, **kwargs):
-        state = self.family(*self.design.get_block_diag_initial_state(batch_size=num_groups, **kwargs))
+        design_for_batch = self.design.for_batch(input=torch.empty(num_groups, num_timesteps), **kwargs)
 
         iterator = range(num_timesteps)
         if kwargs.get('progress', None):
             from tqdm import tqdm
             iterator = tqdm(iterator)
 
+        state = self.family(*design_for_batch.get_block_diag_initial_state(num_groups=num_groups))
         states = []
         for t in iterator:
-            design_for_batch = self.design.for_batch(batch_size=num_groups, time=t, **kwargs)
-            # move sim forward one step:
-            state = state.predict(F=design_for_batch.F(), Q=design_for_batch.Q())
+            if t > 0:
+                # move sim forward one step:
+                F = design_for_batch.F[:, t - 1, :, :]
+                Q = design_for_batch.Q[:, t - 1, :, :]
+                state = state.predict(F=F, Q=Q)
 
             # realize the state:
             state.means = state.to_distribution().sample()
             # virtually zero, but avoid numerical issues for those states w/o process covariance:
-            state.covs[:] = torch.eye(self.design.state_size) * 1e-10
+            state.covs[:] = torch.eye(self.design.state_size) * 1e-9
 
             # measure the state:
-            state.compute_measurement(H=design_for_batch.H(), R=design_for_batch.R())
+            H = design_for_batch.H[:, t, :, :]
+            R = design_for_batch.R[:, t, :, :]
+            state.compute_measurement(H=H, R=R)
 
             states.append(state)
 
