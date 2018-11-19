@@ -71,23 +71,24 @@ class KalmanFilter(torch.nn.Module):
         else:
             state_prediction = initial_state
 
+        iterator = range(num_timesteps)
+        if kwargs.get('progress', None):
+            from tqdm import tqdm
+            iterator = tqdm(iterator)
+
         # generate one-step-ahead predictions:
         state_predictions = []
-        for t in range(num_timesteps):
+        for t in iterator:
             if t > 0:
                 # take state-prediction of previous t (now t-1), correct it according to what was actually measured at at t-1
                 state_belief = state_prediction.update(obs=input[:, t - 1, :])
 
                 # predict the state for t, from information from t-1
                 # F at t-1 is transition *from* t-1 *to* t
-                F = design_for_batch.F[:, t - 1, :, :]
-                Q = design_for_batch.Q[:, t - 1, :, :]
-                state_prediction = state_belief.predict(F=F, Q=Q)
+                state_prediction = state_belief.predict(F=design_for_batch.F[t - 1], Q=design_for_batch.Q[t - 1])
 
             # compute how state-prediction at t translates into measurement-prediction at t
-            H = design_for_batch.H[:, t, :, :]
-            R = design_for_batch.R[:, t, :, :]
-            state_prediction.compute_measurement(H=H, R=R)
+            state_prediction.compute_measurement(H=design_for_batch.H[t], R=design_for_batch.R[t])
 
             # append to output:
             state_predictions.append(state_prediction)

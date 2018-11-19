@@ -12,7 +12,7 @@ from torch_kalman.process.processes.season.base import DateAware
 
 import numpy as np
 
-from torch_kalman.utils import itervalues_sorted_keys
+from torch_kalman.utils import itervalues_sorted_keys, split_flat
 from torch_kalman.process.utils.fourier import fourier_tensor
 
 
@@ -102,6 +102,7 @@ class FourierSeason(DateAware):
         for measure in self.measures():
             for state_element in self.state_elements:
                 r, c = (int(x) for x in state_element.split(sep=","))
-                for_batch.add_measure(measure=measure, state_element=state_element, values=fourier_tens[:, :, r, c])
+                values = split_flat(fourier_tens[:, :, r, c], dim=1)
+                for_batch.add_measure(measure=measure, state_element=state_element, values=values)
 
         return for_batch

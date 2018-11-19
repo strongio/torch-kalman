@@ -28,9 +28,7 @@ class Simulation:
         for t in iterator:
             if t > 0:
                 # move sim forward one step:
-                F = design_for_batch.F[:, t - 1, :, :]
-                Q = design_for_batch.Q[:, t - 1, :, :]
-                state = state.predict(F=F, Q=Q)
+                state = state.predict(F=design_for_batch.F[t - 1], Q=design_for_batch.Q[t - 1])
 
             # realize the state:
             state.means = state.to_distribution().sample()
@@ -38,9 +36,7 @@ class Simulation:
             state.covs[:] = torch.eye(self.design.state_size) * 1e-9
 
             # measure the state:
-            H = design_for_batch.H[:, t, :, :]
-            R = design_for_batch.R[:, t, :, :]
-            state.compute_measurement(H=H, R=R)
+            state.compute_measurement(H=design_for_batch.H[t], R=design_for_batch.R[t])
 
             states.append(state)
 

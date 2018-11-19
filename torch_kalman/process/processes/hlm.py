@@ -7,7 +7,7 @@ from torch.nn import Parameter
 from torch_kalman.covariance import Covariance
 from torch_kalman.process import Process
 from torch_kalman.process.for_batch import ProcessForBatch
-from torch_kalman.utils import itervalues_sorted_keys
+from torch_kalman.utils import itervalues_sorted_keys, split_flat
 
 
 class HLM(Process):
@@ -66,6 +66,7 @@ class HLM(Process):
 
         for i, covariate in enumerate(self.state_elements):
             for measure in self.measures():
-                for_batch.add_measure(measure=measure, state_element=covariate, values=re_model_mat[:, :, i])
+                values = split_flat(re_model_mat[:, :, i], dim=1)
+                for_batch.add_measure(measure=measure, state_element=covariate, values=values)
 
         return for_batch

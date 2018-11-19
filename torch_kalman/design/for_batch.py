@@ -1,12 +1,11 @@
 from collections import OrderedDict
-from typing import Tuple
+from typing import Tuple, Sequence, Dict
 
 import torch
 from torch import Tensor
 
 from torch_kalman.covariance import Covariance
-
-import numpy as np
+from torch_kalman.design.design_matrix import DesignMatOverTime
 
 
 class DesignForBatch:
@@ -37,17 +36,64 @@ class DesignForBatch:
 
         # process indices:
         self._process_idx = None
+        self.process_start_idx = {process_id: idx.start for process_id, idx in self.process_idx.items()}
         # measure indices:
         self.measure_idx = {measure_id: i for i, measure_id in enumerate(self.measures)}
 
         # design-matrices:
-        self._H = None
-        self._F = None
-        self._R = None
-        self._Q = None
+        self._transitions = None
+        self.F = DesignMatOverTime.from_indices_and_vals(self.transitions,
+                                                         size=(self.num_groups, self.state_size, self.state_size),
+                                                         device=self.device)
+
+        self._state_measurements = None
+        self.H = DesignMatOverTime.from_indices_and_vals(self.state_measurements,
+                                                         size=(self.num_groups, self.measure_size, self.state_size),
+                                                         device=self.device)
+
+        self._block_diag_covariance = None
+        self.Q = DesignMatOverTime.from_indices_and_vals(self.block_diag_covariance,
+                                                         size=(self.num_groups, self.state_size, self.state_size),
+                                                         device=self.device)
+
+        R = Covariance.from_log_cholesky(**self.measure_cov_params, device=self.device)
+        self.R = DesignMatOverTime(base=R.view(1, *R.shape).expand(self.num_groups, -1, -1))
 
     @property
-    def process_idx(self):
+    def block_diag_covariance(self) -> Sequence[Tuple]:
+        if self._block_diag_covariance is None:
+            block_diag_covariance = []
+            for process_id, process in self.processes.items():
+                process_slice = self.process_idx[process_id]
+                idx = (process_slice, process_slice)
+                block_diag_covariance.append((idx, process.process.covariance()))
+            self._block_diag_covariance = block_diag_covariance
+        return self._block_diag_covariance
+
+    @property
+    def transitions(self) -> Dict:
+        if self._transitions is None:
+            transitions = {}
+            for process_id, process in self.processes.items():
+                o = self.process_start_idx[process_id]
+                for (r, c), values in process.transitions.items():
+                    transitions[r + o, c + o] = values
+            self._transitions = transitions
+        return self._transitions
+
+    @property
+    def state_measurements(self) -> Dict:
+        if self._state_measurements is None:
+            state_measurements = {}
+            for process_id, process in self.processes.items():
+                o = self.process_start_idx[process_id]
+                for (measure_id, c), values in process.state_measurements.items():
+                    state_measurements[self.measure_idx[measure_id], c + o] = values
+            self._state_measurements = state_measurements
+        return self._state_measurements
+
+    @property
+    def process_idx(self) -> Dict[str, slice]:
         if self._process_idx is None:
             process_idx = {}
             last_end = 0
@@ -57,54 +103,6 @@ class DesignForBatch:
                 last_end = this_end
             self._process_idx = process_idx
         return self._process_idx
-
-    @property
-    def H(self) -> Tensor:
-        if self._H is None:
-            H = torch.zeros((self.num_groups, self.num_timesteps, self.measure_size, self.state_size), device=self.device)
-
-            process_start_idx = {process_id: idx.start for process_id, idx in self.process_idx.items()}
-
-            for process_id, process in self.processes.items():
-                for (measure_id, state_element), measure_vals in process.state_elements_to_measures().items():
-                    if measure_vals is None:
-                        raise ValueError(f"The measurement value for measure '{measure_id}' of process '{process_id}' is "
-                                         f"None, which means that this needs to be set on a per-batch basis using the "
-                                         f"`add_measure` method.")
-                    r = self.measure_idx[measure_id]
-                    c = process_start_idx[process_id] + process.state_element_idx[state_element]
-                    H[:, :, r, c] = measure_vals
-            self._H = H
-        return self._H
-
-    @property
-    def F(self) -> Tensor:
-        if self._F is None:
-            F = torch.zeros((self.num_groups, self.num_timesteps, self.state_size, self.state_size), device=self.device)
-
-            for process_id, process in self.processes.items():
-                F[:, :, self.process_idx[process_id], self.process_idx[process_id]] = process.F()
-
-            self._F = F
-        return self._F
-
-    @property
-    def Q(self) -> Tensor:
-        if self._Q is None:
-            Q = torch.zeros((self.num_groups, self.num_timesteps, self.state_size, self.state_size), device=self.device)
-
-            for process_id, process in self.processes.items():
-                Q[:, :, self.process_idx[process_id], self.process_idx[process_id]] = process.Q()
-
-            self._Q = Q
-        return self._Q
-
-    @property
-    def R(self) -> Tensor:
-        if self._R is None:
-            R = Covariance.from_log_cholesky(**self.measure_cov_params, device=self.device)
-            self._R = R.view(1, 1, *R.shape).expand(self.num_groups, self.num_timesteps, -1, -1)
-        return self._R
 
     def get_block_diag_initial_state(self, num_groups: int) -> Tuple[Tensor, Tensor]:
         means = torch.zeros((num_groups, self.state_size), device=self.device)

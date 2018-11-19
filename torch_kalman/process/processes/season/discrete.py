@@ -3,6 +3,7 @@ from typing import Optional, Union, Generator, Dict, Sequence
 
 import numpy as np
 import torch
+from IPython.core.debugger import Pdb
 
 from torch import Tensor
 from torch.nn import Parameter
@@ -11,6 +12,7 @@ from torch_kalman.covariance import Covariance
 from torch_kalman.process.utils.fourier import fourier_tensor
 from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.processes.season.base import DateAware
+from torch_kalman.utils import split_flat
 
 
 class Season(DateAware):
@@ -96,24 +98,30 @@ class Season(DateAware):
         delta = self.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
 
         in_transition = (delta % self.season_duration) == (self.season_duration - 1)
-        to_next_state = torch.from_numpy(in_transition.astype('float32'))
-        to_self = 1 - to_next_state
+
+        transitions = {}
+        transitions['to_next_state'] = torch.from_numpy(in_transition.astype('float32'))
+        transitions['to_self'] = 1 - transitions['to_next_state']
+        transitions['to_measured'] = -transitions['to_next_state']
+        transitions['from_measured_to_measured'] = 2 * (transitions['to_self'] - .5)
+        transitions = {k: split_flat(t, dim=1) for k, t in transitions.items()}
+
         for i in range(1, len(self.state_elements)):
             current = self.state_elements[i]
             prev = self.state_elements[i - 1]
 
             # from state to next state
-            for_batch.set_transition(from_element=prev, to_element=current, values=to_next_state)
+            for_batch.set_transition(from_element=prev, to_element=current, values=transitions['to_next_state'])
 
             # from state to measured:
             if prev == self.measured_name:  # measured requires special-case
-                to_measured = 2 * (to_self - .5)
+                to_measured = transitions['from_measured_to_measured']
             else:
-                to_measured = -to_next_state
+                to_measured = transitions['to_measured']
             for_batch.set_transition(from_element=prev, to_element=self.measured_name, values=to_measured)
 
             # from state to itself:
-            for_batch.set_transition(from_element=current, to_element=current, values=to_self)
+            for_batch.set_transition(from_element=current, to_element=current, values=transitions['to_self'])
 
         return for_batch
 

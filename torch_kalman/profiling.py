@@ -1,5 +1,4 @@
 import torch
-from tqdm import tqdm
 
 from torch_kalman.design import Design
 from torch_kalman.kalman_filter import KalmanFilter
@@ -28,19 +27,28 @@ def simulate(*args, **kwargs):
     return sim.simulate(*args, **kwargs, progress=True)
 
 
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-init_gpu = torch.randn((100, 100), device='cuda')
-print(init_gpu[0, 0])
+if torch.cuda.is_available():
+    os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+    init_gpu = torch.randn((100, 100), device='cuda')
+    print(init_gpu[0, 0])
+else:
+    print("CUDA not available.")
 
 
 @profile
 def profile_train_iter(device, num_groups=100, num_timesteps=24 * 31):
+    print('init KF')
     kf = KalmanFilter(**design_kwargs(), device=device)
+    print('simulate')
     tens = simulate(num_groups=num_groups, num_timesteps=num_timesteps)
     tens = tens.to(device)
+    print('forward')
     pred = kf(tens, progress=True)
+    print('measurement_distribution')
     pred.measurement_distribution
+    print('log-prob')
     loss = -pred.log_prob(tens).mean()
+    print('backward')
     loss.backward()
 
 # @profile

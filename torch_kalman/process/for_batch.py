@@ -1,7 +1,8 @@
-from typing import Optional, Dict, Union, Tuple
+from typing import Union, Tuple, Sequence, Dict
 
-import torch
 from torch import Tensor
+
+from torch_kalman.design.design_matrix import TensorOverTime
 
 
 class ProcessForBatch:
@@ -26,9 +27,46 @@ class ProcessForBatch:
         # initial state:
         self.initial_state = initial_state
 
-    def set_transition(self, from_element: str, to_element: str, values: Tensor) -> None:
-        if values.numel() != 1:
-            assert list(values.shape) == [self.num_groups, self.num_timesteps]
+        # transitions:
+        self._transitions = None
+
+        # state-element-measurements:
+        self._state_measurements = None
+
+    @property
+    def transitions(self) -> Dict:
+        if self._transitions is None:
+            transitions = {}
+            for to_el, from_els in {**self.process.transitions, **self.batch_transitions}.items():
+                for from_el, values in from_els.items():
+                    r, c = self.process.state_element_idx[to_el], self.process.state_element_idx[from_el]
+                    if values is None:
+                        raise ValueError(f"The value for transition from '{from_el}' to '{to_el}' is None, which means that "
+                                         f"this needs to be set on a per-batch basis using the `set_transition` method.")
+                    transitions[(r, c)] = values
+            self._transitions = transitions
+        return self._transitions
+
+    @property
+    def state_measurements(self) -> Dict:
+        if self._state_measurements is None:
+            ses_to_measures = {**self.process.state_elements_to_measures, **self.batch_ses_to_measures}
+
+            state_measurements = {}
+            for (measure_id, state_element), values in ses_to_measures.items():
+                c = self.state_element_idx[state_element]
+                if values is None:
+                    raise ValueError(f"The measurement value for measure '{measure_id}' of process '{self.id}' is "
+                                     f"None, which means that this needs to be set on a per-batch basis using the "
+                                     f"`add_measure` method.")
+                state_measurements[(measure_id, c)] = values
+
+            self._state_measurements = state_measurements
+        return self._state_measurements
+
+    def set_transition(self, from_element: str, to_element: str, values: Union[Sequence, Tensor]) -> None:
+        self._transitions = None
+
         assert from_element in self.process.state_elements
         assert to_element in self.process.state_elements
 
@@ -46,15 +84,17 @@ class ProcessForBatch:
             raise ValueError(f"The transition from '{from_element}' to '{to_element}' was already set for this batch,"
                              f" so can't set it again.")
 
-        self.batch_transitions[to_element][from_element] = values
+        # TODO: don't need tensor-over-time if values is a Tensor w/o requires_grad
+        self.batch_transitions[to_element][from_element] = TensorOverTime(values,
+                                                                          num_groups=self.num_groups,
+                                                                          num_timesteps=self.num_timesteps)
 
     def add_measure(self,
                     measure: str,
                     state_element: str,
-                    values: Tensor):
+                    values: Union[Sequence, Tensor]) -> None:
+        self._state_measurements = None
 
-        if values.numel() != 1:
-            assert list(values.shape) == [self.num_groups, self.num_timesteps]
         assert state_element in self.process.state_elements, f"'{state_element}' is not in this process.'"
 
         key = (measure, state_element)
@@ -65,22 +105,7 @@ class ProcessForBatch:
         if key in self.batch_ses_to_measures.keys():
             raise ValueError(f"The (measure, state_element) '{key}' was already added to this batch-process.")
 
-        self.batch_ses_to_measures[key] = values
-
-    def state_elements_to_measures(self) -> Dict[Tuple[str, str], Union[Tensor, float]]:
-        return {**self.process.state_elements_to_measures, **self.batch_ses_to_measures}
-
-    def F(self) -> Tensor:
-        F = torch.zeros(self.num_groups, self.num_timesteps, len(self.state_elements), len(self.state_elements))
-        for to_el, from_els in {**self.process.transitions, **self.batch_transitions}.items():
-            for from_el, values in from_els.items():
-                r, c = self.process.state_element_idx[to_el], self.process.state_element_idx[from_el]
-                if values is None:
-                    raise ValueError(f"The value for transition from '{from_el}' to '{to_el}' is None, which means that this"
-                                     f" needs to be set on a per-batch basis using the `set_transition` method.")
-                F[:, :, r, c] = values
-        return F
-
-    def Q(self) -> Tensor:
-        cov = self.process.covariance()
-        return cov.view(1, 1, *cov.shape).expand(self.num_groups, self.num_timesteps, -1, -1)
+        # TODO: don't need tensor-over-time if values is a Tensor w/o requires_grad
+        self.batch_ses_to_measures[key] = TensorOverTime(values,
+                                                         num_groups=self.num_groups,
+                                                         num_timesteps=self.num_timesteps)
