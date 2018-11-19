@@ -95,8 +95,8 @@ class Season(DateAware):
         for_batch = super().for_batch(input=input, start_datetimes=start_datetimes)
         delta = self.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
 
-        in_transition = torch.from_numpy((delta % self.season_duration) == (self.season_duration - 1))
-        to_next_state = in_transition.to(torch.float)
+        in_transition = (delta % self.season_duration) == (self.season_duration - 1)
+        to_next_state = torch.from_numpy(in_transition.astype('float32'))
         to_self = 1 - to_next_state
         for i in range(1, len(self.state_elements)):
             current = self.state_elements[i]
@@ -106,8 +106,8 @@ class Season(DateAware):
             for_batch.set_transition(from_element=prev, to_element=current, values=to_next_state)
 
             # from state to measured:
-            if prev == self.measured_name:  # first requires special-case
-                to_measured = torch.where(in_transition, -1.0, 1.0)
+            if prev == self.measured_name:  # measured requires special-case
+                to_measured = 2 * (to_self - .5)
             else:
                 to_measured = -to_next_state
             for_batch.set_transition(from_element=prev, to_element=self.measured_name, values=to_measured)
