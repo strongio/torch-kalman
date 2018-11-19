@@ -102,7 +102,7 @@ class Process:
                                num_timesteps=num_timesteps,
                                initial_state=self.initial_state_for_batch(num_groups=num_groups, **kwargs))
 
-    def initial_state_for_batch(self, num_groups: int, **kwargs):
+    def initial_state_for_batch(self, num_groups: int, **kwargs) -> Tuple[Tensor, Tensor]:
         init_mean, init_cov = self.initial_state()
         init_means = init_mean.view(1, *init_mean.shape).expand(num_groups, *init_mean.shape)
         init_covs = init_cov.view(1, *init_cov.shape).expand(num_groups, *init_cov.shape)

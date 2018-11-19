@@ -1,9 +1,8 @@
 from math import log
-from typing import Optional, Union, Generator, Tuple
+from typing import Optional, Union, Generator, Dict, Sequence
 
 import numpy as np
 import torch
-from IPython.core.debugger import Pdb
 
 from torch import Tensor
 from torch.nn import Parameter
@@ -46,8 +45,7 @@ class Season(DateAware):
         state_elements = ['measured'] + [str(i).rjust(pad_n, "0") for i in range(1, seasonal_period)]
 
         #
-        self.measured_name = self.state_elements[0]
-        transitions = self.initialize_transitions()
+        transitions = self.initialize_transitions(state_elements=state_elements)
 
         # process-covariance:
         self.log_std_dev = Parameter(torch.randn(1) - 3.)
@@ -72,6 +70,10 @@ class Season(DateAware):
         # writing transition-matrix is slow, no need to do it repeatedly:
         self.transition_cache = {}
 
+    @property
+    def measured_name(self) -> str:
+        return self.state_elements[0]
+
     def add_measure(self,
                     measure: str,
                     state_element: str = 'measured',
@@ -90,7 +92,7 @@ class Season(DateAware):
         return cov
 
     def for_batch(self, input, start_datetimes: Optional[np.ndarray] = None) -> ProcessForBatch:
-        for_batch = super().for_batch(input=input)
+        for_batch = super().for_batch(input=input, start_datetimes=start_datetimes)
         delta = self.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
 
         in_transition = torch.from_numpy((delta % self.season_duration) == (self.season_duration - 1))
@@ -141,26 +143,25 @@ class Season(DateAware):
         init_mean, init_cov = self.initial_state()
         season_shift = (np.floor(delta / self.season_duration) % self.seasonal_period).astype('int')
 
-        Pdb().set_trace()
-        means = torch.stack([torch.cat([init_mean[-shift:], init_mean[:-shift]]) if i > 0 else init_mean
-                             for i, shift in enumerate(season_shift)])
+        means = [torch.cat([init_mean[-shift:], init_mean[:-shift]]) for shift in season_shift]
+        means = torch.stack(means)
 
         covs = init_cov.expand(num_groups, -1, -1)
 
         return means, covs
 
-    def initialize_transitions(self):
-        seasonal_period = len(self.state_elements)
-
+    @staticmethod
+    def initialize_transitions(state_elements: Sequence[str]) -> Dict[str, Dict[str, None]]:
+        measured_name = state_elements[0]
         # transitions are placeholder, filled in w/batch
-        transitions = dict()
-        for i in range(seasonal_period):
-            current = self.state_elements[i]
+        transitions = {}
+        for i in range(len(state_elements)):
+            current = state_elements[i]
             transitions[current] = {current: None}
             if i > 0:
-                prev = self.state_elements[i - 1]
+                prev = state_elements[i - 1]
                 transitions[current][prev] = None
-                transitions[self.measured_name][prev] = None
+                transitions[measured_name][prev] = None
 
         return transitions
 
