@@ -23,6 +23,10 @@ class StateBeliefOverTime:
         self._measurement_distribution = None
         self.design = design
 
+        means, covs = zip(*[(state_belief.means, state_belief.covs) for state_belief in self.state_beliefs])
+        self.means = torch.stack(means).permute(1, 0, 2)
+        self.covs = torch.stack(covs).permute(1, 0, 2, 3)
+
     def log_prob(self, measurements: Tensor) -> Tensor:
         isnan = torch.isnan(measurements)
         # remove nans first, required due to bug: https://github.com/pytorch/pytorch/issues/9688
@@ -84,10 +88,7 @@ class StateBeliefOverTime:
     @property
     def state_distribution(self) -> Distribution:
         if self._state_distribution is None:
-            means, covs = zip(*[(state_belief.means, state_belief.covs) for state_belief in self.state_beliefs])
-            means = torch.stack(means).permute(1, 0, 2)
-            covs = torch.stack(covs).permute(1, 0, 2, 3)
-            self._state_distribution = self.distribution(loc=means, covariance_matrix=covs)
+            self._state_distribution = self.distribution(loc=self.means, covariance_matrix=self.covs)
         return self._state_distribution
 
     @property
