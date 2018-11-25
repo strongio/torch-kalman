@@ -30,7 +30,7 @@ class HLM(Process):
             if isinstance(allow_process_variance, bool):
                 allow_process_variance = covariates
             self.process_cov_idx = [covariates.index(cov) for cov in allow_process_variance]
-            self.process_log_std_dev = Parameter(torch.randn(ns))
+            self.process_log_std_dev = Parameter(torch.randn(len(self.process_cov_idx)))
         else:
             self.process_cov_idx = []
             self.process_log_std_dev = None
@@ -64,8 +64,7 @@ class HLM(Process):
         cov = torch.zeros(size=(ns, ns), device=self.device)
         if self.process_log_std_dev is not None:
             cov[(self.process_cov_idx, self.process_cov_idx)] = torch.pow(torch.exp(self.process_log_std_dev), 2)
-        else:
-            return cov
+        return cov
 
     def for_batch(self, input: Tensor, **kwargs) -> ProcessForBatch:
         assert self.state_elements_to_measures, f"HLM process '{self.id}' has no measures."
