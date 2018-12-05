@@ -6,8 +6,7 @@ from torch.nn import ParameterList
 
 from torch_kalman.design import Design
 from torch_kalman.process import Process
-from torch_kalman.state_belief import StateBelief, Gaussian
-from torch_kalman.state_belief.over_time import StateBeliefOverTime
+from torch_kalman.state_belief import StateBelief, Gaussian, GaussianOverTime
 
 
 class KalmanFilter(torch.nn.Module):
@@ -47,7 +46,7 @@ class KalmanFilter(torch.nn.Module):
                 input: Tensor,
                 initial_state: Union[StateBelief, None] = None,
                 **kwargs
-                ) -> StateBeliefOverTime:
+                ) -> GaussianOverTime:
         """
         :param input: The multivariate time-series to be fit by the kalman-filter. A Tensor where the first dimension
         represents the groups, the second dimension represents the time-points, and the third dimension represents the
@@ -63,7 +62,7 @@ class KalmanFilter(torch.nn.Module):
             raise ValueError(f"This KalmanFilter has {self.measure_size} measurement-dimensions; but the input shape is "
                              f"{(num_groups, num_timesteps, num_measures)} (last dim should == measure-size).")
 
-        design_for_batch = self.design.for_batch(input=input, **kwargs)
+        design_for_batch = self.design.for_batch(num_groups=num_groups, num_timesteps=num_timesteps, **kwargs)
 
         # initial state of the system:
         if initial_state is None:
@@ -94,3 +93,11 @@ class KalmanFilter(torch.nn.Module):
             state_predictions.append(state_prediction)
 
         return self.family.concatenate_over_time(state_beliefs=state_predictions, design=self.design)
+
+    def simulate(self,
+                 initial_state: StateBelief,
+                 num_timesteps: int,
+                 **kwargs) -> GaussianOverTime:
+
+        design_for_batch = self.design.for_batch(num_groups=initial_state.batch_size, num_timesteps=num_timesteps, **kwargs)
+        return initial_state.simulate(design_for_batch=design_for_batch, **kwargs)

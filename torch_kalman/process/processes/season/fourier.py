@@ -86,9 +86,12 @@ class FourierSeason(DateAware):
         for state_element in self.state_elements:
             super().add_measure(measure=measure, state_element=state_element, value=None)
 
-    def for_batch(self, input: Tensor, start_datetimes: Optional[np.ndarray] = None) -> ProcessForBatch:
+    def for_batch(self,
+                  num_groups: int,
+                  num_timesteps: int,
+                  start_datetimes: Optional[np.ndarray] = None) -> ProcessForBatch:
         # super:
-        for_batch = super().for_batch(input)
+        for_batch = super().for_batch(num_groups, num_timesteps)
 
         # determine the delta (integer time accounting for different groups having different start datetimes)
         delta = self.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)

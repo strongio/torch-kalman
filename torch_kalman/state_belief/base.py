@@ -4,9 +4,9 @@ import torch
 from torch import Tensor
 from torch.distributions import Distribution
 
-
 # noinspection PyPep8Naming
 from torch_kalman.design import Design
+from torch_kalman.design.for_batch import DesignForBatch
 
 
 class StateBelief:
@@ -69,8 +69,40 @@ class StateBelief:
         raise NotImplementedError
 
     @classmethod
-    def concatenate_over_time(cls, state_beliefs: Sequence['StateBelief'], design: Optional[Design] = None) -> Distribution:
+    def concatenate_over_time(cls,
+                              state_beliefs: Sequence['StateBelief'],
+                              design: Optional[Design] = None) -> 'StateBeliefOverTime':
         raise NotImplementedError()
 
     def to_distribution(self) -> Distribution:
         raise NotImplementedError
+
+    def simulate(self,
+                 design_for_batch: DesignForBatch,
+                 **kwargs) -> 'StateBeliefOverTime':
+
+        iterator = range(design_for_batch.num_timesteps)
+        if kwargs.get('progress', None):
+            from tqdm import tqdm
+            iterator = tqdm(iterator)
+
+        state = self
+        states = []
+        for t in iterator:
+            if t > 0:
+                # move sim forward one step:
+                state = state.predict(F=design_for_batch.F[t - 1], Q=design_for_batch.Q[t - 1])
+
+            # realize the state:
+            state.means = state.to_distribution().sample()
+            # the realized state has no variance (b/c it's realized), so uncertainty will only come in on the predict step
+            # from process-covariance. but *actually* no variance causes numerical issues for those states w/o process
+            # covariance, so we add a small amount of variance
+            state.covs[:] = torch.eye(design_for_batch.state_size) * 1e-9
+
+            # measure the state:
+            state.compute_measurement(H=design_for_batch.H[t], R=design_for_batch.R[t])
+
+            states.append(state)
+
+        return self.__class__.concatenate_over_time(state_beliefs=states).measurement_distribution.sample()

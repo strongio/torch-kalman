@@ -93,8 +93,11 @@ class Season(DateAware):
         cov[0, 0] = torch.pow(torch.exp(self.log_std_dev), 2)
         return cov
 
-    def for_batch(self, input, start_datetimes: Optional[np.ndarray] = None) -> ProcessForBatch:
-        for_batch = super().for_batch(input=input, start_datetimes=start_datetimes)
+    def for_batch(self,
+                  num_groups: int,
+                  num_timesteps: int,
+                  start_datetimes: Optional[np.ndarray] = None) -> ProcessForBatch:
+        for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps, start_datetimes=start_datetimes)
         delta = self.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
 
         in_transition = (delta % self.season_duration) == (self.season_duration - 1)

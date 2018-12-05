@@ -99,5 +99,5 @@ class Design:
         yield self.measure_cholesky_log_diag
         yield self.measure_cholesky_off_diag
 
-    def for_batch(self, input: Tensor, **kwargs) -> 'DesignForBatch':
-        return DesignForBatch(design=self, input=input, **kwargs)
+    def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'DesignForBatch':
+        return DesignForBatch(design=self, num_groups=num_groups, num_timesteps=num_timesteps, **kwargs)

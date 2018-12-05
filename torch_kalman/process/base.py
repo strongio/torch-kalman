@@ -94,9 +94,8 @@ class Process:
             self._state_element_idx = {el: i for i, el in enumerate(self.state_elements)}
         return self._state_element_idx
 
-    def for_batch(self, input: Tensor, **kwargs) -> 'ProcessForBatch':
+    def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'ProcessForBatch':
         assert self.measures(), f"The process {self.id} has no measures."
-        num_groups, num_timesteps, *_ = input.shape
         return ProcessForBatch(process=self,
                                num_groups=num_groups,
                                num_timesteps=num_timesteps,

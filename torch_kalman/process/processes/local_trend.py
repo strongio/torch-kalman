@@ -82,8 +82,8 @@ class LocalTrend(Process):
         self.log_std_devs[:] = torch.tensor([-2.0, -9.0])
         self.corr_arctanh[:] = 0.
 
-    def for_batch(self, input: Tensor, **kwargs) -> 'ProcessForBatch':
-        for_batch = super().for_batch(input, **kwargs)
+    def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'ProcessForBatch':
+        for_batch = super().for_batch(num_groups, num_timesteps, **kwargs)
 
         for state_element, param in self.transition_params.items():
             # gradient too flat for <.5 (transitions cause state to vanish to zero), so helpful to shift starting point:

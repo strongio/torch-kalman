@@ -66,7 +66,7 @@ class HLM(Process):
             cov[(self.process_cov_idx, self.process_cov_idx)] = torch.pow(torch.exp(self.process_log_std_dev), 2)
         return cov
 
-    def for_batch(self, input: Tensor, **kwargs) -> ProcessForBatch:
+    def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> ProcessForBatch:
         assert self.state_elements_to_measures, f"HLM process '{self.id}' has no measures."
 
         re_model_mat = kwargs.get(self.expected_batch_kwargs[0], None)
@@ -76,7 +76,7 @@ class HLM(Process):
         elif torch.isnan(re_model_mat).any():
             raise ValueError(f"nans not allowed in `{self.expected_batch_kwargs[0]}` tensor")
 
-        for_batch = super().for_batch(input)
+        for_batch = super().for_batch(num_groups, num_timesteps)
 
         for i, covariate in enumerate(self.state_elements):
             for measure in self.measures():

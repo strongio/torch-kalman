@@ -11,7 +11,8 @@ from torch_kalman.design_matrix import DesignMatOverTime
 class DesignForBatch:
     def __init__(self,
                  design: 'Design',
-                 input: Tensor,
+                 num_groups: int,
+                 num_timesteps: int,
                  **kwargs):
 
         self.device = design.device
@@ -20,7 +21,9 @@ class DesignForBatch:
         self.processes = OrderedDict()
         for process_name, process in design.processes.items():
             process_kwargs = {k: kwargs.get(k, None) for k in process.expected_batch_kwargs}
-            self.processes[process_name] = process.for_batch(input=input, **process_kwargs)
+            self.processes[process_name] = process.for_batch(num_groups=num_groups,
+                                                             num_timesteps=num_timesteps,
+                                                             **process_kwargs)
 
         # measures:
         self.measures = design.measures
@@ -30,9 +33,10 @@ class DesignForBatch:
                                    'off_diag': design.measure_cholesky_off_diag}
 
         # size:
+        self.num_groups = num_groups
+        self.num_timesteps = num_timesteps
         self.state_size = design.state_size
         self.measure_size = design.measure_size
-        self.num_groups, self.num_timesteps, *_ = input.shape
 
         # process indices:
         self._process_idx = None
