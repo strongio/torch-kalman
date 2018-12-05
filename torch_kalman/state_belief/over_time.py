@@ -1,5 +1,4 @@
 from collections import defaultdict
-from pdb import Pdb
 from typing import Sequence, Optional, Dict, Tuple
 
 import torch
@@ -8,7 +7,6 @@ from torch import Tensor
 from torch.distributions import Distribution
 
 from torch_kalman.design import Design
-import numpy as np
 
 
 class StateBeliefOverTime:
@@ -23,9 +21,24 @@ class StateBeliefOverTime:
         self._measurement_distribution = None
         self.design = design
 
+        self._means = None
+        self._covs = None
+
+    def _means_covs(self):
         means, covs = zip(*[(state_belief.means, state_belief.covs) for state_belief in self.state_beliefs])
-        self.means = torch.stack(means).permute(1, 0, 2)
-        self.covs = torch.stack(covs).permute(1, 0, 2, 3)
+        self._means = torch.stack(means).permute(1, 0, 2)
+        self._covs = torch.stack(covs).permute(1, 0, 2, 3)
+
+    @property
+    def means(self):
+        if self._means is None:
+            self._means_covs()
+        return self._means
+
+    def covs(self):
+        if self._covs is None:
+            self._means_covs()
+        return self._covs
 
     def log_prob(self, measurements: Tensor) -> Tensor:
         isnan = torch.isnan(measurements)
