@@ -1,12 +1,14 @@
-from typing import Union, Iterable, Optional
+from typing import Union, Iterable, Optional, TypeVar
 
 import torch
+from numpy import ndarray
 from torch import Tensor
 from torch.nn import ParameterList
 
 from torch_kalman.design import Design
 from torch_kalman.process import Process
-from torch_kalman.state_belief import StateBelief, Gaussian, GaussianOverTime
+from torch_kalman.state_belief import StateBelief, Gaussian
+from torch_kalman.state_belief.over_time import StateBeliefOverTime
 
 
 class KalmanFilter(torch.nn.Module):
@@ -28,7 +30,7 @@ class KalmanFilter(torch.nn.Module):
         self.to(device=self.design.device)
 
     @property
-    def family(self):
+    def family(self) -> TypeVar('Gaussian'):
         if self._family is None:
             self._family = Gaussian
         return self._family
@@ -44,9 +46,8 @@ class KalmanFilter(torch.nn.Module):
     # noinspection PyShadowingBuiltins
     def forward(self,
                 input: Tensor,
-                initial_state: Union[StateBelief, None] = None,
-                **kwargs
-                ) -> GaussianOverTime:
+                initial_state: Optional[StateBelief] = None,
+                **kwargs) -> StateBeliefOverTime:
         """
         :param input: The multivariate time-series to be fit by the kalman-filter. A Tensor where the first dimension
         represents the groups, the second dimension represents the time-points, and the third dimension represents the
@@ -56,6 +57,9 @@ class KalmanFilter(torch.nn.Module):
         :param kwargs: Other kwargs that will be passed to the `design_for_batch` method.
         :return: A StateBeliefOverTime consisting of one-step-ahead predictions.
         """
+
+        kwargs = kwargs.copy()
+        kwargs['input'] = input
 
         num_groups, num_timesteps, num_measures = input.shape
         if num_measures != self.measure_size:
@@ -92,12 +96,71 @@ class KalmanFilter(torch.nn.Module):
             # append to output:
             state_predictions.append(state_prediction)
 
-        return self.family.concatenate_over_time(state_beliefs=state_predictions, design=self.design)
+        return self.family.concatenate_over_time(state_beliefs=state_predictions,
+                                                 design=self.design,
+                                                 start_datetimes=kwargs.get('start_datetimes', None))
+
+    def smooth(self, states: StateBeliefOverTime):
+        raise NotImplementedError
 
     def simulate(self,
-                 initial_state: StateBelief,
-                 num_timesteps: int,
-                 **kwargs) -> GaussianOverTime:
+                 states: StateBeliefOverTime,
+                 horizon: int,
+                 from_datetimes: Optional[ndarray] = None,
+                 **kwargs) -> StateBeliefOverTime:
 
-        design_for_batch = self.design.for_batch(num_groups=initial_state.batch_size, num_timesteps=num_timesteps, **kwargs)
+        assert horizon > 0
+
+        kwargs = kwargs.copy()
+
+        # forecast-from time:
+        if from_datetimes is None:
+            initial_state = states.last_prediction
+        else:
+            initial_state = states.prediction_by_dt(datetimes=from_datetimes)
+            kwargs['start_datetimes'] = from_datetimes
+
+        design_for_batch = self.design.for_batch(num_groups=initial_state.batch_size, num_timesteps=horizon, **kwargs)
+
         return initial_state.simulate(design_for_batch=design_for_batch, **kwargs)
+
+    def forecast(self,
+                 states: StateBeliefOverTime,
+                 horizon: int,
+                 forecast_from_datetimes: Optional[ndarray] = None,
+                 **kwargs) -> StateBeliefOverTime:
+
+        assert horizon > 0
+
+        kwargs = kwargs.copy()
+
+        # forecast-from time:
+        if forecast_from_datetimes is None:
+            state_prediction = states.last_prediction
+        else:
+            state_prediction = states.prediction_by_dt(datetimes=forecast_from_datetimes)
+            kwargs['start_datetimes'] = forecast_from_datetimes
+
+        design_for_batch = self.design.for_batch(num_groups=state_prediction.batch_size, num_timesteps=horizon, **kwargs)
+
+        iterator = range(horizon)
+        if kwargs.get('progress', None):
+            from tqdm import tqdm
+            iterator = tqdm(iterator)
+
+        forecasts = []
+        for t in iterator:
+            if t > 0:
+                # predict the state for t, from information from t-1
+                # F at t-1 is transition *from* t-1 *to* t
+                state_prediction = state_prediction.predict(F=design_for_batch.F[t - 1], Q=design_for_batch.Q[t - 1])
+
+            # compute how state-prediction at t translates into measurement-prediction at t
+            state_prediction.compute_measurement(H=design_for_batch.H[t], R=design_for_batch.R[t])
+
+            # append to output:
+            forecasts.append(state_prediction)
+
+        return self.family.concatenate_over_time(state_beliefs=forecasts,
+                                                 design=self.design,
+                                                 start_datetimes=forecast_from_datetimes)

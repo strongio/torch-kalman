@@ -1,5 +1,4 @@
-from typing import Union, Tuple, Sequence, Optional
-from warnings import warn
+from typing import Union, Tuple, Sequence, Optional, TypeVar
 
 import torch
 from torch import Tensor
@@ -19,23 +18,7 @@ class Gaussian(StateBelief):
         Ft = F.permute(0, 2, 1)
         means = torch.bmm(F, self.means[:, :, None]).squeeze(2)
         covs = torch.bmm(torch.bmm(F, self.covs), Ft) + Q
-        return self.__class__(means=means, covs=covs)
-
-    def kalman_gain(self, system_covariance, method='solve'):
-        Ht = self.H.permute(0, 2, 1)
-        covs_measured = torch.bmm(self.covs, Ht)
-        if method == 'solve':
-            A = system_covariance.permute(0, 2, 1)
-            B = covs_measured.permute(0, 2, 1)
-            Kt, _ = torch.gesv(B, A)
-            K = Kt.permute(0, 2, 1)
-        elif method == 'inverse':
-            Sinv = torch.cat([torch.inverse(system_covariance[i, :, :]).unsqueeze(0)
-                              for i in range(len(system_covariance))], 0)
-            K = torch.bmm(covs_measured, Sinv)
-        else:
-            raise ValueError(f"Unrecognized method '{method}'.")
-        return K
+        return self.__class__(means=means, covs=covs, last_measured=self.last_measured + 1)
 
     def update(self, obs: Tensor) -> StateBelief:
         assert isinstance(obs, Tensor)
@@ -50,8 +33,8 @@ class Gaussian(StateBelief):
         # handle kalman-update for groups w/missing values:
         isnan = (obs != obs)
         anynan_by_group = (torch.sum(isnan, 1) > 0)
-        nan_groups = anynan_by_group.nonzero().squeeze(-1)
-        for i in nan_groups:
+        nan_group_idx = anynan_by_group.nonzero().squeeze(-1)
+        for i in nan_group_idx:
             group_isnan = isnan[i]
             if group_isnan.all():  # if all nan, just don't perform update
                 continue
@@ -66,7 +49,10 @@ class Gaussian(StateBelief):
             means_new[nonan_g] = self.means[nonan_g] + torch.bmm(K[nonan_g], residuals[nonan_g].unsqueeze(2)).squeeze(2)
             covs_new[nonan_g] = self.covariance_update(self.covs[nonan_g], K[nonan_g], self.H[nonan_g], self.R[nonan_g])
 
-        return self.__class__(means=means_new, covs=covs_new)
+        any_measured_group_idx = (torch.sum(~isnan, 1) > 0).nonzero().squeeze(-1)
+        last_measured = self.last_measured.clone()
+        last_measured[any_measured_group_idx] = 0
+        return self.__class__(means=means_new, covs=covs_new, last_measured=last_measured)
 
     def partial_update(self,
                        valid_idx: Union[Tensor, Sequence[int], np.ndarray],
@@ -85,6 +71,22 @@ class Gaussian(StateBelief):
         cov = self.covariance_update(covariance=cov[None, :, :], K=K[None, :, :], H=H[None, :, :], R=R[None, :, :])[0]
         return mean, cov
 
+    def kalman_gain(self, system_covariance, method='solve'):
+        Ht = self.H.permute(0, 2, 1)
+        covs_measured = torch.bmm(self.covs, Ht)
+        if method == 'solve':
+            A = system_covariance.permute(0, 2, 1)
+            B = covs_measured.permute(0, 2, 1)
+            Kt, _ = torch.gesv(B, A)
+            K = Kt.permute(0, 2, 1)
+        elif method == 'inverse':
+            Sinv = torch.cat([torch.inverse(system_covariance[i, :, :]).unsqueeze(0)
+                              for i in range(len(system_covariance))], 0)
+            K = torch.bmm(covs_measured, Sinv)
+        else:
+            raise ValueError(f"Unrecognized method '{method}'.")
+        return K
+
     @staticmethod
     def covariance_update(covariance: Tensor, K: Tensor, H: Tensor, R: Tensor) -> Tensor:
         """
@@ -100,8 +102,9 @@ class Gaussian(StateBelief):
     @classmethod
     def concatenate_over_time(cls,
                               state_beliefs: Sequence['Gaussian'],
-                              design: Optional[Design] = None) -> 'GaussianOverTime':
-        return GaussianOverTime(state_beliefs=state_beliefs, design=design)
+                              design: Design,
+                              start_datetimes: Optional[np.ndarray] = None) -> 'GaussianOverTime':
+        return GaussianOverTime(state_beliefs=state_beliefs, design=design, start_datetimes=start_datetimes)
 
     def to_distribution(self) -> Distribution:
         return MultivariateNormal(loc=self.means, covariance_matrix=self.covs)
@@ -109,7 +112,7 @@ class Gaussian(StateBelief):
 
 class GaussianOverTime(StateBeliefOverTime):
     @property
-    def distribution(self):
+    def distribution(self) -> TypeVar('Distribution'):
         return MultivariateNormal
 
 
