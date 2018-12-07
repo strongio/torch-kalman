@@ -12,6 +12,7 @@ from torch_kalman.process.processes.season.base import DateAware
 
 import numpy as np
 
+from torch_kalman.process.utils.transition import Transition
 from torch_kalman.utils import itervalues_sorted_keys, split_flat
 from torch_kalman.process.utils.fourier import fourier_tensor
 
@@ -27,6 +28,7 @@ class FourierSeason(DateAware):
                  seasonal_period: Union[int, float],
                  K: int,
                  allow_process_variance: bool = False,
+                 decay: Union[bool, Tuple[float, float]] = False,
                  **kwargs):
         # season structure:
         self.seasonal_period = seasonal_period
@@ -42,6 +44,12 @@ class FourierSeason(DateAware):
         self.cov_cholesky_log_diag = Parameter(data=torch.zeros(ns)) if allow_process_variance else None
         self.cov_cholesky_off_diag = Parameter(data=torch.zeros(int(ns * (ns - 1) / 2))) if allow_process_variance else None
 
+        if decay:
+            assert not isinstance(decay, bool), "decay should be floats of bounds (or False for no decay)"
+            self.decay = Transition(*decay)
+        else:
+            self.decay = None
+
         #
         state_elements = []
         transitions = {}
@@ -49,7 +57,7 @@ class FourierSeason(DateAware):
             for c in range(2):
                 element_name = f"{r},{c}"
                 state_elements.append(element_name)
-                transitions[element_name] = {element_name: 1.0}
+                transitions[element_name] = {element_name: None if decay else 1.0}
 
         super().__init__(id=id, state_elements=state_elements, transitions=transitions, **kwargs)
 
@@ -69,6 +77,8 @@ class FourierSeason(DateAware):
             yield self.cov_cholesky_off_diag
         for param in itervalues_sorted_keys(self.initial_state_cov_params):
             yield param
+        if self.decay is not None:
+            yield self.decay.parameter
 
     def covariance(self) -> Covariance:
         if self.cov_cholesky_log_diag is not None:
@@ -104,6 +114,11 @@ class FourierSeason(DateAware):
 
         for measure in self.measures():
             for state_element in self.state_elements:
+                # transition:
+                if self.decay is not None:
+                    for_batch.set_transition(from_element=state_element, to_element=state_element, values=self.decay.value)
+
+                # measure:
                 r, c = (int(x) for x in state_element.split(sep=","))
                 values = split_flat(fourier_tens[:, :, r, c], dim=1)
                 for_batch.add_measure(measure=measure, state_element=state_element, values=values)
