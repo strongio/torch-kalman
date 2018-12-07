@@ -8,27 +8,41 @@ from torch.nn import Parameter
 from torch_kalman.covariance import Covariance
 from torch_kalman.process import Process
 from torch_kalman.process.for_batch import ProcessForBatch
+from torch_kalman.process.utils.transition import Transition
 from torch_kalman.utils import itervalues_sorted_keys
 
 
 class LocalTrend(Process):
 
-    def __init__(self, id: str, decay_velocity: bool = True, decay_position: bool = False):
+    def __init__(self,
+                 id: str,
+                 decay_velocity: Union[bool, Tuple[float, float]] = (.95, 1.00),
+                 decay_position: Union[bool, Tuple[float, float]] = False):
         # state-elements:
         state_elements = ['position', 'velocity']
 
         # transitions:
         transitions = {'position': {'position': None, 'velocity': 1.0},
                        'velocity': {'velocity': None}}
-        if not decay_position:
+
+        self.decayed_transitions = {}
+        if decay_position:
+            assert not isinstance(decay_position, bool), "decay_position should be floats of bounds (or False for no decay)"
+            self.decayed_transitions['position'] = Transition(*decay_position)
+            transitions['position']['position'] = None
+        else:
             transitions['position']['position'] = 1.0
-        if not decay_velocity:
+
+        if decay_velocity:
+            assert not isinstance(decay_velocity, bool), "decay_velocity should be floats of bounds (or False for no decay)"
+            self.decayed_transitions['velocity'] = Transition(*decay_velocity)
+            transitions['velocity']['velocity'] = None
+        else:
             transitions['velocity']['velocity'] = 1.0
-        self._transition_params = None
 
         # process-covariance:
         ns = len(state_elements)
-        self.log_std_devs = Parameter(torch.randn(2) - 3.0)
+        self.log_std_devs = Parameter(torch.randn(ns) - 3.0)
         self.corr_arctanh = Parameter(torch.randn(1))
 
         # initial state:
@@ -39,28 +53,19 @@ class LocalTrend(Process):
         # super:
         super().__init__(id=id, state_elements=state_elements, transitions=transitions)
 
-    @property
-    def transition_params(self):
-        if self._transition_params is None:
-            self._transition_params = {}
-            for state_element in ('position', 'velocity'):
-                if self.transitions[state_element][state_element] is None:
-                    self._transition_params[state_element] = Parameter(torch.randn(1) / 5.0)
-        return self._transition_params
-
     def parameters(self) -> Generator[Parameter, None, None]:
         yield self.log_std_devs
         yield self.corr_arctanh
         yield self.initial_state_mean_params
         for param in itervalues_sorted_keys(self.initial_state_cov_params):
             yield param
-        for param in itervalues_sorted_keys(self.transition_params):
-            yield param
+        for transition in itervalues_sorted_keys(self.decayed_transitions):
+            yield transition.parameter
 
     def initial_state(self, **kwargs) -> Tuple[Tensor, Tensor]:
-        means = self.initial_state_mean_params
-        covs = Covariance.from_std_and_corr(**self.initial_state_cov_params, device=self.device)
-        return means, covs
+        mean = self.initial_state_mean_params
+        cov = Covariance.from_std_and_corr(**self.initial_state_cov_params, device=self.device)
+        return mean, cov
 
     def covariance(self) -> Covariance:
         return Covariance.from_std_and_corr(log_std_devs=self.log_std_devs,
@@ -85,9 +90,7 @@ class LocalTrend(Process):
     def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'ProcessForBatch':
         for_batch = super().for_batch(num_groups, num_timesteps, **kwargs)
 
-        for state_element, param in self.transition_params.items():
-            # gradient too flat for <.5 (transitions cause state to vanish to zero), so helpful to shift starting point:
-            transition_value = torch.sigmoid(3. + .75 * param)
-            for_batch.set_transition(from_element=state_element, to_element=state_element, values=transition_value)
+        for state_element, transition in self.decayed_transitions.items():
+            for_batch.set_transition(from_element=state_element, to_element=state_element, values=transition.value)
 
         return for_batch

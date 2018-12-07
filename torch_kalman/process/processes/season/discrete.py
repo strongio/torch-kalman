@@ -1,9 +1,8 @@
 from math import log
-from typing import Optional, Union, Generator, Dict, Sequence
+from typing import Optional, Union, Generator, Dict, Sequence, Tuple
 
 import numpy as np
 import torch
-from IPython.core.debugger import Pdb
 
 from torch import Tensor
 from torch.nn import Parameter
@@ -12,6 +11,7 @@ from torch_kalman.covariance import Covariance
 from torch_kalman.process.utils.fourier import fourier_tensor
 from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.processes.season.base import DateAware
+from torch_kalman.process.utils.transition import Transition
 from torch_kalman.utils import split_flat
 
 
@@ -20,6 +20,7 @@ class Season(DateAware):
                  id: str,
                  seasonal_period: int,
                  season_duration: int = 1,
+                 decay: Union[bool, Tuple[float, float]] = False,
                  use_fourier_init_param: Optional[int] = None,
                  *args, **kwargs):
         """
@@ -31,8 +32,9 @@ class Season(DateAware):
         :param season_start: A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
         starts, which is useful to specify if season boundaries are actually meaningful, and is important to specify if
         different groups in your dataset start on different dates.
-        :param dt_unit: A string that is understood as a datetime-unit by numpy.
-        See: https://docs.scipy.org/doc/numpy-1.15.0/reference/arrays.datetime.html#arrays-dtypes-dateunits
+        :param decay: Analogous to dampening a trend -- the state will revert to zero as we get further from the last
+        observation. This can be useful if two processes are capturing the same seasonal pattern: one can be more flexible,
+        but with decay have a tendency to revert to zero, while the other is less variable but extrapolates into the future.
         :param use_fourier_init_param: This determines how the *initial* state-means are parameterized. For longer seasons,
         we may not want a free parameter for each individual season. If an integer, then uses a fourier-series for the
         parameterization, with that integer's (*2) degrees of freedom. If False, then there are seasonal_period - 1 unique
@@ -63,6 +65,12 @@ class Season(DateAware):
 
         self.initial_state_log_std_dev = Parameter(torch.randn(1) - 3.)
 
+        if decay:
+            assert not isinstance(decay, bool), "decay should be floats of bounds (or False for no decay)"
+            self.decay = Transition(*decay)
+        else:
+            self.decay = None
+
         # super:
         super().__init__(id=id,
                          state_elements=state_elements,
@@ -86,6 +94,8 @@ class Season(DateAware):
         yield self.log_std_dev
         yield self.initial_state_log_std_dev
         yield self.initial_state_mean_params
+        if self.decay is not None:
+            yield self.decay.parameter
 
     def covariance(self) -> Covariance:
         state_size = len(self.state_elements)
@@ -106,21 +116,24 @@ class Season(DateAware):
         transitions['to_next_state'] = torch.from_numpy(in_transition.astype('float32'))
         transitions['to_self'] = 1 - transitions['to_next_state']
         transitions['to_measured'] = -transitions['to_next_state']
-        transitions['from_measured_to_measured'] = 2 * (transitions['to_self'] - .5)
-        transitions = {k: split_flat(t, dim=1) for k, t in transitions.items()}
+        transitions['from_measured_to_measured'] = torch.from_numpy(np.where(in_transition, -1., 1.).astype('float32'))
+        for k in transitions.keys():
+            transitions[k] = split_flat(transitions[k], dim=1)
+            if self.decay is not None:
+                transitions[k] = [x * self.decay.value for x in transitions[k]]
 
+        # this is convoluted, but the idea is to manipulate the transitions so that we use one less degree of freedom than
+        # the number of seasons, by having the 'measured' state be equal to -sum(all others)
         for i in range(1, len(self.state_elements)):
             current = self.state_elements[i]
             prev = self.state_elements[i - 1]
 
-            # from state to next state
-            for_batch.set_transition(from_element=prev, to_element=current, values=transitions['to_next_state'])
-
-            # from state to measured:
             if prev == self.measured_name:  # measured requires special-case
                 to_measured = transitions['from_measured_to_measured']
             else:
                 to_measured = transitions['to_measured']
+
+            for_batch.set_transition(from_element=prev, to_element=current, values=transitions['to_next_state'])
             for_batch.set_transition(from_element=prev, to_element=self.measured_name, values=to_measured)
 
             # from state to itself:
