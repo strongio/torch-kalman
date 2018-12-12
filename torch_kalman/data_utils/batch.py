@@ -114,10 +114,20 @@ class TimeSeriesBatch:
         else:
             assert tensor.shape == self.tensor.shape, f"The `tensor` has wrong shape, expected `{self.tensor.shape}`."
 
-        datetimes = self.datetimes()
+        return self.tensor_to_dataframe(tensor=tensor, datetimes=self.datetimes(), group_names=self.group_names,
+                                        group_colname=group_colname, datetime_colname=datetime_colname,
+                                        measures=self.measures)
 
+    @classmethod
+    def tensor_to_dataframe(cls,
+                            tensor: Tensor,
+                            datetimes: np.ndarray,
+                            group_names: Sequence,
+                            group_colname: str,
+                            datetime_colname: str,
+                            measures: Sequence[str]) -> pd.DataFrame:
         dfs = []
-        for g, group_name in enumerate(self.group_names):
+        for g, group_name in enumerate(group_names):
             # get values, don't store trailing nans:
             values = tensor[g, :, :].detach().numpy()
             all_nan_per_row = np.min(np.isnan(values), axis=1)
@@ -126,7 +136,7 @@ class TimeSeriesBatch:
                 continue
             end_idx = np.max(np.where(~all_nan_per_row)[0]) + 1
             # convert to dataframe:
-            df = pd.DataFrame(data=values[:end_idx, :], columns=self.measures)
+            df = pd.DataFrame(data=values[:end_idx, :], columns=measures)
             df[group_colname] = group_name
             df[datetime_colname] = datetimes[g, 0:len(df.index)]
             dfs.append(df)

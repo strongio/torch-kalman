@@ -9,8 +9,6 @@ from torch.distributions import Distribution
 from torch_kalman.design import Design
 from torch_kalman.design.for_batch import DesignForBatch
 
-import numpy as np
-
 
 class StateBelief:
     def __init__(self, means: Tensor, covs: Tensor, last_measured: Optional[Tensor] = None):
