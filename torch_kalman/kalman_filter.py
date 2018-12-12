@@ -107,7 +107,7 @@ class KalmanFilter(torch.nn.Module):
                  states: StateBeliefOverTime,
                  horizon: int,
                  from_datetimes: Optional[ndarray] = None,
-                 **kwargs) -> StateBeliefOverTime:
+                 **kwargs) -> Tensor:
 
         assert horizon > 0
 
@@ -117,7 +117,7 @@ class KalmanFilter(torch.nn.Module):
         if from_datetimes is None:
             initial_state = states.last_prediction
         else:
-            initial_state = states.prediction_by_dt(datetimes=from_datetimes)
+            initial_state = states.slice_by_dt(datetimes=from_datetimes)
             kwargs['start_datetimes'] = from_datetimes
 
         design_for_batch = self.design.for_batch(num_groups=initial_state.batch_size, num_timesteps=horizon, **kwargs)
@@ -138,7 +138,7 @@ class KalmanFilter(torch.nn.Module):
         if forecast_from_datetimes is None:
             state_prediction = states.last_prediction
         else:
-            state_prediction = states.prediction_by_dt(datetimes=forecast_from_datetimes)
+            state_prediction = states.slice_by_dt(datetimes=forecast_from_datetimes)
             kwargs['start_datetimes'] = forecast_from_datetimes
 
         design_for_batch = self.design.for_batch(num_groups=state_prediction.batch_size, num_timesteps=horizon, **kwargs)

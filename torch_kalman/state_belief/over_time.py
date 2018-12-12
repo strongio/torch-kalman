@@ -168,9 +168,9 @@ class StateBeliefOverTime:
             self._last_prediction = self.family(means=torch.stack(means), covs=torch.stack(covs))
         return self._last_prediction
 
-    def prediction_by_dt(self, datetimes: np.ndarray) -> StateBelief:
+    def slice_by_dt(self, datetimes: np.ndarray) -> StateBelief:
         if self.start_datetimes is None:
-            raise ValueError("Cannot use `forecast_from_datetimes` if `start_datetimes` was not passed originally.")
+            raise ValueError("Cannot use `slice_by_dt` if `start_datetimes` was not passed originally.")
         act = datetimes.dtype
         exp = self.start_datetimes.dtype
         assert act == exp, f"Expected datetimes with dtype {exp}, got {act}."

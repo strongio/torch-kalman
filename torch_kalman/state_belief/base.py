@@ -90,7 +90,7 @@ class StateBelief:
     def simulate(self,
                  design_for_batch: DesignForBatch,
                  ntry_diag_incr: int = 100,
-                 **kwargs) -> 'StateBeliefOverTime':
+                 **kwargs) -> Tensor:
 
         iterator = range(design_for_batch.num_timesteps)
         if kwargs.get('progress', None):
