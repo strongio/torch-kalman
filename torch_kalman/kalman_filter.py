@@ -1,4 +1,4 @@
-from typing import Union, Iterable, Optional, TypeVar
+from typing import Iterable, Optional, TypeVar, List
 
 from tqdm import tqdm
 
@@ -12,6 +12,8 @@ from torch_kalman.process import Process
 from torch_kalman.state_belief import StateBelief, Gaussian
 from torch_kalman.state_belief.over_time import StateBeliefOverTime
 from torch_kalman.utils import identity
+
+import numpy as np
 
 
 class KalmanFilter(torch.nn.Module):
@@ -109,8 +111,9 @@ class KalmanFilter(torch.nn.Module):
     def simulate(self,
                  states: StateBeliefOverTime,
                  horizon: int,
+                 num_iter: int,
                  from_datetimes: Optional[ndarray] = None,
-                 **kwargs) -> Tensor:
+                 **kwargs) -> List[Tensor]:
 
         assert horizon > 0
 
@@ -121,11 +124,17 @@ class KalmanFilter(torch.nn.Module):
             initial_state = states.last_prediction
         else:
             initial_state = states.slice_by_dt(datetimes=from_datetimes)
-            kwargs['start_datetimes'] = from_datetimes
+            if 'start_datetimes' not in kwargs.keys():
+                kwargs['start_datetimes'] = np.tile(from_datetimes, num_iter)
+
+        initial_state = initial_state.__class__(means=initial_state.means.repeat((num_iter, 1)),
+                                                covs=initial_state.covs.repeat((num_iter, 1, 1)),
+                                                last_measured=initial_state.last_measured.repeat(num_iter))
 
         design_for_batch = self.design.for_batch(num_groups=initial_state.batch_size, num_timesteps=horizon, **kwargs)
 
-        return initial_state.simulate(design_for_batch=design_for_batch, **kwargs)
+        sim = initial_state.simulate(design_for_batch=design_for_batch, **kwargs)
+        return torch.chunk(sim, num_iter)
 
     def forecast(self,
                  states: StateBeliefOverTime,

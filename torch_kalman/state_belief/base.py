@@ -5,9 +5,11 @@ import torch
 from numpy.core.multiarray import ndarray
 from torch import Tensor
 from torch.distributions import Distribution
+from tqdm import tqdm
 
 from torch_kalman.design import Design
 from torch_kalman.design.for_batch import DesignForBatch
+from torch_kalman.utils import identity
 
 
 class StateBelief:
@@ -92,10 +94,21 @@ class StateBelief:
                  ntry_diag_incr: int = 100,
                  **kwargs) -> Tensor:
 
-        iterator = range(design_for_batch.num_timesteps)
-        if kwargs.get('progress', None):
-            from tqdm import tqdm
-            iterator = tqdm(iterator)
+        trajectories = self._simulate_state_trajectories(design_for_batch=design_for_batch,
+                                                         ntry_diag_incr=ntry_diag_incr,
+                                                         **kwargs)
+        print("converting to torch.distribution...")
+        return trajectories.measurement_distribution.sample()
+
+    def _simulate_state_trajectories(self,
+                                     design_for_batch: DesignForBatch,
+                                     ntry_diag_incr: int = 100,
+                                     **kwargs) -> 'StateBeliefOverTime':
+
+        prog = kwargs.get('progress', identity) or identity
+        if prog is True:
+            prog = tqdm
+        iterator = prog(range(design_for_batch.num_timesteps))
 
         state = self.__class__(means=self.means.clone(), covs=self.covs.clone())
         states = []
@@ -112,7 +125,7 @@ class StateBelief:
 
             states.append(state)
 
-        return self.__class__.concatenate_over_time(state_beliefs=states, design=None).measurement_distribution.sample()
+        return self.__class__.concatenate_over_time(state_beliefs=states, design=kwargs.get('design', None))
 
     def _realize(self, ntry: int) -> Tensor:
         # the realized state has no variance (b/c it's realized), so uncertainty will only come in on the predict step
