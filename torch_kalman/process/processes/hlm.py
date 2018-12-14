@@ -69,12 +69,18 @@ class HLM(Process):
     def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> ProcessForBatch:
         assert self.state_elements_to_measures, f"HLM process '{self.id}' has no measures."
 
-        re_model_mat = kwargs.get(self.expected_batch_kwargs[0], None)
-
+        argname = self.expected_batch_kwargs[0]
+        re_model_mat = kwargs.get(argname, None)
         if re_model_mat is None:
-            raise ValueError(f"Required argument `{self.expected_batch_kwargs[0]}` not found.")
+            raise ValueError(f"Required argument `{argname}` not found.")
         elif torch.isnan(re_model_mat).any():
-            raise ValueError(f"nans not allowed in `{self.expected_batch_kwargs[0]}` tensor")
+            raise ValueError(f"nans not allowed in `{argname}` tensor")
+
+        num_states = len(self.state_elements)
+        mm_num_groups, mm_num_ts, mm_num_covs = re_model_mat.shape
+        assert mm_num_groups == num_groups, f"Batch-size is {num_groups}, but {argname}.shape[0] is {mm_num_groups}."
+        assert mm_num_ts == num_timesteps, f"Batch num. timesteps is {num_timesteps}, but {argname}.shape[1] is {mm_num_ts}."
+        assert mm_num_covs == num_states, f"Expected {num_states} covariates, but {argname}.shape[2] = {mm_num_covs}."
 
         for_batch = super().for_batch(num_groups, num_timesteps)
 
