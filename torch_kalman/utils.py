@@ -79,3 +79,7 @@ def batch_diag(bmat: Tensor) -> Tensor:
 
 def split_flat(tens: Tensor, dim: int):
     return [tens.select(dim, i) for i in range(tens.shape[dim])]
+
+
+def identity(x: Any) -> Any:
+    return x

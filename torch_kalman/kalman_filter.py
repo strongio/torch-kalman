@@ -1,5 +1,7 @@
 from typing import Union, Iterable, Optional, TypeVar
 
+from tqdm import tqdm
+
 import torch
 from numpy import ndarray
 from torch import Tensor
@@ -9,6 +11,7 @@ from torch_kalman.design import Design
 from torch_kalman.process import Process
 from torch_kalman.state_belief import StateBelief, Gaussian
 from torch_kalman.state_belief.over_time import StateBeliefOverTime
+from torch_kalman.utils import identity
 
 
 class KalmanFilter(torch.nn.Module):
@@ -74,10 +77,10 @@ class KalmanFilter(torch.nn.Module):
         else:
             state_prediction = initial_state
 
-        iterator = range(num_timesteps)
-        if kwargs.get('progress', None):
-            from tqdm import tqdm
-            iterator = tqdm(iterator)
+        prog = kwargs.get('progress', identity) or identity
+        if prog is True:
+            prog = tqdm
+        iterator = prog(range(num_timesteps))
 
         # generate one-step-ahead predictions:
         state_predictions = []
@@ -143,10 +146,10 @@ class KalmanFilter(torch.nn.Module):
 
         design_for_batch = self.design.for_batch(num_groups=state_prediction.batch_size, num_timesteps=horizon, **kwargs)
 
-        iterator = range(horizon)
-        if kwargs.get('progress', None):
-            from tqdm import tqdm
-            iterator = tqdm(iterator)
+        prog = kwargs.get('progress', identity) or identity
+        if prog is True:
+            prog = tqdm
+        iterator = prog(range(horizon))
 
         forecasts = []
         for t in iterator:
