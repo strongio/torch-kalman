@@ -120,7 +120,9 @@ class KalmanFilter(torch.nn.Module):
         kwargs = kwargs.copy()
 
         # forecast-from time:
-        if from_datetimes is None:
+        if isinstance(states, StateBelief):
+            initial_state = states
+        elif from_datetimes is None:
             initial_state = states.last_prediction
         else:
             initial_state = states.slice_by_dt(datetimes=from_datetimes)

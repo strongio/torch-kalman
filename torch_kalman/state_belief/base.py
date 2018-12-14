@@ -97,7 +97,6 @@ class StateBelief:
         trajectories = self._simulate_state_trajectories(design_for_batch=design_for_batch,
                                                          ntry_diag_incr=ntry_diag_incr,
                                                          **kwargs)
-        print("converting to torch.distribution...")
         return trajectories.measurement_distribution.sample()
 
     def _simulate_state_trajectories(self,
