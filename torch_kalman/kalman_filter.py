@@ -93,10 +93,14 @@ class KalmanFilter(torch.nn.Module):
 
                 # predict the state for t, from information from t-1
                 # F at t-1 is transition *from* t-1 *to* t
-                state_prediction = state_belief.predict(F=design_for_batch.F[t - 1], Q=design_for_batch.Q[t - 1])
+                F = design_for_batch.F[t - 1]
+                Q = design_for_batch.Q[t - 1]
+                state_prediction = state_belief.predict(F=F, Q=Q)
 
             # compute how state-prediction at t translates into measurement-prediction at t
-            state_prediction.compute_measurement(H=design_for_batch.H[t], R=design_for_batch.R[t])
+            H = design_for_batch.H[t]
+            R = design_for_batch.R[t]
+            state_prediction.compute_measurement(H=H, R=R)
 
             # append to output:
             state_predictions.append(state_prediction)

@@ -6,7 +6,7 @@ import numpy as np
 from torch import Tensor
 
 
-def fourier_model_mat(dt: np.ndarray,
+def fourier_model_mat(dt: Union[np.ndarray, Series],
                       K: int,
                       period: Union[np.timedelta64, str],
                       start_dt: Optional[np.datetime64] = None) -> np.ndarray:
