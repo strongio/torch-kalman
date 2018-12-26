@@ -94,8 +94,6 @@ class NN(Process):
         assert mm_num_ts == num_timesteps, f"Batch num. timesteps is {num_timesteps}, but {argname}.shape[1] is {mm_num_ts}."
         assert mm_dim == self.input_dim, f"{argname}.shape[2] = {mm_dim}, but expected self.input_dim, {self.input_dim}."
 
-        # Pdb().set_trace()
-
         for_batch = super().for_batch(num_groups, num_timesteps)
 
         nn_outputs = {el: [] for el in self.state_elements}

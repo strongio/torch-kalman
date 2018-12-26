@@ -12,7 +12,7 @@ from torch_kalman.process.processes.season.base import DateAware
 
 import numpy as np
 
-from torch_kalman.process.utils.transition import Transition
+from torch_kalman.process.utils.bounded import Bounded
 from torch_kalman.utils import itervalues_sorted_keys, split_flat
 from torch_kalman.process.utils.fourier import fourier_tensor
 
@@ -46,7 +46,7 @@ class FourierSeason(DateAware):
 
         if decay:
             assert not isinstance(decay, bool), "decay should be floats of bounds (or False for no decay)"
-            self.decay = Transition(*decay)
+            self.decay = Bounded(*decay)
         else:
             self.decay = None
 

@@ -1,5 +1,5 @@
 from math import log
-from typing import Optional, Union, Generator, Dict, Sequence, Tuple
+from typing import Optional, Union, Generator, Dict, Sequence, Tuple, Callable
 
 import numpy as np
 import torch
@@ -11,7 +11,7 @@ from torch_kalman.covariance import Covariance
 from torch_kalman.process.utils.fourier import fourier_tensor
 from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.processes.season.base import DateAware
-from torch_kalman.process.utils.transition import Transition
+from torch_kalman.process.utils.bounded import Bounded
 from torch_kalman.utils import split_flat
 
 
@@ -67,7 +67,7 @@ class Season(DateAware):
 
         if decay:
             assert not isinstance(decay, bool), "decay should be floats of bounds (or False for no decay)"
-            self.decay = Transition(*decay)
+            self.decay = Bounded(*decay)
         else:
             self.decay = None
 
@@ -87,7 +87,7 @@ class Season(DateAware):
     def add_measure(self,
                     measure: str,
                     state_element: str = 'measured',
-                    value: Union[float, Tensor, None] = 1.0) -> None:
+                    value: Union[float, Callable, None] = 1.0) -> None:
         super().add_measure(measure=measure, state_element=state_element, value=value)
 
     def parameters(self) -> Generator[Parameter, None, None]:

@@ -71,7 +71,8 @@ class ProcessForBatch:
         assert to_element in self.process.state_elements
 
         if to_element in self.process.transitions.keys():
-            if self.process.transitions[to_element].get(from_element, None):
+            already = self.process.transitions[to_element].get(from_element, None)
+            if already and not callable(already):  # if what's already there is a func or None, then overriding is allowed
                 raise ValueError(f"The transition from '{from_element}' to '{to_element}' was already set for this Process,"
                                  f" so can't give it batch-specific values (unless set to `None`).")
         else:
@@ -84,7 +85,6 @@ class ProcessForBatch:
             raise ValueError(f"The transition from '{from_element}' to '{to_element}' was already set for this batch,"
                              f" so can't set it again.")
 
-        # TODO: don't need tensor-over-time if values is a Tensor w/o requires_grad
         self.batch_transitions[to_element][from_element] = TensorOverTime(values,
                                                                           num_groups=self.num_groups,
                                                                           num_timesteps=self.num_timesteps)
@@ -99,13 +99,13 @@ class ProcessForBatch:
 
         key = (measure, state_element)
 
-        if self.process.state_elements_to_measures.get(key, None):
+        already = self.process.state_elements_to_measures.get(key, None)
+        if already and not callable(already):  # if what's already there is a function or None, then overriding is allowed
             raise ValueError(f"The (measure, state_element) '{key}' was already added to this process, cannot modify.")
 
         if key in self.batch_ses_to_measures.keys():
             raise ValueError(f"The (measure, state_element) '{key}' was already added to this batch-process.")
 
-        # TODO: don't need tensor-over-time if values is a Tensor w/o requires_grad
         self.batch_ses_to_measures[key] = TensorOverTime(values,
                                                          num_groups=self.num_groups,
                                                          num_timesteps=self.num_timesteps)

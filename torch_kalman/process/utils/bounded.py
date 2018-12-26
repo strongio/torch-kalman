@@ -3,7 +3,7 @@ from torch import Tensor
 from torch.nn import Parameter
 
 
-class Transition:
+class Bounded:
     def __init__(self, lower: float, upper: float):
         assert lower >= 0.
         assert upper <= 1.

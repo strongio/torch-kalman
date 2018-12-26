@@ -1,4 +1,4 @@
-from typing import Generator, Sequence, Dict, Union, Tuple, Set
+from typing import Generator, Sequence, Dict, Union, Tuple, Set, Callable
 
 import torch
 from torch import Tensor
@@ -58,18 +58,46 @@ class Process:
     def set_transition(self,
                        from_el: str,
                        to_el: str,
-                       value: Union[float, None]) -> None:
+                       value: Union[float, Callable, None]) -> None:
+        """
+        Set the transition from an element to another. In transitioning, the state is multiplied by `value` each timestep.
+
+        If `value` is None then this indicates the transition will be set on a per-batch basis in the `for_batch` method.
+
+        If `value` is a function then this indicates the function will be called on the `ProcessForBatch` object, and the
+        value for that batch should be returned.
+
+        These two options are needed for transitions that change over time, and/or transitions that require_grad. In the
+        latter case, the result - that we only compute them at the time of batch-creation -- means that we don't need to
+        retain the graph when backward is called.
+        """
         if from_el in self.transitions.keys():
             if self.transitions[from_el].get(to_el, None):
                 raise ValueError(f"The transition from '{from_el}' to '{to_el}' is already set.")
         else:
             self.transitions[from_el] = {}
+
+        assert isinstance(value, float) or (value is None) or callable(value)
+
         self.transitions[from_el][to_el] = value
 
     def add_measure(self,
                     measure: str,
                     state_element: str,
-                    value: Union[float, Tensor, None]) -> None:
+                    value: Union[float, Callable, None]) -> None:
+        """
+        Set the value that determines how a state-element is converted to a measurement. For example, state_element * 1., or
+        state_element * 0. for a hidden state-element.
+
+        If `value` is None then this indicates the value will be set on a per-batch basis in the `for_batch` method.
+
+        If `value` is a function then this indicates the function will be called on the `ProcessForBatch` object, and the
+        value for that batch should be returned.
+
+        These two options are needed for measurements that change over time, and/or those that require_grad. In the latter
+        case, the result - that we only compute them at the time of batch-creation -- means that we don't need to retain the
+        graph when backward is called.
+        """
 
         assert state_element in self.state_elements, f"'{state_element}' is not in this process.'"
 
@@ -77,6 +105,9 @@ class Process:
 
         if key in self.state_elements_to_measures.keys():
             raise ValueError(f"The (measure, state_element) '{key}' was already added to this process.")
+
+        assert isinstance(value, float) or (value is None) or callable(value)
+
         self.state_elements_to_measures[key] = value
 
     def parameters(self) -> Generator[Parameter, None, None]:
@@ -96,10 +127,23 @@ class Process:
 
     def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'ProcessForBatch':
         assert self.measures(), f"The process {self.id} has no measures."
-        return ProcessForBatch(process=self,
-                               num_groups=num_groups,
-                               num_timesteps=num_timesteps,
-                               initial_state=self.initial_state_for_batch(num_groups=num_groups, **kwargs))
+        for_batch = ProcessForBatch(process=self,
+                                    num_groups=num_groups,
+                                    num_timesteps=num_timesteps,
+                                    initial_state=self.initial_state_for_batch(num_groups=num_groups, **kwargs))
+
+        # transitions that need to be re-assigned every batch (e.g. parameters)
+        for from_el, to_els in self.transitions.items():
+            for to_el, value in to_els.items():
+                if callable(value):
+                    for_batch.set_transition(from_element=from_el, to_element=to_el, values=value(for_batch))
+
+        # measure-values that "
+        for (measure, state_element), value in self.state_elements_to_measures.items():
+            if callable(value):
+                for_batch.add_measure(measure=measure, state_element=state_element, values=value(for_batch))
+
+        return for_batch
 
     def initial_state_for_batch(self, num_groups: int, **kwargs) -> Tuple[Tensor, Tensor]:
         init_mean, init_cov = self.initial_state()

@@ -1,4 +1,4 @@
-from typing import Generator, Tuple, Union
+from typing import Generator, Tuple, Union, Callable
 
 import torch
 
@@ -8,7 +8,7 @@ from torch.nn import Parameter
 from torch_kalman.covariance import Covariance
 from torch_kalman.process import Process
 from torch_kalman.process.for_batch import ProcessForBatch
-from torch_kalman.process.utils.transition import Transition
+from torch_kalman.process.utils.bounded import Bounded
 from torch_kalman.utils import itervalues_sorted_keys
 
 
@@ -28,14 +28,14 @@ class LocalTrend(Process):
         self.decayed_transitions = {}
         if decay_position:
             assert not isinstance(decay_position, bool), "decay_position should be floats of bounds (or False for no decay)"
-            self.decayed_transitions['position'] = Transition(*decay_position)
+            self.decayed_transitions['position'] = Bounded(*decay_position)
             transitions['position']['position'] = None
         else:
             transitions['position']['position'] = 1.0
 
         if decay_velocity:
             assert not isinstance(decay_velocity, bool), "decay_velocity should be floats of bounds (or False for no decay)"
-            self.decayed_transitions['velocity'] = Transition(*decay_velocity)
+            self.decayed_transitions['velocity'] = Bounded(*decay_velocity)
             transitions['velocity']['velocity'] = None
         else:
             transitions['velocity']['velocity'] = 1.0
@@ -72,7 +72,7 @@ class LocalTrend(Process):
                                             corr_arctanh=self.corr_arctanh,
                                             device=self.device)
 
-    def add_measure(self, measure: str, state_element: str = 'position', value: Union[float, None] = 1.0) -> None:
+    def add_measure(self, measure: str, state_element: str = 'position', value: Union[float, Callable, None] = 1.0) -> None:
         super().add_measure(measure=measure, state_element=state_element, value=value)
 
     def set_to_simulation_mode(self, scale=1.0):

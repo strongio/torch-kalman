@@ -1,10 +1,10 @@
-from typing import Generator, Union, Tuple
+from typing import Generator, Union, Tuple, Callable
 
 import torch
 from torch.nn import Parameter
 
 from torch_kalman.process import Process
-from torch_kalman.process.utils.transition import Transition
+from torch_kalman.process.utils.bounded import Bounded
 
 
 class LocalLevel(Process):
@@ -14,7 +14,7 @@ class LocalLevel(Process):
         transitions = {'position': {'position': None}}
         if decay:
             assert not isinstance(decay, bool), "decay should be floats of bounds (or False for no decay)"
-            self.decay = Transition(*decay)
+            self.decay = Bounded(*decay)
         else:
             self.decay = None
             transitions['position']['position'] = 1.0
@@ -46,7 +46,7 @@ class LocalLevel(Process):
         cov[:] = torch.pow(torch.exp(self.log_std_dev), 2)
         return cov
 
-    def add_measure(self, measure: str, state_element: str = 'position', value: Union[float, None] = 1.0) -> None:
+    def add_measure(self, measure: str, state_element: str = 'position', value: Union[float, Callable, None] = 1.0) -> None:
         super().add_measure(measure=measure, state_element=state_element, value=value)
 
     def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'ProcessForBatch':

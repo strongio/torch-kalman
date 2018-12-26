@@ -135,6 +135,8 @@ class StateBelief:
 
         n = self.covs.shape[1]
 
+        # TODO: remove diagonal elements that are zero, sample without them, copy old means
+
         # try decomposition -> sample; if numerical issues increase diag
         new_means = None
         for i in range(ntry):
@@ -142,8 +144,8 @@ class StateBelief:
                 new_means = self.to_distribution().sample()
             except RuntimeError as e:
                 lapack = e
-                diag = self.covs[:, range(n), range(n)]
-                self.covs[:, range(n), range(n)] += diag[diag > 0].min()
+                # diag = self.covs[:, range(n), range(n)]
+                self.covs[:, range(n), range(n)] += .0000000001 # diag[diag > 0].min()
             if new_means is not None:
                 break
 
