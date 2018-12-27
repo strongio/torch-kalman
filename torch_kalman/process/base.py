@@ -1,4 +1,4 @@
-from typing import Generator, Sequence, Dict, Union, Tuple, Set, Callable
+from typing import Generator, Sequence, Dict, Union, Tuple, Set, Callable, Optional
 
 import torch
 from torch import Tensor
@@ -110,8 +110,8 @@ class Process:
 
     def add_measure(self,
                     measure: str,
-                    state_element: str,
-                    value: Union[float, Callable, None]) -> None:
+                    state_element: Optional[str] = None,
+                    value: Union[float, Callable, None] = None) -> None:
         """
         Set the value that determines how a state-element is converted to a measurement. For example, state_element * 1., or
         state_element * 0. for a hidden state-element.
