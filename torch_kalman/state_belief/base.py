@@ -144,8 +144,7 @@ class StateBelief:
                 new_means = self.to_distribution().sample()
             except RuntimeError as e:
                 lapack = e
-                # diag = self.covs[:, range(n), range(n)]
-                self.covs[:, range(n), range(n)] += .0000000001 # diag[diag > 0].min()
+                self.covs[:, range(n), range(n)] += .0000000001
             if new_means is not None:
                 break
 

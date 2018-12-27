@@ -190,9 +190,3 @@ class Process:
     @property
     def requires_grad(self):
         return any(param.requires_grad for param in self.parameters())
-
-    def set_to_simulation_mode(self, *args, **kwargs):
-        """
-        Set initial parameters to reasonable values s.t. generating data from this process in a simulation will be reasonable
-        """
-        self.requires_grad_(False)

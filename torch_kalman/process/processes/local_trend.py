@@ -75,18 +75,6 @@ class LocalTrend(Process):
     def add_measure(self, measure: str, state_element: str = 'position', value: Union[float, Callable, None] = 1.0) -> None:
         super().add_measure(measure=measure, state_element=state_element, value=value)
 
-    def set_to_simulation_mode(self, scale=1.0):
-        super().set_to_simulation_mode()
-
-        # initial:
-        self.initial_state_mean_params[:] = 0.
-        self.initial_state_cov_params['log_std_devs'][:] = torch.tensor([1.0, -5.0])
-        self.initial_state_cov_params['corr_arctanh'][:] = 0.
-
-        # process:
-        self.log_std_devs[:] = torch.tensor([-2.0, -9.0])
-        self.corr_arctanh[:] = 0.
-
     def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'ProcessForBatch':
         for_batch = super().for_batch(num_groups, num_timesteps, **kwargs)
 

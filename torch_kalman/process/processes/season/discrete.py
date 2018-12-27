@@ -188,11 +188,3 @@ class Season(DateAware):
                 transitions[measured_name][prev] = None
 
         return transitions
-
-    def set_to_simulation_mode(self):
-        super().set_to_simulation_mode()
-
-        self.initial_state_mean_params[:] = 0.
-        self.initial_state_mean_params[:, 0] = log(len(self.state_elements)) / 2.
-        self.initial_state_log_std_dev[:] = -10.0  # season-effect virtually identical for all groups
-        self.log_std_dev[:] = -8.0  # season-effect is very close to stationary
