@@ -1,4 +1,4 @@
-from typing import Generator, Tuple, Optional, Union, Dict
+from typing import Generator, Tuple, Optional, Union, Dict, Sequence
 
 import torch
 
@@ -18,34 +18,20 @@ from torch_kalman.process.utils.fourier import fourier_tensor
 
 
 class FourierSeason(DateAware):
-    """
-    One way of implementing a seasonal process as a fourier series. A simpler implementation than Hydnman et al., pros vs.
-    cons are still TBD; please consider this experimental.
-    """
-
     def __init__(self,
                  id: str,
                  seasonal_period: Union[int, float],
                  K: int,
-                 allow_process_variance: bool = False,
+                 process_variance: bool = False,
                  decay: Union[bool, Tuple[float, float]] = False,
                  **kwargs):
         # season structure:
         self.seasonal_period = seasonal_period
         self.K = K
 
-        # initial state:
-        ns = self.K * 2
-        self.initial_state_mean_params = Parameter(torch.randn(ns))
-        self.initial_state_cov_params = dict(log_diag=Parameter(data=torch.randn(ns)),
-                                             off_diag=Parameter(data=torch.randn(int(ns * (ns - 1) / 2))))
-
-        # process covariance:
-        self.cov_cholesky_log_diag = Parameter(data=torch.zeros(ns)) if allow_process_variance else None
-        self.cov_cholesky_off_diag = Parameter(data=torch.zeros(int(ns * (ns - 1) / 2))) if allow_process_variance else None
-
         if decay:
             assert not isinstance(decay, bool), "decay should be floats of bounds (or False for no decay)"
+            assert decay[0] > 0. and decay[1] <= 1.0
             self.decay = Bounded(*decay)
         else:
             self.decay = None
@@ -57,39 +43,22 @@ class FourierSeason(DateAware):
             for c in range(2):
                 element_name = f"{r},{c}"
                 state_elements.append(element_name)
-                transitions[element_name] = {element_name: None if decay else 1.0}
+                if decay:
+                    transitions[element_name] = {element_name: lambda pfb: pfb.process.decay.value}
+                else:
+                    transitions[element_name] = {element_name: 1.0}
+
+        self._dynamic_state_elements = state_elements if process_variance else []
 
         super().__init__(id=id, state_elements=state_elements, transitions=transitions, **kwargs)
 
-        # writing measure-matrix is slow, no need to do it repeatedly:
-        self.measure_cache = {}
-
-    def initial_state(self, **kwargs) -> Tuple[Tensor, Tensor]:
-        means = self.initial_state_mean_params
-        covs = Covariance.from_log_cholesky(**self.initial_state_cov_params, device=self.device)
-        return means, covs
-
     def parameters(self) -> Generator[Parameter, None, None]:
-        yield self.initial_state_mean_params
-        if self.cov_cholesky_log_diag is not None:
-            yield self.cov_cholesky_log_diag
-        if self.cov_cholesky_log_diag is not None:
-            yield self.cov_cholesky_off_diag
-        for param in itervalues_sorted_keys(self.initial_state_cov_params):
-            yield param
         if self.decay is not None:
             yield self.decay.parameter
 
-    def covariance(self) -> Covariance:
-        if self.cov_cholesky_log_diag is not None:
-            return Covariance.from_log_cholesky(log_diag=self.cov_cholesky_log_diag,
-                                                off_diag=self.cov_cholesky_off_diag,
-                                                device=self.device)
-        else:
-            ns = self.K * 2
-            cov = torch.empty(size=(ns, ns), device=self.device)
-            cov[:] = 0.
-            return cov
+    @property
+    def dynamic_state_elements(self) -> Sequence[str]:
+        return self._dynamic_state_elements
 
     # noinspection PyMethodOverriding
     def add_measure(self, measure: str) -> None:

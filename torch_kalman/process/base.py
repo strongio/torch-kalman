@@ -27,6 +27,8 @@ class Process:
         """
 
         self.id = str(id)
+        self.state_elements = state_elements
+        self.transitions = transitions
 
         # measures:
         self.state_elements_to_measures = {}
@@ -44,8 +46,6 @@ class Process:
                 assert to_el in self.state_elements, f"`{from_el}` is in transitions but not state_elements"
 
         #
-        self.state_elements = state_elements
-        self.transitions = transitions
         self._device = None
         self._measures = None
         self._state_element_idx = None
@@ -144,8 +144,7 @@ class Process:
 
         for_batch = ProcessForBatch(process=self,
                                     num_groups=num_groups,
-                                    num_timesteps=num_timesteps,
-                                    initial_state=self.initial_state_for_batch(num_groups=num_groups, **kwargs))
+                                    num_timesteps=num_timesteps)
 
         # transitions that need to be re-assigned every batch (e.g. parameters)
         for from_el, to_els in self.transitions.items():
@@ -178,6 +177,5 @@ class Process:
         for param in self.parameters():
             param.requires_grad_(requires_grad=requires_grad)
 
-    def initial_state_means_for_batch(self, parameters: Parameter, batch_size: int, **kwargs) -> Tensor:
-        assert len(parameters) == len(self.state_elements)
-        return parameters.expand(batch_size, -1)
+    def initial_state_means_for_batch(self, parameters: Parameter, num_groups: int, **kwargs) -> Tensor:
+        return parameters.expand(num_groups, -1)

@@ -24,13 +24,13 @@ class StateBeliefOverTime:
         self.design = design
         self.start_datetimes = start_datetimes
         self.family = self.state_beliefs[0].__class__
-        self.batch_size = self.state_beliefs[0].batch_size
+        self.num_groups = self.state_beliefs[0].num_groups
 
         # the last idx where any updates/predicts occurred:
         self._last_update = None
         self._last_prediction = None
-        self.last_predict_idx = -torch.ones(self.batch_size, dtype=torch.int)
-        self.last_update_idx = -torch.ones(self.batch_size, dtype=torch.int)
+        self.last_predict_idx = -torch.ones(self.num_groups, dtype=torch.int)
+        self.last_update_idx = -torch.ones(self.num_groups, dtype=torch.int)
         for t, state_belief in enumerate(state_beliefs):
             self.last_predict_idx[state_belief.last_measured == 1] = t
             self.last_update_idx[state_belief.last_measured == 0] = t

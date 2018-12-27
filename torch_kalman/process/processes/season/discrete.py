@@ -1,4 +1,4 @@
-from typing import Optional, Union, Generator, Dict, Sequence, Tuple, Callable
+from typing import Optional, Union, Generator, Tuple, Callable, Sequence
 
 import numpy as np
 import torch
@@ -6,8 +6,6 @@ import torch
 from torch import Tensor
 from torch.nn import Parameter
 
-from torch_kalman.covariance import Covariance
-from torch_kalman.process.utils.fourier import fourier_tensor
 from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.processes.season.base import DateAware
 from torch_kalman.process.utils.bounded import Bounded
@@ -76,6 +74,10 @@ class Season(DateAware):
         if self.decay is not None:
             yield self.decay.parameter
 
+    @property
+    def dynamic_state_elements(self) -> Sequence[str]:
+        return [self.measured_name]
+
     def for_batch(self,
                   num_groups: int,
                   num_timesteps: int,
@@ -130,10 +132,10 @@ class Season(DateAware):
 
     def initial_state_means_for_batch(self,
                                       parameters: Parameter,
-                                      batch_size: int,
+                                      num_groups: int,
                                       start_datetimes: Optional[np.ndarray] = None) -> Tensor:
 
-        delta = self.get_delta(batch_size, 1, start_datetimes=start_datetimes).squeeze(1)
+        delta = self.get_delta(num_groups, 1, start_datetimes=start_datetimes).squeeze(1)
         season_shift = (np.floor(delta / self.season_duration) % self.seasonal_period).astype('int')
         means = [torch.cat([parameters[-shift:], parameters[:-shift]]) for shift in season_shift]
         return torch.stack(means, 0)

@@ -109,7 +109,7 @@ class TestDesign(TestCaseTK):
         vel_common.add_measure('measure_2', value=None)
 
         design = Design(processes=[vel_1, vel_2, vel_common], measures=['measure_1', 'measure_2'])
-        batch_design = design.for_batch(batch_size=2, time=0)
+        batch_design = design.for_batch(num_groups=2, time=0)
 
         # since it's None, requires batch-specific param:
         with self.assertRaises(ValueError) as cm:

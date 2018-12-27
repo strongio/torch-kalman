@@ -9,8 +9,7 @@ class ProcessForBatch:
     def __init__(self,
                  process: 'Process',
                  num_groups: int,
-                 num_timesteps: int,
-                 initial_state: Tuple[Tensor, Tensor]):
+                 num_timesteps: int):
 
         self.process = process
         self.num_groups = num_groups
@@ -23,9 +22,6 @@ class ProcessForBatch:
         # transitions that are specific to this batch, not the process generally:
         self.batch_transitions = {}
         self.batch_ses_to_measures = {}
-
-        # initial state:
-        self.initial_state = initial_state
 
         # transitions:
         self._transitions = None

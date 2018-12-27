@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import  Dict
+from typing import Dict
 from warnings import warn
 
 import torch
@@ -9,6 +9,8 @@ from torch_kalman.design_matrix import DesignMatOverTime
 
 
 class DesignForBatch:
+    ok_kwargs = {'input', 'progress'}
+
     def __init__(self,
                  design: 'Design',
                  num_groups: int,
@@ -23,9 +25,10 @@ class DesignForBatch:
 
         # initial mean/cov:
         self.initial_mean = torch.zeros(num_groups, design.state_size, device=self.device)
-        self.initial_covariance = Covariance.from_log_cholesky(log_diag=design.init_cholesky_log_diag,
-                                                               off_diag=design.init_cholesky_off_diag,
-                                                               device=self.device)
+        init_cov = Covariance.from_log_cholesky(log_diag=design.init_cholesky_log_diag,
+                                                off_diag=design.init_cholesky_off_diag,
+                                                device=self.device)
+        self.initial_covariance = init_cov.expand(num_groups, -1, -1)
 
         # create processes for batch:
         used_kwargs = set()
@@ -45,9 +48,10 @@ class DesignForBatch:
             # assign initial mean:
             pslice = self.process_idx[process_name]
             self.initial_mean[:, pslice] = process.initial_state_means_for_batch(design.init_state_mean_params[pslice],
+                                                                                 num_groups=num_groups,
                                                                                  **process_kwargs)
 
-        unused_kwargs = set(kwargs.keys()) - used_kwargs
+        unused_kwargs = (set(kwargs.keys()) - used_kwargs) - self.ok_kwargs
         if unused_kwargs:
             warn(f"Unexpected kwargs:\n{unused_kwargs}.")
 
@@ -79,7 +83,9 @@ class DesignForBatch:
         partial_proc_cov = Covariance.from_log_cholesky(**self.process_cov_params, device=self.device)
         self.Q = DesignMatOverTime.from_smaller_matrix(smaller_mat=partial_proc_cov,
                                                        small_mat_dimnames=list(design.all_dynamic_state_elements()),
-                                                       large_mat_dimnames=list(design.all_state_elements()))
+                                                       large_mat_dimnames=list(design.all_state_elements()),
+                                                       size=(self.num_groups, self.state_size, self.state_size),
+                                                       device=self.device)
 
         # measure-covariance matrix:
         self.measure_cov_params = {'log_diag': design.measure_cholesky_log_diag,

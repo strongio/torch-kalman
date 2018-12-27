@@ -12,7 +12,7 @@ from torch_kalman.tests import TestCaseTK
 class TestProcess(TestCaseTK):
 
     def test_velocity_transition(self):
-        batch_vel = LocalTrend(id='test', decay_velocity=False).for_batch(batch_size=1)
+        batch_vel = LocalTrend(id='test', decay_velocity=False).for_batch(num_groups=1)
 
         # check F:
         self.assertListEqual(list1=batch_vel.F()[0].tolist(), list2=[[1., 1.], [0., 1.]])
@@ -29,10 +29,10 @@ class TestProcess(TestCaseTK):
 
         # need to include start_datetimes since included above
         with self.assertRaises(ValueError) as cm:
-            season.for_batch(batch_size=1, time=0)
+            season.for_batch(num_groups=1, time=0)
         self.assertEqual(cm.exception.args[0], "`start_datetimes` argument required.")
 
-        batch_season = season.for_batch(batch_size=1, time=0, start_datetimes=array([datetime64('2018-01-01')]))
+        batch_season = season.for_batch(num_groups=1, time=0, start_datetimes=array([datetime64('2018-01-01')]))
 
         # test transitions manually:
         state_mean = torch.arange(0.0, 7.0)[:, None]
@@ -59,7 +59,7 @@ class TestProcess(TestCaseTK):
         # self.assertTrue((state_mean[0] == state_mean[1]).all())
         # state_mean[:, 0, :] = -state_mean[:, 1:, :].sum(1)
         # for t in range(10):
-        #     design_for_batch = design.for_batch(batch_size=2, time=t,
+        #     design_for_batch = design.for_batch(num_groups=2, time=t,
         #                                         start_datetimes=array([datetime64('2018-01-01'), datetime64('2018-01-02')]))
         #     state_mean_last = state_mean
         #     state_mean = torch.bmm(design_for_batch.F(), state_mean)

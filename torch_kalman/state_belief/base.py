@@ -27,12 +27,12 @@ class StateBelief:
         if (means != means).any():
             raise ValueError("Missing values in StateBelief (can be caused by gradient-issues -> nan initial-state).")
 
-        batch_size, state_size = means.shape
-        assert covs.shape[0] == batch_size, "The batch-size (1st dimension) of cov doesn't match that of mean."
+        num_groups, state_size = means.shape
+        assert covs.shape[0] == num_groups, "The batch-size (1st dimension) of cov doesn't match that of mean."
         assert covs.shape[1] == covs.shape[2], "The cov should be symmetric in the last two dimensions."
         assert covs.shape[1] == state_size, "The state-size (2nd/3rd dimension) of cov doesn't match that of mean."
 
-        self.batch_size = batch_size
+        self.num_groups = num_groups
         self.means = means
         self.covs = covs
         self._H = None
@@ -40,9 +40,9 @@ class StateBelief:
         self._measurement = None
 
         if last_measured is None:
-            self.last_measured = torch.zeros(self.batch_size, dtype=torch.int)
+            self.last_measured = torch.zeros(self.num_groups, dtype=torch.int)
         else:
-            assert last_measured.shape[0] == self.batch_size and last_measured.dim() == 1
+            assert last_measured.shape[0] == self.num_groups and last_measured.dim() == 1
             self.last_measured = last_measured
 
     def compute_measurement(self, H: Tensor, R: Tensor) -> None:
