@@ -7,6 +7,9 @@ from typing import Tuple, Optional
 
 
 class Covariance(Tensor):
+    def __new__(cls, *args, **kwargs):
+        return super().__new__(cls, *args, **kwargs)
+
     @classmethod
     def from_log_cholesky(cls,
                           log_diag: Parameter,
@@ -24,7 +27,7 @@ class Covariance(Tensor):
 
     def to_log_cholesky(self) -> Tuple[Tensor, Tensor]:
         n = self.shape[-1]
-        L = torch.potrf(self)
+        L = torch.cholesky(self)
         off_diag = L[np.tril_indices(n=n, k=-1)]
         log_diag = torch.log(torch.diag(L))
         return log_diag, off_diag
