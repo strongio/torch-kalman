@@ -27,7 +27,6 @@ class Process:
         """
 
         self.id = str(id)
-        self._state_element_idx = None
 
         # measures:
         self.state_elements_to_measures = {}
@@ -35,25 +34,53 @@ class Process:
         # expected kwargs
         self.expected_batch_kwargs = ()
 
-        # in some cases, these won't be generated at init, but later in link_to_design; if created at init then validate
-        self._state_elements = state_elements
-        self._transitions = transitions
-        if (state_elements is not None) and (transitions is not None):
-            self.validate_state_elements(state_elements, transitions)
+        # state elements:
+        assert len(state_elements) == len(set(state_elements)), "Duplicate `state_elements` not allowed."
 
-        # device:
+        # transitions:
+        for to_el, from_els in transitions.items():
+            assert to_el in self.state_elements, f"`{to_el}` is in transitions but not state_elements"
+            for from_el in from_els.keys():
+                assert to_el in self.state_elements, f"`{from_el}` is in transitions but not state_elements"
+
+        #
+        self.state_elements = state_elements
+        self.transitions = transitions
         self._device = None
+        self._measures = None
+        self._state_element_idx = None
 
     @property
-    def transitions(self):
-        return self._transitions
+    def dynamic_state_elements(self) -> Sequence[str]:
+        """
+        state elements with process-variance
+        """
+        raise NotImplementedError
 
     @property
-    def state_elements(self):
-        return self._state_elements
+    def state_element_idx(self) -> Dict[str, int]:
+        if self._state_element_idx is None:
+            self._state_element_idx = {el: i for i, el in enumerate(self.state_elements)}
+        return self._state_element_idx
 
+    @property
+    def dynamic_state_element_idx(self) -> Sequence[int]:
+        return [self.state_element_idx[el] for el in self.dynamic_state_elements]
+
+    @property
+    def device(self):
+        if self._device is None:
+            raise RuntimeError("Must call `set_device` first.")
+        return self._device
+
+    @property
     def measures(self) -> Set[str]:
-        return set(measure for measure, _ in self.state_elements_to_measures.keys())
+        if self._measures is None:
+            self._measures = set(measure for measure, _ in self.state_elements_to_measures.keys())
+        return self._measures
+
+    def parameters(self) -> Generator[torch.nn.Parameter, None, None]:
+        raise NotImplementedError
 
     def set_transition(self,
                        from_el: str,
@@ -98,6 +125,7 @@ class Process:
         case, the result - that we only compute them at the time of batch-creation -- means that we don't need to retain the
         graph when backward is called.
         """
+        self._measures = None
 
         assert state_element in self.state_elements, f"'{state_element}' is not in this process.'"
 
@@ -110,23 +138,10 @@ class Process:
 
         self.state_elements_to_measures[key] = value
 
-    def parameters(self) -> Generator[Parameter, None, None]:
-        raise NotImplementedError
-
-    def covariance(self) -> Covariance:
-        raise NotImplementedError
-
-    def initial_state(self, **kwargs) -> Tuple[Tensor, Tensor]:
-        raise NotImplementedError
-
-    @property
-    def state_element_idx(self) -> Dict[str, int]:
-        if self._state_element_idx is None:
-            self._state_element_idx = {el: i for i, el in enumerate(self.state_elements)}
-        return self._state_element_idx
-
     def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'ProcessForBatch':
-        assert self.measures(), f"The process {self.id} has no measures."
+        assert self.measures, f"The process `{self.id}` has no measures."
+        assert self.transitions, f"The process `{self.id}` has no transitions."
+
         for_batch = ProcessForBatch(process=self,
                                     num_groups=num_groups,
                                     num_timesteps=num_timesteps,
@@ -145,24 +160,6 @@ class Process:
 
         return for_batch
 
-    def initial_state_for_batch(self, num_groups: int, **kwargs) -> Tuple[Tensor, Tensor]:
-        init_mean, init_cov = self.initial_state()
-        init_means = init_mean.view(1, *init_mean.shape).expand(num_groups, *init_mean.shape)
-        init_covs = init_cov.view(1, *init_cov.shape).expand(num_groups, *init_cov.shape)
-        return init_means, init_covs
-
-    def validate_state_elements(self,
-                                state_elements: Sequence[str],
-                                transitions: Dict[str, Dict[str, Union[float, None]]]):
-        # state elements:
-        assert len(state_elements) == len(set(state_elements)), "Duplicate `state_elements` not allowed."
-
-        # transitions:
-        for to_el, from_els in transitions.items():
-            assert to_el in self.state_elements, f"`{to_el}` is in transitions but not state_elements"
-            for from_el in from_els.keys():
-                assert to_el in self.state_elements, f"`{from_el}` is in transitions but not state_elements"
-
     def link_to_design(self, design: 'Design') -> None:
         """
         In addition to what's done here, this method is useful for processes that need to know about the design they're
@@ -172,21 +169,15 @@ class Process:
         """
         self.set_device(design.device)
 
-    @property
-    def device(self):
-        if self._device is None:
-            raise RuntimeError("Must call `set_device` first.")
-        return self._device
-
     def set_device(self, device: torch.device) -> None:
         self._device = device
         for param in self.parameters():
             param.data = param.data.to(device)
 
-    def requires_grad_(self, requires_grad):
+    def requires_grad_(self, requires_grad: bool):
         for param in self.parameters():
             param.requires_grad_(requires_grad=requires_grad)
 
-    @property
-    def requires_grad(self):
-        return any(param.requires_grad for param in self.parameters())
+    def initial_state_means_for_batch(self, parameters: Parameter, batch_size: int, **kwargs) -> Tensor:
+        assert len(parameters) == len(self.state_elements)
+        return parameters.expand(batch_size, -1)

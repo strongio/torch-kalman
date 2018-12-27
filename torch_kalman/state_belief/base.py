@@ -103,8 +103,9 @@ class StateBelief:
                                      design_for_batch: DesignForBatch,
                                      ntry_diag_incr: int = 100,
                                      **kwargs) -> 'StateBeliefOverTime':
+        kwargs = kwargs.copy()
 
-        prog = kwargs.get('progress', identity) or identity
+        prog = kwargs.pop('progress', identity) or identity
         if prog is True:
             prog = tqdm
         iterator = prog(range(design_for_batch.num_timesteps))
@@ -134,8 +135,6 @@ class StateBelief:
             ntry = 1
 
         n = self.covs.shape[1]
-
-        # TODO: remove diagonal elements that are zero, sample without them, copy old means
 
         # try decomposition -> sample; if numerical issues increase diag
         new_means = None

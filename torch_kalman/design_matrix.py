@@ -36,6 +36,28 @@ class TensorOverTime:
 
 class DesignMatOverTime:
     @classmethod
+    def from_smaller_matrix(cls,
+                            smaller_mat: Tensor,
+                            small_mat_dimnames: Sequence,
+                            large_mat_dimnames: Sequence,
+                            *args, **kwargs) -> 'DesignMatOverTime':
+
+        assert smaller_mat.dim() == 2
+        assert len(small_mat_dimnames) <= len(large_mat_dimnames)
+
+        base = torch.zeros(*args, **kwargs)
+        if base.shape[-1] != len(large_mat_dimnames):
+            raise ValueError("Expected kwargs to create a `base` w/len of trailing dim equal to len(large_mat_dimnames)")
+
+        for r in range(len(small_mat_dimnames)):
+            for c in range(len(small_mat_dimnames)):
+                to_r = large_mat_dimnames.index(small_mat_dimnames[r])
+                to_c = large_mat_dimnames.index(small_mat_dimnames[c])
+                base[:, to_r, to_c] = smaller_mat[r, c]
+
+        return cls(base=base, dynamic=None)
+
+    @classmethod
     def from_indices_and_vals(cls, indices_and_values: Union[Dict, Sequence[Tuple]], *args, **kwargs) -> 'DesignMatOverTime':
         dynamic = []
         base = torch.zeros(*args, **kwargs)
@@ -61,7 +83,7 @@ class DesignMatOverTime:
 
     def __getitem__(self, item: int) -> Tensor:
         if item not in self.versions.keys():
-            mat = self.base.clone()
+            mat = self.base.clone()  # TODO: would detach be preferable?
             for (r, c), values in self.dynamic:
                 mat[:, r, c] = values[item]
             self.versions[item] = mat

@@ -10,30 +10,19 @@ from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.utils import itervalues_sorted_keys, split_flat
 
 
-class HLM(Process):
+class LinearModel(Process):
     def __init__(self,
                  id: str,
                  covariates: Sequence[str],
-                 allow_process_variance: Union[bool, Sequence[str]] = False,
+                 process_variance: Union[bool, Sequence[str]] = False,
                  model_mat_kwarg_name: Optional[str] = None):
         # transitions:
         transitions = {covariate: {covariate: 1.0} for covariate in covariates}
 
-        # initial state:
-        ns = len(covariates)
-        self.initial_state_mean_params = Parameter(torch.randn(ns))
-        self.initial_state_cov_params = dict(log_diag=Parameter(data=torch.randn(ns)),
-                                             off_diag=Parameter(data=torch.randn(int(ns * (ns - 1) / 2))))
-
         # process covariance:
-        if allow_process_variance:
-            if isinstance(allow_process_variance, bool):
-                allow_process_variance = covariates
-            self.process_cov_idx = [covariates.index(cov) for cov in allow_process_variance]
-            self.process_log_std_dev = Parameter(torch.randn(len(self.process_cov_idx)))
-        else:
-            self.process_cov_idx = []
-            self.process_log_std_dev = None
+        self._dynamic_state_elements = []
+        if process_variance:
+            self._dynamic_state_elements = covariates if isinstance(process_variance, bool) else process_variance
 
         # super:
         super().__init__(id=id, state_elements=covariates, transitions=transitions)
@@ -42,33 +31,19 @@ class HLM(Process):
         model_mat_kwarg_name = model_mat_kwarg_name or id  # use the id if they didn't specify
         self.expected_batch_kwargs = (model_mat_kwarg_name,)
 
+    @property
+    def dynamic_state_elements(self) -> Sequence[str]:
+        return self._dynamic_state_elements
+
+    def parameters(self) -> Generator[torch.nn.Parameter, None, None]:
+        yield from ()  # no parameters
+
     # noinspection PyMethodOverriding
     def add_measure(self, measure: str) -> None:
         for state_element in self.state_elements:
-            self.state_elements_to_measures[(measure, state_element)] = None
-
-    def initial_state(self, **kwargs) -> Tuple[Tensor, Tensor]:
-        means = self.initial_state_mean_params
-        covs = Covariance.from_log_cholesky(**self.initial_state_cov_params, device=self.device)
-        return means, covs
-
-    def parameters(self) -> Generator[Parameter, None, None]:
-        yield self.initial_state_mean_params
-        for param in itervalues_sorted_keys(self.initial_state_cov_params):
-            yield param
-        if self.process_log_std_dev is not None:
-            yield self.process_log_std_dev
-
-    def covariance(self) -> Covariance:
-        ns = len(self.state_elements)
-        cov = torch.zeros(size=(ns, ns), device=self.device)
-        if self.process_log_std_dev is not None:
-            cov[(self.process_cov_idx, self.process_cov_idx)] = torch.pow(torch.exp(self.process_log_std_dev), 2)
-        return cov
+            super().add_measure(measure=measure, state_element=state_element, value=None)
 
     def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> ProcessForBatch:
-        assert self.state_elements_to_measures, f"HLM process '{self.id}' has no measures."
-
         argname = self.expected_batch_kwargs[0]
         re_model_mat = kwargs.get(argname, None)
         if re_model_mat is None:
@@ -85,7 +60,7 @@ class HLM(Process):
         for_batch = super().for_batch(num_groups, num_timesteps)
 
         for i, covariate in enumerate(self.state_elements):
-            for measure in self.measures():
+            for measure in self.measures:
                 values = split_flat(re_model_mat[:, :, i], dim=1)
                 for_batch.add_measure(measure=measure, state_element=covariate, values=values)
 

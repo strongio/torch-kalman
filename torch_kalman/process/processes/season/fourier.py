@@ -112,7 +112,7 @@ class FourierSeason(DateAware):
         # generate the fourier tensor:
         fourier_tens = fourier_tensor(time=Tensor(season), seasonal_period=self.seasonal_period, K=self.K)
 
-        for measure in self.measures():
+        for measure in self.measures:
             for state_element in self.state_elements:
                 # transition:
                 if self.decay is not None:

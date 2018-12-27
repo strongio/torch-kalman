@@ -22,6 +22,17 @@ class DateAware(Process):
                  transitions: Dict[str, Dict[str, Union[float, None]]],
                  season_start: Optional[str] = None,
                  dt_unit: Optional[str] = None):
+        """
+
+        :param id: See `Process`.
+        :param state_elements: See `Process`.
+        :param transitions: See `Process`.
+        :param season_start: A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
+        starts, which is useful to specify if season boundaries are meaningful. It is important to specify if different
+        groups in your dataset start on different dates; when calling the kalman-filter you'll pass an array of
+        `start_datetimes` for group in the input, and this will be used to align the seasons for each group.
+        :param dt_unit: Currently supports {'Y', 'D', 'h', 'm', 's'}. 'W' is experimentally supported.
+        """
 
         # parse date information:
         self.dt_unit = dt_unit
@@ -66,11 +77,9 @@ class DateAware(Process):
         exp = self.start_datetime.dtype
         assert act == exp, f"Expected datetimes with dtype {exp}, got {act}."
 
-    def initial_state(self) -> Tuple[Tensor, Tensor]:
-        raise NotImplementedError
-
     def parameters(self) -> Generator[Parameter, None, None]:
         raise NotImplementedError
 
-    def covariance(self) -> Covariance:
+    @property
+    def dynamic_state_elements(self) -> Sequence[str]:
         raise NotImplementedError

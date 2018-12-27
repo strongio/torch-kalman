@@ -75,11 +75,11 @@ class KalmanFilter(torch.nn.Module):
 
         # initial state of the system:
         if initial_state is None:
-            state_prediction = self.family(*design_for_batch.get_block_diag_initial_state(num_groups=num_groups))
+            state_prediction = self.family(means=design_for_batch.initial_mean, covs=design_for_batch.initial_covariance)
         else:
             state_prediction = initial_state
 
-        prog = kwargs.get('progress', identity) or identity
+        prog = kwargs.pop('progress', identity) or identity
         if prog is True:
             prog = tqdm
         iterator = prog(range(num_timesteps))
@@ -161,7 +161,7 @@ class KalmanFilter(torch.nn.Module):
 
         design_for_batch = self.design.for_batch(num_groups=state_prediction.batch_size, num_timesteps=horizon, **kwargs)
 
-        prog = kwargs.get('progress', identity) or identity
+        prog = kwargs.pop('progress', identity) or identity
         if prog is True:
             prog = tqdm
         iterator = prog(range(horizon))

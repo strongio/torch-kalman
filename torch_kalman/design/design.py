@@ -60,32 +60,51 @@ class Design:
                              f"\nUse `Process.add_measure(value=None)` if the measurement-values will be decided per-batch "
                              f"during prediction.")
 
-        # measure-covariance:
-        upper_tri = int(self.measure_size * (self.measure_size - 1) / 2)
-        self.measure_cholesky_log_diag = Parameter(data=torch.zeros(self.measure_size, device=self.device))
-        self.measure_cholesky_off_diag = Parameter(data=torch.zeros(upper_tri, device=self.device))
+        # process slices
+        self._process_idx = None
 
-    def process_idx(self) -> Dict[str, list]:
-        out = {}
-        start = 0
-        for process in self.processes.values():
-            end = start + len(process.state_elements)
-            out[process.id] = list(range(start, end))
-            start = end
-        return out
+        # measure-covariance:
+        m_upper_tri = int(self.measure_size * (self.measure_size - 1) / 2)
+        self.measure_cholesky_log_diag = Parameter(data=torch.zeros(self.measure_size, device=self.device))
+        self.measure_cholesky_off_diag = Parameter(data=torch.zeros(m_upper_tri, device=self.device))
+
+        # initial state:
+        s_upper_tri = int(self.state_size * (self.state_size - 1) / 2)
+        self.init_state_mean_params = Parameter(torch.randn(self.state_size, device=self.device))
+        self.init_cholesky_log_diag = Parameter(torch.zeros(self.state_size, device=self.device))
+        self.init_cholesky_off_diag = Parameter(torch.zeros(s_upper_tri, device=self.device))
+
+        #
+        num_dyn_states = len(list(self.all_dynamic_state_elements()))
+        ds_upper_tri = int(num_dyn_states * (num_dyn_states - 1) / 2)
+        self.process_cholesky_log_diag = Parameter(torch.zeros(num_dyn_states, device=self.device))
+        self.process_cholesky_off_diag = Parameter(torch.zeros(ds_upper_tri, device=self.device))
+
+    @property
+    def process_idx(self) -> Dict[str, slice]:
+        if self._process_idx is None:
+            process_idx = {}
+            start = 0
+            for process_id, process in self.processes.items():
+                this_end = start + len(process.state_elements)
+                process_idx[process_id] = slice(start, this_end)
+                start = this_end
+            self._process_idx = process_idx
+        return self._process_idx
 
     def all_state_elements(self) -> Generator[Tuple[str, str], None, None]:
         for process_name, process in self.processes.items():
             for state_element in process.state_elements:
                 yield process_name, state_element
 
-    def requires_grad_(self, requires_grad):
+    def all_dynamic_state_elements(self) -> Generator[Tuple[str, str], None, None]:
+        for process_name, process in self.processes.items():
+            for state_element in process.dynamic_state_elements:
+                yield process_name, state_element
+
+    def requires_grad_(self, requires_grad: bool):
         for param in self.parameters():
             param.requires_grad_(requires_grad=requires_grad)
-
-    @property
-    def requires_grad(self):
-        return any(param.requires_grad for param in self.parameters())
 
     def measure_covariance(self) -> Tensor:
         return Covariance.from_log_cholesky(log_diag=self.measure_cholesky_log_diag,
@@ -98,6 +117,13 @@ class Design:
 
         yield self.measure_cholesky_log_diag
         yield self.measure_cholesky_off_diag
+
+        yield self.init_state_mean_params
+        yield self.init_cholesky_log_diag
+        yield self.init_cholesky_off_diag
+
+        yield self.process_cholesky_log_diag
+        yield self.process_cholesky_off_diag
 
     def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'DesignForBatch':
         return DesignForBatch(design=self, num_groups=num_groups, num_timesteps=num_timesteps, **kwargs)

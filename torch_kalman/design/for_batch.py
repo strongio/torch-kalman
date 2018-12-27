@@ -1,8 +1,8 @@
 from collections import OrderedDict
-from typing import Tuple, Sequence, Dict
+from typing import  Dict
+from warnings import warn
 
 import torch
-from torch import Tensor
 
 from torch_kalman.covariance import Covariance
 from torch_kalman.design_matrix import DesignMatOverTime
@@ -17,20 +17,43 @@ class DesignForBatch:
 
         self.device = design.device
 
+        # process indices:
+        self.process_idx = design.process_idx
+        self.process_start_idx = {process_id: idx.start for process_id, idx in self.process_idx.items()}
+
+        # initial mean/cov:
+        self.initial_mean = torch.zeros(num_groups, design.state_size, device=self.device)
+        self.initial_covariance = Covariance.from_log_cholesky(log_diag=design.init_cholesky_log_diag,
+                                                               off_diag=design.init_cholesky_off_diag,
+                                                               device=self.device)
+
         # create processes for batch:
+        used_kwargs = set()
+        assert isinstance(design.processes, OrderedDict)  # below assumes key ordering
         self.processes = OrderedDict()
         for process_name, process in design.processes.items():
+            # kwargs for this process:
             process_kwargs = {k: kwargs.get(k, None) for k in process.expected_batch_kwargs}
+            for kwarg in process.expected_batch_kwargs:
+                used_kwargs.add(kwarg)
+
+            # assign process:
             self.processes[process_name] = process.for_batch(num_groups=num_groups,
                                                              num_timesteps=num_timesteps,
                                                              **process_kwargs)
 
+            # assign initial mean:
+            pslice = self.process_idx[process_name]
+            self.initial_mean[:, pslice] = process.initial_state_means_for_batch(design.init_state_mean_params[pslice],
+                                                                                 **process_kwargs)
+
+        unused_kwargs = set(kwargs.keys()) - used_kwargs
+        if unused_kwargs:
+            warn(f"Unexpected kwargs:\n{unused_kwargs}.")
+
         # measures:
         self.measures = design.measures
-
-        # measure-covariance parameters:
-        self.measure_cov_params = {'log_diag': design.measure_cholesky_log_diag,
-                                   'off_diag': design.measure_cholesky_off_diag}
+        self.measure_idx = {measure_id: i for i, measure_id in enumerate(self.measures)}
 
         # size:
         self.num_groups = num_groups
@@ -38,41 +61,31 @@ class DesignForBatch:
         self.state_size = design.state_size
         self.measure_size = design.measure_size
 
-        # process indices:
-        self._process_idx = None
-        self.process_start_idx = {process_id: idx.start for process_id, idx in self.process_idx.items()}
-        # measure indices:
-        self.measure_idx = {measure_id: i for i, measure_id in enumerate(self.measures)}
-
-        # design-matrices:
+        # transition-matrix:
         self._transitions = None
         self.F = DesignMatOverTime.from_indices_and_vals(self.transitions,
                                                          size=(self.num_groups, self.state_size, self.state_size),
                                                          device=self.device)
 
+        # measurement-matrix:
         self._state_measurements = None
         self.H = DesignMatOverTime.from_indices_and_vals(self.state_measurements,
                                                          size=(self.num_groups, self.measure_size, self.state_size),
                                                          device=self.device)
 
-        self._block_diag_covariance = None
-        self.Q = DesignMatOverTime.from_indices_and_vals(self.block_diag_covariance,
-                                                         size=(self.num_groups, self.state_size, self.state_size),
-                                                         device=self.device)
+        # process covariance matrix:
+        self.process_cov_params = {'log_diag': design.process_cholesky_log_diag,
+                                   'off_diag': design.process_cholesky_off_diag}
+        partial_proc_cov = Covariance.from_log_cholesky(**self.process_cov_params, device=self.device)
+        self.Q = DesignMatOverTime.from_smaller_matrix(smaller_mat=partial_proc_cov,
+                                                       small_mat_dimnames=list(design.all_dynamic_state_elements()),
+                                                       large_mat_dimnames=list(design.all_state_elements()))
 
+        # measure-covariance matrix:
+        self.measure_cov_params = {'log_diag': design.measure_cholesky_log_diag,
+                                   'off_diag': design.measure_cholesky_off_diag}
         R = Covariance.from_log_cholesky(**self.measure_cov_params, device=self.device)
         self.R = DesignMatOverTime(base=R.view(1, *R.shape).expand(self.num_groups, -1, -1))
-
-    @property
-    def block_diag_covariance(self) -> Sequence[Tuple]:
-        if self._block_diag_covariance is None:
-            block_diag_covariance = []
-            for process_id, process in self.processes.items():
-                process_slice = self.process_idx[process_id]
-                idx = (process_slice, process_slice)
-                block_diag_covariance.append((idx, process.process.covariance()))
-            self._block_diag_covariance = block_diag_covariance
-        return self._block_diag_covariance
 
     @property
     def transitions(self) -> Dict:
@@ -95,29 +108,3 @@ class DesignForBatch:
                     state_measurements[self.measure_idx[measure_id], c + o] = values
             self._state_measurements = state_measurements
         return self._state_measurements
-
-    @property
-    def process_idx(self) -> Dict[str, slice]:
-        if self._process_idx is None:
-            process_idx = {}
-            last_end = 0
-            for process_id, process in self.processes.items():
-                this_end = last_end + len(process.state_elements)
-                process_idx[process_id] = slice(last_end, this_end)
-                last_end = this_end
-            self._process_idx = process_idx
-        return self._process_idx
-
-    def get_block_diag_initial_state(self, num_groups: int) -> Tuple[Tensor, Tensor]:
-        means = torch.zeros((num_groups, self.state_size), device=self.device)
-        covs = torch.zeros((num_groups, self.state_size, self.state_size), device=self.device)
-
-        start = 0
-        for process_id, process in self.processes.items():
-            process_means, process_covs = process.initial_state
-            end = start + process_means.shape[1]
-            means[:, start:end] = process_means
-            covs[:, start:end, start:end] = process_covs
-            start = end
-
-        return means, covs
