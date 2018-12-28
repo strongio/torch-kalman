@@ -64,14 +64,15 @@ class KalmanFilter(torch.nn.Module):
         """
 
         kwargs = kwargs.copy()
-        kwargs['input'] = input
 
         num_groups, num_timesteps, num_measures = input.shape
         if num_measures != self.measure_size:
             raise ValueError(f"This KalmanFilter has {self.measure_size} measurement-dimensions; but the input shape is "
                              f"{(num_groups, num_timesteps, num_measures)} (last dim should == measure-size).")
 
-        design_for_batch = self.design.for_batch(num_groups=num_groups, num_timesteps=num_timesteps, **kwargs)
+        design_for_batch = self.design.for_batch(num_groups=num_groups,
+                                                 num_timesteps=num_timesteps,
+                                                 **kwargs)
 
         # initial state of the system:
         if initial_state is None:
@@ -137,7 +138,9 @@ class KalmanFilter(torch.nn.Module):
                                                 covs=initial_state.covs.repeat((num_iter, 1, 1)),
                                                 last_measured=initial_state.last_measured.repeat(num_iter))
 
-        design_for_batch = self.design.for_batch(num_groups=initial_state.num_groups, num_timesteps=horizon, **kwargs)
+        design_for_batch = self.design.for_batch(num_groups=initial_state.num_groups,
+                                                 num_timesteps=horizon,
+                                                 **kwargs)
 
         sim = initial_state.simulate(design_for_batch=design_for_batch, **kwargs)
         return torch.chunk(sim, num_iter)
@@ -159,7 +162,9 @@ class KalmanFilter(torch.nn.Module):
             state_prediction = states.slice_by_dt(datetimes=forecast_from_datetimes)
             kwargs['start_datetimes'] = forecast_from_datetimes
 
-        design_for_batch = self.design.for_batch(num_groups=state_prediction.num_groups, num_timesteps=horizon, **kwargs)
+        design_for_batch = self.design.for_batch(num_groups=state_prediction.num_groups,
+                                                 num_timesteps=horizon,
+                                                 **kwargs)
 
         prog = kwargs.pop('progress', identity) or identity
         if prog is True:

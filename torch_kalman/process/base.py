@@ -12,7 +12,7 @@ class Process:
     def __init__(self,
                  id: str,
                  state_elements: Sequence[str],
-                 transitions: Dict[str, Dict[str, Union[float, None]]]):
+                 transitions: Dict[str, Dict[str, Union[float, Callable, None]]]):
         """
 
         :param id: A unique string identifying the process.
