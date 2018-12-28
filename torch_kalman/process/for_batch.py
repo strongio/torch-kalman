@@ -33,13 +33,24 @@ class ProcessForBatch:
     def transitions(self) -> Dict:
         if self._transitions is None:
             transitions = {}
-            for to_el, from_els in {**self.process.transitions, **self.batch_transitions}.items():
+
+            # merge transitions, with batch-transitions taking precedence:
+            all_transitions = {}
+            for to_el, from_els in self.process.transitions.items():
                 for from_el, values in from_els.items():
-                    r, c = self.process.state_element_idx[to_el], self.process.state_element_idx[from_el]
-                    if values is None:
-                        raise ValueError(f"The value for transition from '{from_el}' to '{to_el}' is None, which means that "
-                                         f"this needs to be set on a per-batch basis using the `set_transition` method.")
-                    transitions[(r, c)] = values
+                    all_transitions[(to_el, from_el)] = values
+
+            for to_el, from_els in self.batch_transitions.items():
+                for from_el, values in from_els.items():
+                    all_transitions[(to_el, from_el)] = values
+
+            # check values, convert to idxs:
+            for (to_el, from_el), values in all_transitions.items():
+                r, c = self.process.state_element_idx[to_el], self.process.state_element_idx[from_el]
+                if values is None:
+                    raise ValueError(f"The value for transition from '{from_el}' to '{to_el}' is None, which means that "
+                                     f"this needs to be set on a per-batch basis using the `set_transition` method.")
+                transitions[(r, c)] = values
             self._transitions = transitions
         return self._transitions
 
