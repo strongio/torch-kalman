@@ -14,7 +14,7 @@ class LocalLevel(Process):
 
         if decay:
             assert not isinstance(decay, bool), "decay should be floats of bounds (or False for no decay)"
-            assert decay[0] > 0. and decay[1] <= 1.
+            assert decay[0] >= -1. and decay[1] <= 1.
             self.decay = Bounded(*decay)
             transitions = {'position': {'position': lambda proc_for_batch: proc_for_batch.process.decay.value}}
         else:
