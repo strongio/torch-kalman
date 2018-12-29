@@ -1,4 +1,4 @@
-from typing import Iterable, Optional, TypeVar, List
+from typing import Iterable, Optional, TypeVar, List, Callable
 
 from tqdm import tqdm
 
@@ -118,6 +118,7 @@ class KalmanFilter(torch.nn.Module):
                  horizon: int,
                  num_iter: int,
                  from_datetimes: Optional[ndarray] = None,
+                 state_belief_to_measurements: Optional[Callable] = None,
                  **kwargs) -> List[Tensor]:
 
         assert horizon > 0
@@ -142,7 +143,13 @@ class KalmanFilter(torch.nn.Module):
                                                  num_timesteps=horizon,
                                                  **kwargs)
 
-        sim = initial_state.simulate(design_for_batch=design_for_batch, **kwargs)
+        trajectories = initial_state._simulate_state_trajectories(design_for_batch=design_for_batch,
+                                                                  **kwargs)
+
+        if state_belief_to_measurements is None:
+            state_belief_to_measurements = lambda traj: traj.measurement_distribution.sample()
+
+        sim = state_belief_to_measurements(trajectories)
         return torch.chunk(sim, num_iter)
 
     def forecast(self,

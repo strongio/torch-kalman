@@ -92,11 +92,13 @@ class StateBelief:
     def simulate(self,
                  design_for_batch: DesignForBatch,
                  ntry_diag_incr: int = 100,
+
                  **kwargs) -> Tensor:
 
         trajectories = self._simulate_state_trajectories(design_for_batch=design_for_batch,
                                                          ntry_diag_incr=ntry_diag_incr,
                                                          **kwargs)
+
         return trajectories.measurement_distribution.sample()
 
     def _simulate_state_trajectories(self,
@@ -104,6 +106,7 @@ class StateBelief:
                                      ntry_diag_incr: int = 100,
                                      **kwargs) -> 'StateBeliefOverTime':
         kwargs = kwargs.copy()
+        design = kwargs.pop('design', None)
 
         prog = kwargs.pop('progress', identity) or identity
         if prog is True:
@@ -125,7 +128,7 @@ class StateBelief:
 
             states.append(state)
 
-        return self.__class__.concatenate_over_time(state_beliefs=states, design=kwargs.get('design', None))
+        return self.__class__.concatenate_over_time(state_beliefs=states, design=design)
 
     def _realize(self, ntry: int) -> Tensor:
         # the realized state has no variance (b/c it's realized), so uncertainty will only come in on the predict step
