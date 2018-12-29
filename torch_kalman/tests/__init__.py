@@ -7,9 +7,12 @@ import torch
 from torch import Tensor
 
 from torch_kalman.design import Design
+from torch_kalman.process import Process, FourierSeason, LocalLevel, Season, LinearModel
 from torch_kalman.process.processes.local_trend import LocalTrend
 
 import numpy as np
+
+from torch_kalman.process.processes.nn import NN
 
 
 def simple_mv_velocity_design(dims=2):
@@ -33,6 +36,42 @@ def make_rw_data(num_timesteps=100, num_groups=5, measure_cov=((1., .5), (.5, 1.
                                                 mean=np.zeros(num_dims),
                                                 cov=measure_cov)
     return Tensor(state_means + white_noise)
+
+
+def name_to_proc(id: str, **kwargs) -> Process:
+    season_start = '2010-01-04'
+
+    if 'hour_in_day' in id:
+        out = FourierSeason(id=id,
+                            seasonal_period=24, season_start=season_start, dt_unit='h',
+                            **kwargs)
+    elif 'day_in_year' in id:
+        out = FourierSeason(id=id,
+                            seasonal_period=24 * 364.25, season_start=season_start, dt_unit='h',
+                            **kwargs)
+    elif 'local_level' in id:
+        out = LocalLevel(id=id, **kwargs)
+    elif 'local_trend' in id:
+        out = LocalTrend(id=id, **kwargs)
+    elif 'day_in_week' in id:
+        out = Season(id=id,
+                     seasonal_period=7, season_duration=24,
+                     season_start=season_start, dt_unit='h',
+                     **kwargs)
+    elif 'nn_predictors' in id:
+        out = NN(id=id,
+                 add_module_params_to_process=False,  # so we can use a separate parameter group
+                 model_mat_kwarg_name='predictors',
+                 **kwargs)
+    elif 'predictors' in id:
+        out = LinearModel(id=id,
+                          covariates=self.predictors,
+                          model_mat_kwarg_name='predictors',
+                          **kwargs)
+    else:
+        raise NotImplementedError(f"Unsure what process to use for `{id}`.")
+
+    return out
 
 
 class TestCaseTK(unittest.TestCase):

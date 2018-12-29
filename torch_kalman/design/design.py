@@ -127,3 +127,6 @@ class Design:
 
     def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'DesignForBatch':
         return DesignForBatch(design=self, num_groups=num_groups, num_timesteps=num_timesteps, **kwargs)
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(processes={list(self.processes.values())}, measures={self.measures})"

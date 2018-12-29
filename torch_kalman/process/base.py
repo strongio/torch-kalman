@@ -50,6 +50,9 @@ class Process:
         self._measures = None
         self._state_element_idx = None
 
+    def __repr__(self):
+        return f"{self.__class__.__name__}(id='{self.id}')"
+
     @property
     def dynamic_state_elements(self) -> Sequence[str]:
         """
