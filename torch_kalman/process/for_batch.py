@@ -1,8 +1,6 @@
-from typing import Union, Tuple, Sequence, Dict
+from typing import Union, Sequence, Dict
 
 from torch import Tensor
-
-from torch_kalman.design_matrix import TensorOverTime
 
 
 class ProcessForBatch:
@@ -30,7 +28,7 @@ class ProcessForBatch:
         self._state_measurements = None
 
     @property
-    def transitions(self) -> Dict:
+    def transition_mat_assignments(self) -> Dict:
         if self._transitions is None:
             transitions = {}
 
@@ -55,7 +53,7 @@ class ProcessForBatch:
         return self._transitions
 
     @property
-    def state_measurements(self) -> Dict:
+    def measurement_mat_assignments(self) -> Dict:
         if self._state_measurements is None:
             ses_to_measures = {**self.process.state_elements_to_measures, **self.batch_ses_to_measures}
 
@@ -92,9 +90,15 @@ class ProcessForBatch:
             raise ValueError(f"The transition from '{from_element}' to '{to_element}' was already set for this batch,"
                              f" so can't set it again.")
 
-        self.batch_transitions[to_element][from_element] = TensorOverTime(values,
-                                                                          num_groups=self.num_groups,
-                                                                          num_timesteps=self.num_timesteps)
+        if isinstance(values, Tensor):
+            self.check_tens(values, in_list=False)
+        elif isinstance(values, (list, tuple)):
+            assert len(values) == self.num_timesteps
+            [self.check_tens(tens, in_list=True) for tens in values]
+        else:
+            raise ValueError("Expected `values` be list/tuple or tensor")
+
+        self.batch_transitions[to_element][from_element] = values
 
     def add_measure(self,
                     measure: str,
@@ -113,6 +117,24 @@ class ProcessForBatch:
         if key in self.batch_ses_to_measures.keys():
             raise ValueError(f"The (measure, state_element) '{key}' was already added to this batch-process.")
 
-        self.batch_ses_to_measures[key] = TensorOverTime(values,
-                                                         num_groups=self.num_groups,
-                                                         num_timesteps=self.num_timesteps)
+        if isinstance(values, Tensor):
+            self.check_tens(values, in_list=False)
+        elif isinstance(values, (list, tuple)):
+            assert len(values) == self.num_timesteps
+            [self.check_tens(tens, in_list=True) for tens in values]
+        else:
+            raise ValueError("Expected `values` be list/tuple or tensor")
+
+        self.batch_ses_to_measures[key] = values
+
+    def check_tens(self, tens: Tensor, in_list: bool) -> None:
+        if tens.numel() != 1:
+            if list(tens.shape) != [self.num_groups]:
+                msg = ("Expected {listof}1D tensor{plural} {each}with length == num_groups.".
+                       format(listof='list of ' if in_list else '',
+                              plural='s' if in_list else '',
+                              each='each ' if in_list else ''))
+                raise ValueError(msg)
+        if in_list:
+            if tens.requires_grad and tens.grad_fn.__class__.__name__ == 'CopyBackwards':
+                raise RuntimeError("Please report this error to the package maintainer.")

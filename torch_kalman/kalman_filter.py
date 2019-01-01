@@ -8,6 +8,7 @@ from torch import Tensor
 from torch.nn import ParameterList
 
 from torch_kalman.design import Design
+from torch_kalman.design.for_batch import DesignForBatch
 from torch_kalman.process import Process
 from torch_kalman.state_belief import StateBelief, Gaussian
 from torch_kalman.state_belief.over_time import StateBeliefOverTime
@@ -35,18 +36,17 @@ class KalmanFilter(torch.nn.Module):
         self.to(device=self.design.device)
 
     @property
+    def measure_size(self) -> int:
+        return self.design.measure_size
+
+    @property
     def family(self) -> TypeVar('Gaussian'):
         if self._family is None:
             self._family = Gaussian
         return self._family
 
-    @property
-    def state_size(self) -> int:
-        return self.design.state_size
-
-    @property
-    def measure_size(self) -> int:
-        return self.design.measure_size
+    def predict_initial_state(self, design_for_batch: DesignForBatch) -> 'Gaussian':
+        return self.family(means=design_for_batch.initial_mean, covs=design_for_batch.initial_covariance)
 
     # noinspection PyShadowingBuiltins
     def forward(self,
@@ -76,7 +76,7 @@ class KalmanFilter(torch.nn.Module):
 
         # initial state of the system:
         if initial_state is None:
-            state_prediction = self.family(means=design_for_batch.initial_mean, covs=design_for_batch.initial_covariance)
+            state_prediction = self.predict_initial_state(design_for_batch)
         else:
             state_prediction = initial_state
 
