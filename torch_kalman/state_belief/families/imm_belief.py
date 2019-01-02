@@ -89,9 +89,9 @@ class IMMBelief(StateBelief):
 
         if (likelihoods == 0).all():
             new_mode_probs = self.mode_probs.clone()
-        elif (likelihoods == 0).any():
-            warn("Some likelihoods == 0.")
         else:
+            if (likelihoods == 0).any():
+                warn("Some likelihoods == 0.")
             new_mode_probs = self.marginal_probs * likelihoods
             new_mode_probs /= new_mode_probs.sum()
 
