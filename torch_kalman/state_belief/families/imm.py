@@ -28,7 +28,15 @@ class IMM(StateBelief):
         super().__init__(means=means, covs=covs, last_measured=last_measured)
 
     def compute_mixture(self) -> Tuple[Tensor, Tensor]:
-        raise NotImplementedError
+        means = []
+        covs = []
+        for w, sb in zip(self.mode_probs, self.state_beliefs):
+            means.append(w * sb.means)
+            diff = sb.means - self.means
+            covs.append(w * (torch.outer(diff, diff) + sb.covs))
+        means = torch.sum(torch.stack(means))
+        covs = torch.sum(torch.stack(covs))
+        return means, covs
 
     @property
     def marginal_probs(self) -> Tensor:
@@ -51,22 +59,20 @@ class IMM(StateBelief):
         return self._mixing_probs
 
     def predict(self, F: Tensor, Q: Tensor) -> 'StateBelief':
-        # TODO: separate F and Q for each
-        n = len(self.state_beliefs)
         predictions = []
-        for i in range(n):
+        for i, sb1 in enumerate(self.state_beliefs):
             weights = self.mixing_probs[:, i]
 
             means = []
             covs = []
-            for sb, w in zip(weights, self.state_beliefs):
-                means.append(sb.means * w)
-                diff = sb.means - self.means
-                covs.append(sb.covs * (torch.outer(diff, diff) + sb.covs))
+            for w, sb2 in zip(weights, self.state_beliefs):
+                means.append(sb2.means * w)
+                diff = sb2.means - self.means
+                covs.append(w * (torch.outer(diff, diff) + sb2.covs))
             means = torch.sum(torch.stack(means))
             covs = torch.sum(torch.stack(covs))
 
-            sb_mixed = self.family(means=means, covs=covs, last_measured='TODO')
+            sb_mixed = sb1.__class__(means=means, covs=covs, last_measured='TODO')
             predictions.append(sb_mixed.predict(F=F[i], Q=Q[i]))
 
         return self.__class__(state_beliefs=predictions,
@@ -79,6 +85,7 @@ class IMM(StateBelief):
         likelihoods = torch.empty(len(self.state_beliefs))
         for i, sb in enumerate(self.state_beliefs):
             new_sb = sb.update(obs=obs)
+            new_sb.compute_measurement(H=sb.H, R=sb.R)
             new_sbs.append(new_sb)
             likelihoods[i] = new_sb.likelihood  # TODO
 
@@ -90,12 +97,17 @@ class IMM(StateBelief):
                               transition_probs=self.transition_probs,
                               last_measured='TODO')
 
+    def compute_measurement(self, H: Tensor, R: Tensor):
+        for sb in self.state_beliefs:
+            # TODO: may implement leading dim of H,R as different models, as done w/F,Q
+            sb.compute_measurement(H=H, R=R)
+
     @classmethod
     def concatenate_over_time(cls,
                               state_beliefs: Sequence['StateBelief'],
                               design: Design,
                               start_datetimes: Optional[ndarray] = None) -> 'StateBeliefOverTime':
-        raise NotImplementedError
+        raise NotImplementedError("TODO")
 
     def to_distribution(self) -> Distribution:
-        raise NotImplementedError
+        raise NotImplementedError("TODO")
