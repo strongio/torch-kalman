@@ -3,6 +3,8 @@ from typing import Optional, Sequence, Tuple, TypeVar
 
 import torch
 
+from warnings import warn
+
 from numpy.core.multiarray import ndarray
 from torch import Tensor
 from torch.distributions import Distribution
@@ -85,8 +87,13 @@ class IMMBelief(StateBelief):
             new_sbs.append(new_sb)
             likelihoods[i] = new_sb.log_prob(obs).exp()
 
-        new_mode_probs = self.marginal_probs * likelihoods
-        new_mode_probs /= new_mode_probs.sum()
+        if (likelihoods == 0).all():
+            new_mode_probs = self.mode_probs.clone()
+        elif (likelihoods == 0).any():
+            warn("Some likelihoods == 0.")
+        else:
+            new_mode_probs = self.marginal_probs * likelihoods
+            new_mode_probs /= new_mode_probs.sum()
 
         return self.__class__(state_beliefs=new_sbs,
                               mode_probs=new_mode_probs,
