@@ -24,8 +24,15 @@ class SimpleIMMDesign(Design):
         super().__init__(processes=processes, measures=measures, device=device)
 
         self.models = OrderedDict()
+        self._locked = False
+
+    @property
+    def num_models(self) -> int:
+        self._locked = True
+        return len(self.models) + 1
 
     def add_model(self, name: str):
+        assert not self._locked, "Design is locked, can no longer add models (happens when accessing parameters/num_models)."
         self.models[name] = {}
 
     def add_process_mod(self,
@@ -33,6 +40,8 @@ class SimpleIMMDesign(Design):
                         process_name: str,
                         state_elements: Optional[Sequence[str]] = None,
                         init_offset: float = 0.):
+        assert not self._locked, "Design is locked, can no longer add models (happens when accessing parameters/num_models)."
+
         proc = self.processes[process_name]
         if state_elements is None:
             state_elements = proc.dynamic_state_elements
@@ -44,16 +53,17 @@ class SimpleIMMDesign(Design):
             self.models[model_name][(proc.id, state_element)] = Parameter(init_offset + .01 * torch.randn(1))
 
     def parameters(self):
+        self._locked = True
         yield from super().parameters()
         for pars in self.models.values():
             for par in itervalues_sorted_keys(pars):
                 yield par
 
     def for_batch(self, num_groups: int, num_timesteps: int, **kwargs):
-        return DesignForBatch(design=self,
-                              num_groups=num_groups,
-                              num_timesteps=num_timesteps,
-                              **kwargs)
+        return SimpleIMMDesignForBatch(design=self,
+                                       num_groups=num_groups,
+                                       num_timesteps=num_timesteps,
+                                       **kwargs)
 
 
 class SimpleIMMDesignForBatch(DesignForBatch):
@@ -63,7 +73,7 @@ class SimpleIMMDesignForBatch(DesignForBatch):
                  num_timesteps: int,
                  **kwargs):
         super().__init__(design=design, num_groups=num_groups, num_timesteps=num_timesteps, **kwargs)
-        self.num_models = len(design.models) + 1
+        self.num_models = design.num_models
 
     def _init_process_cov_mats(self, design: 'SimpleIMMDesign'):
         super()._init_process_cov_mats(design=design)
@@ -71,7 +81,7 @@ class SimpleIMMDesignForBatch(DesignForBatch):
         if self._design_mat_time_mods['Q']:
             raise RuntimeError("Please report error to package maintainer.")
 
-        pse_idx = {pse: i for i, pse in enumerate(design.all_state_elements)}
+        pse_idx = {pse: i for i, pse in enumerate(design.all_state_elements())}
 
         new_proc_cov = [self._design_mat_bases['Q']]
         for updates in design.models.values():
