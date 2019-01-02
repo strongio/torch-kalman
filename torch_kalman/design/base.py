@@ -6,8 +6,6 @@ import torch
 from torch import Tensor
 from torch.nn import Parameter
 
-import numpy as np
-
 from torch_kalman.covariance import Covariance
 from torch_kalman.design.for_batch import DesignForBatch
 from torch_kalman.process import Process

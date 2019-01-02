@@ -1,1 +1,1 @@
-from .design import Design
+from .base import Design
