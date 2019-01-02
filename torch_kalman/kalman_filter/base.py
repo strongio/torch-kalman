@@ -1,20 +1,17 @@
-from typing import Iterable, Optional, TypeVar, List, Callable
+from typing import TypeVar, Optional, Callable, List
 
-from tqdm import tqdm
-
+import numpy as np
 import torch
-from numpy import ndarray
+from numpy.core.multiarray import ndarray
 from torch import Tensor
 from torch.nn import ParameterList
+from tqdm import tqdm
 
 from torch_kalman.design import Design
 from torch_kalman.design.for_batch import DesignForBatch
-from torch_kalman.process import Process
-from torch_kalman.state_belief import StateBelief, Gaussian
+from torch_kalman.state_belief import Gaussian, StateBelief
 from torch_kalman.state_belief.over_time import StateBeliefOverTime
 from torch_kalman.utils import identity
-
-import numpy as np
 
 
 class KalmanFilter(torch.nn.Module):
