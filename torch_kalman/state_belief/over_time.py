@@ -11,6 +11,8 @@ from torch_kalman.state_belief import StateBelief
 
 import numpy as np
 
+from torch_kalman.state_belief.utils import log_prob_with_missings
+
 
 class StateBeliefOverTime:
     def __init__(self,
@@ -58,28 +60,8 @@ class StateBeliefOverTime:
             self._means_covs()
         return self._covs
 
-    def log_prob(self, measurements: Tensor) -> Tensor:
-        isnan = torch.isnan(measurements)
-        # remove nans first, required due to https://github.com/pytorch/pytorch/issues/9688
-        measurements = measurements.clone()
-        measurements[isnan] = 0.
-
-        # check those group x times where only some dimensions were nan; use lower dimensional
-        # family to compute log-prob
-        num_groups, num_times, num_dims = measurements.shape
-        out = self.measurement_distribution.log_prob(measurements)
-        for g in range(num_groups):
-            for t in range(num_times):
-                this_isnan = isnan[g, t, :]
-                if this_isnan.any():
-                    if this_isnan.all():
-                        out[g, t] = 0.
-                        continue
-                    loc = self.measurement_distribution.loc[g, t][~this_isnan].clone()
-                    cov = self.measurement_distribution.covariance_matrix[g, t][~this_isnan][:, ~this_isnan].clone()
-                    dist = self.distribution(loc=loc, covariance_matrix=cov)
-                    out[g, t] = dist.log_prob(measurements[g, t, ~this_isnan])
-        return out
+    def log_prob(self, obs: Tensor) -> Tensor:
+        return log_prob_with_missings(self.measurement_distribution, obs)
 
     @property
     def distribution(self) -> TypeVar('Distribution'):

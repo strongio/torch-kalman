@@ -1,4 +1,4 @@
-from typing import Tuple, Sequence, Optional
+from typing import Tuple, Sequence, Optional, TypeVar
 
 import torch
 
@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 from torch_kalman.design import Design
 from torch_kalman.design.for_batch import DesignForBatch
+from torch_kalman.state_belief.utils import log_prob_with_missings
 from torch_kalman.utils import identity
 
 
@@ -87,12 +88,19 @@ class StateBelief:
         raise NotImplementedError()
 
     def to_distribution(self) -> Distribution:
+        return self.distribution(self.means, self.covs)
+
+    @property
+    def distribution(self) -> TypeVar('Distribution'):
         raise NotImplementedError
+
+    def log_prob(self, obs: Tensor) -> Tensor:
+        measured_means, system_covariance = self.measurement
+        return log_prob_with_missings(self.distribution(measured_means, system_covariance), obs=obs)
 
     def simulate(self,
                  design_for_batch: DesignForBatch,
                  ntry_diag_incr: int = 100,
-
                  **kwargs) -> Tensor:
 
         trajectories = self._simulate_state_trajectories(design_for_batch=design_for_batch,

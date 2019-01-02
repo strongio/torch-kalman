@@ -69,7 +69,7 @@ class SimpleIMMDesignForBatch(DesignForBatch):
         super()._init_process_cov_mats(design=design)
 
         if self._design_mat_time_mods['Q']:
-            raise RuntimeError("SimpleIMMDesign not compatible with this design; please report error to package maintainer.")
+            raise RuntimeError("Please report error to package maintainer.")
 
         pse_idx = {pse: i for i, pse in enumerate(design.all_state_elements)}
 
