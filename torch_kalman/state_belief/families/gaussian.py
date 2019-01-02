@@ -39,9 +39,7 @@ class Gaussian(StateBelief):
             if group_isnan.all():  # if all nan, just don't perform update
                 continue
             # if partial nan, perform partial update:
-            means_new[i], covs_new[i] = self.partial_update(valid_idx=(~group_isnan).nonzero().squeeze(1),
-                                                            mean=self.means[i], cov=self.covs[i],
-                                                            residual=residuals[i], K=K[i], H=self.H[i], R=self.R[i])
+            raise NotImplementedError("Partial update not currently implemented; please report error to package maintainer")
 
         # faster kalman-update for groups w/o missing values
         nonan_g = (~anynan_by_group).nonzero().squeeze(-1)
@@ -53,23 +51,6 @@ class Gaussian(StateBelief):
         last_measured = self.last_measured.clone()
         last_measured[any_measured_group_idx] = 0
         return self.__class__(means=means_new, covs=covs_new, last_measured=last_measured)
-
-    def partial_update(self,
-                       valid_idx: Union[Tensor, Sequence[int], np.ndarray],
-                       mean: Tensor,
-                       cov: Tensor,
-                       residual: Tensor,
-                       K: Tensor,
-                       H: Tensor,
-                       R: Tensor) -> Tuple[Tensor, Tensor]:
-
-        residual = residual[valid_idx]
-        K = K[:, valid_idx]
-        H = H[valid_idx, :]
-        R = R[valid_idx][:, valid_idx]
-        mean = mean + torch.mm(K, residual.unsqueeze(1)).squeeze(1)
-        cov = self.covariance_update(covariance=cov[None, :, :], K=K[None, :, :], H=H[None, :, :], R=R[None, :, :])[0]
-        return mean, cov
 
     def kalman_gain(self, system_covariance, method='solve'):
         Ht = self.H.permute(0, 2, 1)
