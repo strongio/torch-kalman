@@ -43,10 +43,10 @@ class TestKalmanFilter(TestCaseTK):
         filter_kf.P = Covariance.from_log_cholesky(torch_kf.design.init_cholesky_log_diag,
                                                    torch_kf.design.init_cholesky_off_diag).detach().numpy()
 
-        filter_kf.F = batch_design.F[0][0].detach().numpy()
-        filter_kf.H = batch_design.H[0][0].detach().numpy()
-        filter_kf.R = batch_design.R[0][0].detach().numpy()
-        filter_kf.Q = batch_design.Q[0][0].detach().numpy()
+        filter_kf.F = batch_design.F(0)[0].detach().numpy()
+        filter_kf.H = batch_design.H(0)[0].detach().numpy()
+        filter_kf.R = batch_design.R(0)[0].detach().numpy()
+        filter_kf.Q = batch_design.Q(0)[0].detach().numpy()
         filter_kf.states = []
         for t in range(data.shape[1]):
             filter_kf.states.append(filter_kf.x)

@@ -8,6 +8,7 @@ from torch import Tensor
 from torch_kalman.covariance import Covariance
 
 
+# noinspection PyPep8Naming
 class DesignForBatch:
     ok_kwargs = {'input', 'progress'}
 
@@ -66,14 +67,40 @@ class DesignForBatch:
         self.measure_size = design.measure_size
 
         # design-mats:
-        self.F = self._init_transition_mats(num_timesteps)
-        self.H = self._init_measurement_mats(num_timesteps)
-        self.Q = self._init_process_cov_mats(num_timesteps, design)
-        self.R = self._init_measure_cov_mats(num_timesteps, design)
+        self._design_mat_bases = {}
+        self._design_mat_time_mods = {}
 
-    def _init_transition_mats(self, num_timesteps: int) -> Sequence[Tensor]:
+        self._init_transition_mats(design)
+        self._init_measurement_mats(design)
+        self._init_process_cov_mats(design)
+        self._init_measure_cov_mats(design)
+
+    def design_mat(self, which: str, t: int) -> Tensor:
+        base = self._design_mat_bases[which]
+        if not self._design_mat_time_mods[which]:
+            return base
+        else:
+            mat = base.clone()
+            for (r, c), values in self._design_mat_time_mods[which]:
+                mat[:, r, c] = values[t]
+            return mat
+
+    def F(self, t: int) -> Tensor:
+        return self.design_mat('F', t)
+
+    def H(self, t: int) -> Tensor:
+        return self.design_mat('H', t)
+
+    def Q(self, t: int) -> Tensor:
+        return self.design_mat('Q', t)
+
+    def R(self, t: int) -> Tensor:
+        return self.design_mat('R', t)
+
+    def _init_transition_mats(self, design: 'Design') -> None:
         F = torch.zeros(size=(self.num_groups, self.state_size, self.state_size),
                         device=self.device)
+
         dynamic_assignments = []
         for process_id, process in self.processes.items():
             o = self.process_start_idx[process_id]
@@ -84,18 +111,10 @@ class DesignForBatch:
                 else:
                     F[:, r + o, c + o] = values
 
-        if not dynamic_assignments:
-            return [F for _ in range(num_timesteps)]
-        else:
-            out = []
-            for t in range(num_timesteps):
-                Ft = F.clone()
-                for (r, c), values in dynamic_assignments:
-                    Ft[:, r, c] = values[t]
-                out.append(Ft)
-            return out
+        self._design_mat_bases['F'] = F
+        self._design_mat_time_mods['F'] = dynamic_assignments
 
-    def _init_measurement_mats(self, num_timesteps: int) -> Sequence[Tensor]:
+    def _init_measurement_mats(self, design: 'Design') -> None:
         H = torch.zeros(size=(self.num_groups, self.measure_size, self.state_size),
                         device=self.device)
         dynamic_assignments = []
@@ -109,18 +128,10 @@ class DesignForBatch:
                 else:
                     H[:, r, c + o] = values
 
-        if not dynamic_assignments:
-            return [H for _ in range(num_timesteps)]
-        else:
-            out = []
-            for t in range(num_timesteps):
-                Ht = H.clone()
-                for (r, c), values in dynamic_assignments:
-                    Ht[:, r, c] = values[t]
-                out.append(Ht)
-            return out
+        self._design_mat_bases['H'] = H
+        self._design_mat_time_mods['H'] = dynamic_assignments
 
-    def _init_process_cov_mats(self, num_timesteps: int, design: 'Design') -> Sequence[Tensor]:
+    def _init_process_cov_mats(self, design: 'Design') -> None:
         partial_proc_cov = Covariance.from_log_cholesky(design.process_cholesky_log_diag,
                                                         design.process_cholesky_off_diag,
                                                         device=self.device)
@@ -135,15 +146,12 @@ class DesignForBatch:
                 to_c = full_mat_dimnames.index(partial_mat_dimnames[c])
                 Q[to_r, to_c] = partial_proc_cov[r, c]
 
-        Q = Q.expand(self.num_groups, -1, -1)
-        return [Q for _ in range(num_timesteps)]
+        self._design_mat_bases['Q'] = Q.expand(self.num_groups, -1, -1)
+        self._design_mat_time_mods['Q'] = []
 
-    def _init_measure_cov_mats(self, num_timesteps: int, design: 'Design') -> Sequence[Tensor]:
+    def _init_measure_cov_mats(self, design: 'Design') -> None:
         R = Covariance.from_log_cholesky(design.measure_cholesky_log_diag,
                                          design.measure_cholesky_off_diag,
                                          device=self.device)
-        R = R.expand(self.num_groups, -1, -1)
-        return [R for _ in range(num_timesteps)]
-
-
-
+        self._design_mat_bases['R'] = R.expand(self.num_groups, -1, -1)
+        self._design_mat_time_mods['R'] = []

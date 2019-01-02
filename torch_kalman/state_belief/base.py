@@ -118,13 +118,13 @@ class StateBelief:
         for t in iterator:
             if t > 0:
                 # move sim forward one step:
-                state = state.predict(F=design_for_batch.F[t - 1], Q=design_for_batch.Q[t - 1])
+                state = state.predict(F=design_for_batch.F(t - 1), Q=design_for_batch.Q(t - 1))
 
             # realize the state:
             state._realize(ntry=ntry_diag_incr)
 
             # measure the state:
-            state.compute_measurement(H=design_for_batch.H[t], R=design_for_batch.R[t])
+            state.compute_measurement(H=design_for_batch.H(t), R=design_for_batch.R(t))
 
             states.append(state)
 

@@ -19,10 +19,10 @@ class TestProcess(TestCaseTK):
         batch_vel = design.for_batch(2, 1)
 
         # check F:
-        self.assertListEqual(list1=batch_vel.F[0][0].tolist(), list2=[[1., 1.], [0., 1.]])
+        self.assertListEqual(list1=batch_vel.F(0)[0].tolist(), list2=[[1., 1.], [0., 1.]])
         state_mean = Tensor([[1.], [-.5]])
         for i in range(3):
-            state_mean = torch.mm(batch_vel.F[0][0], state_mean)
+            state_mean = torch.mm(batch_vel.F(0)[0], state_mean)
             self.assertEqual(state_mean[0].item(), 1 - .5 * (i + 1.))
             self.assertEqual(state_mean[1].item(), -.5)
 
@@ -31,14 +31,14 @@ class TestProcess(TestCaseTK):
         lt.add_measure('measure')
         design = Design(processes=[lt], measures=['measure'])
         batch_vel = design.for_batch(2, 1)
-        self.assertLess(batch_vel.F[0][0][1, 1], 1.0)
-        self.assertGreater(batch_vel.F[0][0][1, 1], 0.5)
+        self.assertLess(batch_vel.F(0)[0][1, 1], 1.0)
+        self.assertGreater(batch_vel.F(0)[0][1, 1], 0.5)
         decay = design.processes['test'].decayed_transitions['velocity'].value
-        self.assertEqual(decay, batch_vel.F[0][0][1, 1])
+        self.assertEqual(decay, batch_vel.F(0)[0][1, 1])
 
         state_mean = Tensor([[0.], [1.0]])
         for i in range(3):
-            state_mean = torch.mm(batch_vel.F[0][0], state_mean)
+            state_mean = torch.mm(batch_vel.F(0)[0], state_mean)
             self.assertEqual(decay ** (i + 1), state_mean[1].item())
 
     def test_discrete_seasons(self):
@@ -60,9 +60,9 @@ class TestProcess(TestCaseTK):
         state_mean[0] = -state_mean[1:].sum()
         for i in range(10):
             state_mean_last = state_mean
-            state_mean = torch.mm(batch_season.F[0][0], state_mean)
+            state_mean = torch.mm(batch_season.F(0)[0], state_mean)
             self.assertTrue((state_mean[1:] == state_mean_last[:-1]).all())
 
-        self.assertListEqual(batch_season.H[0][0].tolist(), [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+        self.assertListEqual(batch_season.H(0)[0].tolist(), [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
 
         # TODO: test seasons w/durations

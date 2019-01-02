@@ -18,12 +18,10 @@ import numpy as np
 
 
 class KalmanFilter(torch.nn.Module):
-    def __init__(self,
-                 processes: Iterable[Process],
-                 measures: Iterable[str],
-                 device: Optional[torch.device] = None):
+    def __init__(self, *args, **kwargs):
         super().__init__()
-        self.design = Design(processes=processes, measures=measures, device=device)
+        self.design: Design = None
+        self._init_design(*args, **kwargs)
 
         # parameters from design:
         self.design_parameters = ParameterList()
@@ -34,6 +32,9 @@ class KalmanFilter(torch.nn.Module):
         self._family = None
 
         self.to(device=self.design.device)
+
+    def _init_design(self, *args, **kwargs) -> None:
+        self.design = Design(*args, **kwargs)
 
     @property
     def measure_size(self) -> int:
@@ -94,13 +95,13 @@ class KalmanFilter(torch.nn.Module):
 
                 # predict the state for t, from information from t-1
                 # F at t-1 is transition *from* t-1 *to* t
-                F = design_for_batch.F[t - 1]
-                Q = design_for_batch.Q[t - 1]
+                F = design_for_batch.F(t - 1)
+                Q = design_for_batch.Q(t - 1)
                 state_prediction = state_belief.predict(F=F, Q=Q)
 
             # compute how state-prediction at t translates into measurement-prediction at t
-            H = design_for_batch.H[t]
-            R = design_for_batch.R[t]
+            H = design_for_batch.H(t)
+            R = design_for_batch.R(t)
             state_prediction.compute_measurement(H=H, R=R)
 
             # append to output:
@@ -183,10 +184,14 @@ class KalmanFilter(torch.nn.Module):
             if t > 0:
                 # predict the state for t, from information from t-1
                 # F at t-1 is transition *from* t-1 *to* t
-                state_prediction = state_prediction.predict(F=design_for_batch.F[t - 1], Q=design_for_batch.Q[t - 1])
+                F = design_for_batch.F(t - 1)
+                Q = design_for_batch.Q(t - 1)
+                state_prediction = state_prediction.predict(F=F, Q=Q)
 
             # compute how state-prediction at t translates into measurement-prediction at t
-            state_prediction.compute_measurement(H=design_for_batch.H[t], R=design_for_batch.R[t])
+            H = design_for_batch.H(t)
+            R = design_for_batch.R(t)
+            state_prediction.compute_measurement(H=H, R=R)
 
             # append to output:
             forecasts.append(state_prediction)
