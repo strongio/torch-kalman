@@ -1,4 +1,4 @@
-from typing import TypeVar, Optional, Callable, List
+from typing import TypeVar, Optional, Callable, List, Union
 
 import numpy as np
 import torch
@@ -151,7 +151,7 @@ class KalmanFilter(torch.nn.Module):
         return torch.chunk(sim, num_iter)
 
     def forecast(self,
-                 states: StateBeliefOverTime,
+                 states: Union[StateBeliefOverTime, StateBelief],
                  horizon: int,
                  forecast_from_datetimes: Optional[ndarray] = None,
                  **kwargs) -> StateBeliefOverTime:
@@ -161,11 +161,15 @@ class KalmanFilter(torch.nn.Module):
         kwargs = kwargs.copy()
 
         # forecast-from time:
-        if forecast_from_datetimes is None:
-            state_prediction = states.last_prediction
-        else:
-            state_prediction = states.slice_by_dt(datetimes=forecast_from_datetimes)
+        if forecast_from_datetimes is not None:
             kwargs['start_datetimes'] = forecast_from_datetimes
+        if isinstance(states, StateBelief):
+            state_prediction = states
+        else:
+            if forecast_from_datetimes is None:
+                state_prediction = states.last_prediction
+            else:
+                state_prediction = states.slice_by_dt(datetimes=forecast_from_datetimes)
 
         design_for_batch = self.design.for_batch(num_groups=state_prediction.num_groups,
                                                  num_timesteps=horizon,
