@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Sequence
+from typing import Sequence, Optional
 from warnings import warn
 
 import torch
@@ -18,6 +18,7 @@ class DesignForBatch:
                  num_timesteps: int,
                  **kwargs):
 
+        self.design = design
         self.device = design.device
 
         # process indices:
@@ -66,38 +67,25 @@ class DesignForBatch:
         self.state_size = design.state_size
         self.measure_size = design.measure_size
 
-        # design-mats:
-        self._design_mat_bases = {}
-        self._design_mat_time_mods = {}
+        # transitions:
+        self.F_base = None
+        self.F_dynamic_assignments = None
+        self.F_init()
 
-        self._init_transition_mats(design)
-        self._init_measurement_mats(design)
-        self._init_process_cov_mats(design)
-        self._init_measure_cov_mats(design)
+        self.H_base = None
+        self.H_dynamic_assignments = None
+        self.H_init()
 
-    def design_mat(self, which: str, t: int) -> Tensor:
-        base = self._design_mat_bases[which]
-        if not self._design_mat_time_mods[which]:
-            return base
-        else:
-            mat = base.clone()
-            for (r, c), values in self._design_mat_time_mods[which]:
-                mat[:, r, c] = values[t]
-            return mat
+        self.Q_base = None
+        self.Q_diag_multi_dynamic_assignments = None
+        self.Q_init()
 
-    def F(self, t: int) -> Tensor:
-        return self.design_mat('F', t)
+        self.R_base = None
+        # R_dynamic_assignments not implemented yet
+        self.R_init()
 
-    def H(self, t: int) -> Tensor:
-        return self.design_mat('H', t)
-
-    def Q(self, t: int) -> Tensor:
-        return self.design_mat('Q', t)
-
-    def R(self, t: int) -> Tensor:
-        return self.design_mat('R', t)
-
-    def _init_transition_mats(self, design: 'Design') -> None:
+    # transitions ----
+    def F_init(self) -> None:
         F = torch.zeros(size=(self.num_groups, self.state_size, self.state_size),
                         device=self.device)
 
@@ -110,11 +98,23 @@ class DesignForBatch:
                     dynamic_assignments.append((idx, values))
                 else:
                     F[:, r + o, c + o] = values
+        self.F_base = F
+        self.F_dynamic_assignments = dynamic_assignments
 
-        self._design_mat_bases['F'] = F
-        self._design_mat_time_mods['F'] = dynamic_assignments
+    def F_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None) -> Tensor:
+        if clone or self.F_dynamic_assignments:
+            mat = base.clone()
+        else:
+            mat = base
+        for (r, c), values in self.F_dynamic_assignments:
+            mat[:, r, c] = values[t]
+        return mat
 
-    def _init_measurement_mats(self, design: 'Design') -> None:
+    def F(self, t: int) -> Tensor:
+        return self.F_dynamic(base=self.F_base, t=t, clone=None)
+
+    # measurements ----
+    def H_init(self) -> None:
         H = torch.zeros(size=(self.num_groups, self.measure_size, self.state_size),
                         device=self.device)
         dynamic_assignments = []
@@ -127,31 +127,83 @@ class DesignForBatch:
                     dynamic_assignments.append((idx, values))
                 else:
                     H[:, r, c + o] = values
+        self.H_base = H
+        self.H_dynamic_assignments = dynamic_assignments
 
-        self._design_mat_bases['H'] = H
-        self._design_mat_time_mods['H'] = dynamic_assignments
+    def H_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None) -> Tensor:
+        if clone or self.H_dynamic_assignments:
+            mat = base.clone()
+        else:
+            mat = base
+        for (r, c), values in self.H_dynamic_assignments:
+            mat[:, r, c] = values[t]
+        return mat
 
-    def _init_process_cov_mats(self, design: 'Design') -> None:
-        partial_proc_cov = Covariance.from_log_cholesky(design.process_cholesky_log_diag,
-                                                        design.process_cholesky_off_diag,
+    def H(self, t: int) -> Tensor:
+        return self.H_dynamic(base=self.H_base, t=t, clone=None)
+
+    # process covariance ----
+    def Q_init(self) -> None:
+        partial_proc_cov = Covariance.from_log_cholesky(self.design.process_cholesky_log_diag,
+                                                        self.design.process_cholesky_off_diag,
                                                         device=self.device)
 
-        partial_mat_dimnames = list(design.all_dynamic_state_elements())
-        full_mat_dimnames = list(design.all_state_elements())
+        partial_mat_dimnames = list(self.design.all_dynamic_state_elements())
+        full_mat_dimnames = list(self.design.all_state_elements())
 
-        Q = torch.zeros(size=(self.state_size, self.state_size), device=self.device)
+        # move from partial cov to full w/block-diag:
+        Q = torch.zeros(size=(self.num_groups, self.state_size, self.state_size), device=self.device)
         for r in range(len(partial_mat_dimnames)):
             for c in range(len(partial_mat_dimnames)):
                 to_r = full_mat_dimnames.index(partial_mat_dimnames[r])
                 to_c = full_mat_dimnames.index(partial_mat_dimnames[c])
-                Q[to_r, to_c] = partial_proc_cov[r, c]
+                Q[:, to_r, to_c] = partial_proc_cov[r, c]
 
-        self._design_mat_bases['Q'] = Q.expand(self.num_groups, -1, -1)
-        self._design_mat_time_mods['Q'] = []
+        # some variances might be inflated/deflated on a per-batch basis:
+        diag_multi = torch.eye(self.state_size, device=self.device).expand(self.num_groups, -1, -1).clone()
+        dynamic_assignments = []
+        for process_id, process in self.processes.items():
+            o = self.process_start_idx[process_id]
+            for (r, c), values in process.variance_diag_multi_assignments.items():
+                if isinstance(values, (tuple, list)):
+                    idx = (r + o, c + o)
+                    dynamic_assignments.append((idx, values))
+                else:
+                    diag_multi[:, r + o, c + o] = values
 
-    def _init_measure_cov_mats(self, design: 'Design') -> None:
-        R = Covariance.from_log_cholesky(design.measure_cholesky_log_diag,
-                                         design.measure_cholesky_off_diag,
+        self.Q_base = diag_multi.matmul(Q).matmul(diag_multi)
+        self.Q_diag_multi_dynamic_assignments = dynamic_assignments
+
+    def Q_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None) -> Tensor:
+        if clone or self.Q_diag_multi_dynamic_assignments:
+            mat = base.clone()
+        else:
+            mat = base
+
+        if self.Q_diag_multi_dynamic_assignments:
+            diag_multi = torch.eye(self.state_size, device=self.device).expand(self.num_groups, -1, -1).clone()
+            for (r, c), values in self.Q_diag_multi_dynamic_assignments:
+                diag_multi[:, r, c] = values[t]
+            return diag_multi.matmul(mat).matmul(diag_multi)
+        else:
+            return mat
+
+    def Q(self, t: int) -> Tensor:
+        return self.Q_dynamic(base=self.Q_base, t=t, clone=None)
+
+    # measurement covariance ---
+    def R_init(self) -> None:
+        R = Covariance.from_log_cholesky(self.design.measure_cholesky_log_diag,
+                                         self.design.measure_cholesky_off_diag,
                                          device=self.device)
-        self._design_mat_bases['R'] = R.expand(self.num_groups, -1, -1)
-        self._design_mat_time_mods['R'] = []
+        self.R_base = R.expand(self.num_groups, -1, -1).clone()
+
+    def R_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None):
+        if clone:
+            mat = base.clone()
+        else:
+            mat = base
+        return mat
+
+    def R(self, t: int) -> Tensor:
+        return self.R_dynamic(base=self.R_base, t=t, clone=None)

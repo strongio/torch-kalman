@@ -1,10 +1,9 @@
-from typing import Generator, Sequence, Dict, Union, Tuple, Set, Callable, Optional
+from typing import Generator, Sequence, Dict, Union, Set, Callable, Optional
 
 import torch
 from torch import Tensor
 from torch.nn import Parameter
 
-from torch_kalman.covariance import Covariance
 from torch_kalman.process.for_batch import ProcessForBatch
 
 
@@ -34,7 +33,7 @@ class Process:
         self.state_elements_to_measures = {}
 
         # expected kwargs
-        self.expected_batch_kwargs = ()
+        self.expected_batch_kwargs = []
 
         # state elements:
         assert len(state_elements) == len(set(state_elements)), "Duplicate `state_elements` not allowed."
@@ -44,6 +43,9 @@ class Process:
             assert to_el in self.state_elements, f"`{to_el}` is in transitions but not state_elements"
             for from_el in from_els.keys():
                 assert to_el in self.state_elements, f"`{from_el}` is in transitions but not state_elements"
+
+        # variance-adjustments:
+        self.var_adjustments = {}
 
         #
         self._device = None
@@ -141,26 +143,28 @@ class Process:
 
         self.state_elements_to_measures[key] = value
 
+    def add_variance_adjustment(self,
+                                state_element: str,
+                                value: Union[Callable,None]):
+        dynamic_state_elements = list(self.dynamic_state_elements)
+
+        if state_element not in dynamic_state_elements:
+            raise ValueError("Variance-adjustments are multiplicative, so only apply to elements with process-variance.")
+
+        assert state_element not in self.var_adjustments.keys(), f"Variance-adjustment to '{state_element}' already added."
+
+        if value is not None and not callable(value):
+            raise ValueError("`value` must be None, or a callable that will be applied to the ProcessForBatch.")
+
+        self.var_adjustments[state_element] = value
+
     def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'ProcessForBatch':
         assert self.measures, f"The process `{self.id}` has no measures."
         assert self.transitions, f"The process `{self.id}` has no transitions."
 
-        for_batch = ProcessForBatch(process=self,
-                                    num_groups=num_groups,
-                                    num_timesteps=num_timesteps)
-
-        # transitions that need to be re-assigned every batch (e.g. parameters)
-        for from_el, to_els in self.transitions.items():
-            for to_el, value in to_els.items():
-                if callable(value):
-                    for_batch.set_transition(from_element=from_el, to_element=to_el, values=value(for_batch))
-
-        # measure-values that "
-        for (measure, state_element), value in self.state_elements_to_measures.items():
-            if callable(value):
-                for_batch.add_measure(measure=measure, state_element=state_element, values=value(for_batch))
-
-        return for_batch
+        return ProcessForBatch(process=self,
+                               num_groups=num_groups,
+                               num_timesteps=num_timesteps)
 
     def link_to_design(self, design: 'Design') -> None:
         """
