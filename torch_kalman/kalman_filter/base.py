@@ -1,28 +1,24 @@
-from typing import Iterable, Optional, TypeVar, List, Callable
+from typing import TypeVar, Optional, Callable, List, Union
 
-from tqdm import tqdm
-
+import numpy as np
 import torch
-from numpy import ndarray
+from numpy.core.multiarray import ndarray
 from torch import Tensor
 from torch.nn import ParameterList
+from tqdm import tqdm
 
 from torch_kalman.design import Design
-from torch_kalman.process import Process
-from torch_kalman.state_belief import StateBelief, Gaussian
+from torch_kalman.design.for_batch import DesignForBatch
+from torch_kalman.state_belief import Gaussian, StateBelief
 from torch_kalman.state_belief.over_time import StateBeliefOverTime
 from torch_kalman.utils import identity
 
-import numpy as np
-
 
 class KalmanFilter(torch.nn.Module):
-    def __init__(self,
-                 processes: Iterable[Process],
-                 measures: Iterable[str],
-                 device: Optional[torch.device] = None):
+    def __init__(self, *args, **kwargs):
         super().__init__()
-        self.design = Design(processes=processes, measures=measures, device=device)
+        self.design: Design = None
+        self._init_design(*args, **kwargs)
 
         # parameters from design:
         self.design_parameters = ParameterList()
@@ -34,19 +30,21 @@ class KalmanFilter(torch.nn.Module):
 
         self.to(device=self.design.device)
 
+    def _init_design(self, *args, **kwargs) -> None:
+        self.design = Design(*args, **kwargs)
+
+    @property
+    def measure_size(self) -> int:
+        return self.design.measure_size
+
     @property
     def family(self) -> TypeVar('Gaussian'):
         if self._family is None:
             self._family = Gaussian
         return self._family
 
-    @property
-    def state_size(self) -> int:
-        return self.design.state_size
-
-    @property
-    def measure_size(self) -> int:
-        return self.design.measure_size
+    def predict_initial_state(self, design_for_batch: DesignForBatch) -> 'Gaussian':
+        return self.family(means=design_for_batch.initial_mean, covs=design_for_batch.initial_covariance)
 
     # noinspection PyShadowingBuiltins
     def forward(self,
@@ -76,7 +74,7 @@ class KalmanFilter(torch.nn.Module):
 
         # initial state of the system:
         if initial_state is None:
-            state_prediction = self.family(means=design_for_batch.initial_mean, covs=design_for_batch.initial_covariance)
+            state_prediction = self.predict_initial_state(design_for_batch)
         else:
             state_prediction = initial_state
 
@@ -94,13 +92,13 @@ class KalmanFilter(torch.nn.Module):
 
                 # predict the state for t, from information from t-1
                 # F at t-1 is transition *from* t-1 *to* t
-                F = design_for_batch.F[t - 1]
-                Q = design_for_batch.Q[t - 1]
+                F = design_for_batch.F(t - 1)
+                Q = design_for_batch.Q(t - 1)
                 state_prediction = state_belief.predict(F=F, Q=Q)
 
             # compute how state-prediction at t translates into measurement-prediction at t
-            H = design_for_batch.H[t]
-            R = design_for_batch.R[t]
+            H = design_for_batch.H(t)
+            R = design_for_batch.R(t)
             state_prediction.compute_measurement(H=H, R=R)
 
             # append to output:
@@ -153,7 +151,7 @@ class KalmanFilter(torch.nn.Module):
         return torch.chunk(sim, num_iter)
 
     def forecast(self,
-                 states: StateBeliefOverTime,
+                 states: Union[StateBeliefOverTime, StateBelief],
                  horizon: int,
                  forecast_from_datetimes: Optional[ndarray] = None,
                  **kwargs) -> StateBeliefOverTime:
@@ -163,11 +161,15 @@ class KalmanFilter(torch.nn.Module):
         kwargs = kwargs.copy()
 
         # forecast-from time:
-        if forecast_from_datetimes is None:
-            state_prediction = states.last_prediction
-        else:
-            state_prediction = states.slice_by_dt(datetimes=forecast_from_datetimes)
+        if forecast_from_datetimes is not None:
             kwargs['start_datetimes'] = forecast_from_datetimes
+        if isinstance(states, StateBelief):
+            state_prediction = states
+        else:
+            if forecast_from_datetimes is None:
+                state_prediction = states.last_prediction
+            else:
+                state_prediction = states.slice_by_dt(datetimes=forecast_from_datetimes)
 
         design_for_batch = self.design.for_batch(num_groups=state_prediction.num_groups,
                                                  num_timesteps=horizon,
@@ -183,10 +185,14 @@ class KalmanFilter(torch.nn.Module):
             if t > 0:
                 # predict the state for t, from information from t-1
                 # F at t-1 is transition *from* t-1 *to* t
-                state_prediction = state_prediction.predict(F=design_for_batch.F[t - 1], Q=design_for_batch.Q[t - 1])
+                F = design_for_batch.F(t - 1)
+                Q = design_for_batch.Q(t - 1)
+                state_prediction = state_prediction.predict(F=F, Q=Q)
 
             # compute how state-prediction at t translates into measurement-prediction at t
-            state_prediction.compute_measurement(H=design_for_batch.H[t], R=design_for_batch.R[t])
+            H = design_for_batch.H(t)
+            R = design_for_batch.R(t)
+            state_prediction.compute_measurement(H=H, R=R)
 
             # append to output:
             forecasts.append(state_prediction)

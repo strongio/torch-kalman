@@ -17,12 +17,12 @@ class TestStateBelief(TestCaseTK):
         sb = Gaussian(means=torch.zeros((1, 2)), covs=torch.ones((1, 2, 2)))
 
         # call update
-        sb.compute_measurement(H=batch_design.H[0], R=batch_design.R[0])
+        sb.compute_measurement(H=batch_design.H(0), R=batch_design.R(0))
         update1 = sb.update(obs=data[:, 0, :])
 
         # try again, but override measurement-variance to be higher
         sb2 = Gaussian(means=torch.zeros((1, 2)), covs=torch.ones((1, 2, 2)))
-        sb2.compute_measurement(H=batch_design.H[0], R=2 * batch_design.R[0])
+        sb2.compute_measurement(H=batch_design.H(0), R=2 * batch_design.R(0))
         update2 = sb2.update(obs=data[:, 0, :])
 
         self.assertTrue((update2.means < update1.means).all())

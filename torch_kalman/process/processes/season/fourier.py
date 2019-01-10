@@ -1,30 +1,32 @@
-from typing import Generator, Tuple, Optional, Union, Dict, Sequence
-
-import torch
+from typing import Generator, Tuple, Optional, Union, Sequence
 
 from torch import Tensor
 from torch.nn import Parameter
 
-from torch_kalman.covariance import Covariance
-
+from torch_kalman.process import Process
 from torch_kalman.process.for_batch import ProcessForBatch
-from torch_kalman.process.processes.season.base import DateAware
 
 import numpy as np
 
 from torch_kalman.process.utils.bounded import Bounded
-from torch_kalman.utils import itervalues_sorted_keys, split_flat
+from torch_kalman.process.utils.dt_tracker import DTTracker
+from torch_kalman.utils import split_flat
 from torch_kalman.process.utils.fourier import fourier_tensor
 
 
-class FourierSeason(DateAware):
+class FourierSeason(Process):
     def __init__(self,
                  id: str,
                  seasonal_period: Union[int, float],
                  K: int,
                  process_variance: bool = False,
                  decay: Union[bool, Tuple[float, float]] = False,
-                 **kwargs):
+                 season_start: Optional[str] = None,
+                 dt_unit: Optional[str] = None):
+
+        # handle datetimes:
+        self.dt_tracker = DTTracker(season_start=season_start, dt_unit=dt_unit)
+
         # season structure:
         self.seasonal_period = seasonal_period
         self.K = K
@@ -50,7 +52,10 @@ class FourierSeason(DateAware):
 
         self._dynamic_state_elements = state_elements if process_variance else []
 
-        super().__init__(id=id, state_elements=state_elements, transitions=transitions, **kwargs)
+        super().__init__(id=id, state_elements=state_elements, transitions=transitions)
+
+        if self.dt_tracker.start_datetime:
+            self.expected_batch_kwargs.append('start_datetimes')
 
     def parameters(self) -> Generator[Parameter, None, None]:
         if self.decay is not None:
@@ -73,7 +78,7 @@ class FourierSeason(DateAware):
         for_batch = super().for_batch(num_groups, num_timesteps)
 
         # determine the delta (integer time accounting for different groups having different start datetimes)
-        delta = self.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
+        delta = self.dt_tracker.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
 
         # determine season:
         season = delta % self.seasonal_period

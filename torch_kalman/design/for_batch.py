@@ -1,13 +1,14 @@
 from collections import OrderedDict
-from typing import Dict
+from typing import Sequence, Optional
 from warnings import warn
 
 import torch
+from torch import Tensor
 
 from torch_kalman.covariance import Covariance
-from torch_kalman.design_matrix import DesignMatOverTime
 
 
+# noinspection PyPep8Naming
 class DesignForBatch:
     ok_kwargs = {'input', 'progress'}
 
@@ -17,6 +18,7 @@ class DesignForBatch:
                  num_timesteps: int,
                  **kwargs):
 
+        self.design = design
         self.device = design.device
 
         # process indices:
@@ -65,52 +67,143 @@ class DesignForBatch:
         self.state_size = design.state_size
         self.measure_size = design.measure_size
 
-        # transition-matrix:
-        self._transitions = None
-        self.F = DesignMatOverTime.from_indices_and_vals(self.transitions,
-                                                         size=(self.num_groups, self.state_size, self.state_size),
-                                                         device=self.device)
+        # transitions:
+        self.F_base = None
+        self.F_dynamic_assignments = None
+        self.F_init()
 
-        # measurement-matrix:
-        self._state_measurements = None
-        self.H = DesignMatOverTime.from_indices_and_vals(self.state_measurements,
-                                                         size=(self.num_groups, self.measure_size, self.state_size),
-                                                         device=self.device)
+        self.H_base = None
+        self.H_dynamic_assignments = None
+        self.H_init()
 
-        # process covariance matrix:
-        self.process_cov_params = {'log_diag': design.process_cholesky_log_diag,
-                                   'off_diag': design.process_cholesky_off_diag}
-        partial_proc_cov = Covariance.from_log_cholesky(**self.process_cov_params, device=self.device)
-        self.Q = DesignMatOverTime.from_smaller_matrix(smaller_mat=partial_proc_cov,
-                                                       small_mat_dimnames=list(design.all_dynamic_state_elements()),
-                                                       large_mat_dimnames=list(design.all_state_elements()),
-                                                       size=(self.num_groups, self.state_size, self.state_size),
-                                                       device=self.device)
+        self.Q_base = None
+        self.Q_diag_multi_dynamic_assignments = None
+        self.Q_init()
 
-        # measure-covariance matrix:
-        self.measure_cov_params = {'log_diag': design.measure_cholesky_log_diag,
-                                   'off_diag': design.measure_cholesky_off_diag}
-        R = Covariance.from_log_cholesky(**self.measure_cov_params, device=self.device)
-        self.R = DesignMatOverTime(base=R.view(1, *R.shape).expand(self.num_groups, -1, -1))
+        self.R_base = None
+        # R_dynamic_assignments not implemented yet
+        self.R_init()
 
-    @property
-    def transitions(self) -> Dict:
-        if self._transitions is None:
-            transitions = {}
-            for process_id, process in self.processes.items():
-                o = self.process_start_idx[process_id]
-                for (r, c), values in process.transitions.items():
-                    transitions[r + o, c + o] = values
-            self._transitions = transitions
-        return self._transitions
+    # transitions ----
+    def F_init(self) -> None:
+        F = torch.zeros(size=(self.num_groups, self.state_size, self.state_size),
+                        device=self.device)
 
-    @property
-    def state_measurements(self) -> Dict:
-        if self._state_measurements is None:
-            state_measurements = {}
-            for process_id, process in self.processes.items():
-                o = self.process_start_idx[process_id]
-                for (measure_id, c), values in process.state_measurements.items():
-                    state_measurements[self.measure_idx[measure_id], c + o] = values
-            self._state_measurements = state_measurements
-        return self._state_measurements
+        dynamic_assignments = []
+        for process_id, process in self.processes.items():
+            o = self.process_start_idx[process_id]
+            for (r, c), values in process.transition_mat_assignments.items():
+                if isinstance(values, (tuple, list)):
+                    idx = (r + o, c + o)
+                    dynamic_assignments.append((idx, values))
+                else:
+                    F[:, r + o, c + o] = values
+        self.F_base = F
+        self.F_dynamic_assignments = dynamic_assignments
+
+    def F_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None) -> Tensor:
+        if clone or self.F_dynamic_assignments:
+            mat = base.clone()
+        else:
+            mat = base
+        for (r, c), values in self.F_dynamic_assignments:
+            mat[:, r, c] = values[t]
+        return mat
+
+    def F(self, t: int) -> Tensor:
+        return self.F_dynamic(base=self.F_base, t=t, clone=None)
+
+    # measurements ----
+    def H_init(self) -> None:
+        H = torch.zeros(size=(self.num_groups, self.measure_size, self.state_size),
+                        device=self.device)
+        dynamic_assignments = []
+        for process_id, process in self.processes.items():
+            o = self.process_start_idx[process_id]
+            for (measure_id, c), values in process.measurement_mat_assignments.items():
+                r = self.measure_idx[measure_id]
+                if isinstance(values, (tuple, list)):
+                    idx = (r, c + o)
+                    dynamic_assignments.append((idx, values))
+                else:
+                    H[:, r, c + o] = values
+        self.H_base = H
+        self.H_dynamic_assignments = dynamic_assignments
+
+    def H_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None) -> Tensor:
+        if clone or self.H_dynamic_assignments:
+            mat = base.clone()
+        else:
+            mat = base
+        for (r, c), values in self.H_dynamic_assignments:
+            mat[:, r, c] = values[t]
+        return mat
+
+    def H(self, t: int) -> Tensor:
+        return self.H_dynamic(base=self.H_base, t=t, clone=None)
+
+    # process covariance ----
+    def Q_init(self) -> None:
+        partial_proc_cov = Covariance.from_log_cholesky(self.design.process_cholesky_log_diag,
+                                                        self.design.process_cholesky_off_diag,
+                                                        device=self.device)
+
+        partial_mat_dimnames = list(self.design.all_dynamic_state_elements())
+        full_mat_dimnames = list(self.design.all_state_elements())
+
+        # move from partial cov to full w/block-diag:
+        Q = torch.zeros(size=(self.num_groups, self.state_size, self.state_size), device=self.device)
+        for r in range(len(partial_mat_dimnames)):
+            for c in range(len(partial_mat_dimnames)):
+                to_r = full_mat_dimnames.index(partial_mat_dimnames[r])
+                to_c = full_mat_dimnames.index(partial_mat_dimnames[c])
+                Q[:, to_r, to_c] = partial_proc_cov[r, c]
+
+        # some variances might be inflated/deflated on a per-batch basis:
+        diag_multi = torch.eye(self.state_size, device=self.device).expand(self.num_groups, -1, -1).clone()
+        dynamic_assignments = []
+        for process_id, process in self.processes.items():
+            o = self.process_start_idx[process_id]
+            for (r, c), values in process.variance_diag_multi_assignments.items():
+                if isinstance(values, (tuple, list)):
+                    idx = (r + o, c + o)
+                    dynamic_assignments.append((idx, values))
+                else:
+                    diag_multi[:, r + o, c + o] = values
+
+        self.Q_base = diag_multi.matmul(Q).matmul(diag_multi)
+        self.Q_diag_multi_dynamic_assignments = dynamic_assignments
+
+    def Q_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None) -> Tensor:
+        if clone or self.Q_diag_multi_dynamic_assignments:
+            mat = base.clone()
+        else:
+            mat = base
+
+        if self.Q_diag_multi_dynamic_assignments:
+            diag_multi = torch.eye(self.state_size, device=self.device).expand(self.num_groups, -1, -1).clone()
+            for (r, c), values in self.Q_diag_multi_dynamic_assignments:
+                diag_multi[:, r, c] = values[t]
+            return diag_multi.matmul(mat).matmul(diag_multi)
+        else:
+            return mat
+
+    def Q(self, t: int) -> Tensor:
+        return self.Q_dynamic(base=self.Q_base, t=t, clone=None)
+
+    # measurement covariance ---
+    def R_init(self) -> None:
+        R = Covariance.from_log_cholesky(self.design.measure_cholesky_log_diag,
+                                         self.design.measure_cholesky_off_diag,
+                                         device=self.device)
+        self.R_base = R.expand(self.num_groups, -1, -1).clone()
+
+    def R_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None):
+        if clone:
+            mat = base.clone()
+        else:
+            mat = base
+        return mat
+
+    def R(self, t: int) -> Tensor:
+        return self.R_dynamic(base=self.R_base, t=t, clone=None)

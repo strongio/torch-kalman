@@ -87,8 +87,9 @@ class Gaussian(StateBelief):
                               start_datetimes: Optional[np.ndarray] = None) -> 'GaussianOverTime':
         return GaussianOverTime(state_beliefs=state_beliefs, design=design, start_datetimes=start_datetimes)
 
-    def to_distribution(self) -> Distribution:
-        return MultivariateNormal(loc=self.means, covariance_matrix=self.covs)
+    @property
+    def distribution(self) -> TypeVar('Distribution'):
+        return MultivariateNormal
 
 
 class GaussianOverTime(StateBeliefOverTime):

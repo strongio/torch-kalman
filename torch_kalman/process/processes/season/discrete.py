@@ -6,19 +6,21 @@ import torch
 from torch import Tensor
 from torch.nn import Parameter
 
+from torch_kalman.process import Process
 from torch_kalman.process.for_batch import ProcessForBatch
-from torch_kalman.process.processes.season.base import DateAware
 from torch_kalman.process.utils.bounded import Bounded
+from torch_kalman.process.utils.dt_tracker import DTTracker
 from torch_kalman.utils import split_flat
 
 
-class Season(DateAware):
+class Season(Process):
     def __init__(self,
                  id: str,
                  seasonal_period: int,
                  season_duration: int = 1,
                  decay: Union[bool, Tuple[float, float]] = False,
-                 *args, **kwargs):
+                 season_start: Optional[str] = None,
+                 dt_unit: Optional[str] = None):
         """
         Process representing discrete seasons.
 
@@ -28,8 +30,14 @@ class Season(DateAware):
         :param decay: Analogous to dampening a trend -- the state will revert to zero as we get further from the last
         observation. This can be useful if two processes are capturing the same seasonal pattern: one can be more flexible,
         but with decay have a tendency to revert to zero, while the other is less variable but extrapolates into the future.
+        :param season_start: A string that can be parsed into a datetime by `numpy.datetime64`. See DTTracker.
+        :param dt_unit: Currently supports {'Y', 'D', 'h', 'm', 's'}. 'W' is experimentally supported.
         """
 
+        # handle datetimes:
+        self.dt_tracker = DTTracker(season_start=season_start, dt_unit=dt_unit)
+
+        #
         self.seasonal_period = seasonal_period
         self.season_duration = season_duration
 
@@ -58,8 +66,12 @@ class Season(DateAware):
         # super:
         super().__init__(id=id,
                          state_elements=state_elements,
-                         transitions=transitions,
-                         *args, **kwargs)
+                         transitions=transitions)
+
+        # expected for_batch kwargs:
+        self.expected_batch_kwargs = []
+        if self.dt_tracker.start_datetime:
+            self.expected_batch_kwargs.append('start_datetimes')
 
         # writing transition-matrix is slow, no need to do it repeatedly:
         self.transition_cache = {}
@@ -84,7 +96,7 @@ class Season(DateAware):
                   start_datetimes: Optional[np.ndarray] = None) -> ProcessForBatch:
 
         for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps, start_datetimes=start_datetimes)
-        delta = self.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
+        delta = self.dt_tracker.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
 
         in_transition = (delta % self.season_duration) == (self.season_duration - 1)
 
@@ -117,25 +129,12 @@ class Season(DateAware):
 
         return for_batch
 
-    def initial_state_for_batch(self, num_groups: int, start_datetimes: Optional[np.ndarray] = None):
-        delta = self.get_delta(num_groups, 1, start_datetimes=start_datetimes).squeeze(1)
-
-        init_mean, init_cov = self.initial_state()
-        season_shift = (np.floor(delta / self.season_duration) % self.seasonal_period).astype('int')
-
-        means = [torch.cat([init_mean[-shift:], init_mean[:-shift]]) for shift in season_shift]
-        means = torch.stack(means)
-
-        covs = init_cov.expand(num_groups, -1, -1)
-
-        return means, covs
-
     def initial_state_means_for_batch(self,
                                       parameters: Parameter,
                                       num_groups: int,
                                       start_datetimes: Optional[np.ndarray] = None) -> Tensor:
 
-        delta = self.get_delta(num_groups, 1, start_datetimes=start_datetimes).squeeze(1)
+        delta = self.dt_tracker.get_delta(num_groups, 1, start_datetimes=start_datetimes).squeeze(1)
         season_shift = (np.floor(delta / self.season_duration) % self.seasonal_period).astype('int')
         means = [torch.cat([parameters[-shift:], parameters[:-shift]]) for shift in season_shift]
         return torch.stack(means, 0)

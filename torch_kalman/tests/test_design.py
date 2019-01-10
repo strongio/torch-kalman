@@ -30,7 +30,7 @@ class TestDesign(TestCaseTK):
         batch_design = design.for_batch(num_groups=2, num_timesteps=1)
 
         # F doesn't require grad:
-        self.assertFalse(batch_design.F[0].requires_grad)
+        self.assertFalse(batch_design.F(0).requires_grad)
 
         # we can't add batch-specific values that have already been set:
         vd_init = torch.randn(2)
@@ -47,10 +47,10 @@ class TestDesign(TestCaseTK):
         batch_design = design.for_batch(num_groups=2, num_timesteps=1)
 
         # Q requires grad:
-        self.assertTrue(batch_design.Q[0].requires_grad)
+        self.assertTrue(batch_design.Q(0).requires_grad)
 
         # symmetric
-        design_Q = batch_design.Q[0][0].data.numpy()
+        design_Q = batch_design.Q(0)[0].data.numpy()
         self.assertTrue(array_equal(design_Q, design_Q.T), msg="Covariance is not symmetric.")
 
     def test_design_h(self):
@@ -58,7 +58,7 @@ class TestDesign(TestCaseTK):
         design = simple_mv_velocity_design()
         batch_design = design.for_batch(num_groups=1, num_timesteps=1)
 
-        design_H = batch_design.H[0]
+        design_H = batch_design.H(0)
         state_mean = Tensor([[[1.], [-.5],
                               [-1.5], [0.]]])
         measured_state = design_H.bmm(state_mean)
@@ -90,7 +90,7 @@ class TestDesign(TestCaseTK):
         design = Design(processes=[vel_1, vel_2, vel_common2], measures=['measure_1', 'measure_2'])
         batch_design = design.for_batch(num_groups=2, num_timesteps=1)
 
-        design_H = batch_design.H[0]
+        design_H = batch_design.H(0)
 
         self.assertListEqual(list1=design_H[0].tolist(),
                              list2=[[1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
@@ -104,7 +104,7 @@ class TestDesign(TestCaseTK):
         design = simple_mv_velocity_design(3)
         batch_design = design.for_batch(2, 1)
 
-        cov = batch_design.R[0][0]
+        cov = batch_design.R(0)[0]
         self.assertTupleEqual(cov.size(), (3, 3))
 
         self.assertTrue(cov.requires_grad)
