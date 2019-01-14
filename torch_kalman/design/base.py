@@ -29,6 +29,7 @@ class Design:
         # add processes:
         self.processes = OrderedDict()
         for process in processes:
+
             if process.id in self.processes.keys():
                 raise ValueError(f"Duplicate process-ids: {process.id}.")
             else:
@@ -38,6 +39,7 @@ class Design:
         # now that they're all added, loop through again to get details
         used_measures = set()
         self.state_size = 0
+        self.expected_batch_kwargs = set()
         for process_name in self.processes.keys():
             # link to design:
             self.processes[process_name].link_to_design(self)
@@ -50,6 +52,10 @@ class Design:
                 if measure_id not in self.measures:
                     raise ValueError(f"Measure '{measure_id}' found in process '{process.id}' but not in `measures`.")
                 used_measures.add(measure_id)
+
+            # add expected kwargs
+            for kwarg in self.processes[process_name].expected_batch_kwargs:
+                self.expected_batch_kwargs.add(kwarg)
 
         # any measures unused?
         unused_measures = set(self.measures).difference(used_measures)
