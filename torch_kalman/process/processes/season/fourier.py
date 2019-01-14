@@ -1,4 +1,5 @@
 from typing import Generator, Tuple, Optional, Union, Sequence
+from warnings import warn
 
 from torch import Tensor
 from torch.nn import Parameter
@@ -24,6 +25,7 @@ class FourierSeason(Process):
                  season_start: Optional[str] = None,
                  dt_unit: Optional[str] = None):
 
+        warn("This process is deprecated and will be removed in a future version.")
         # handle datetimes:
         self.dt_tracker = DTTracker(season_start=season_start, dt_unit=dt_unit)
 
