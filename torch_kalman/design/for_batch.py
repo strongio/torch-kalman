@@ -72,14 +72,17 @@ class DesignForBatch:
         self.F_dynamic_assignments = None
         self.F_init()
 
+        # measurements:
         self.H_base = None
         self.H_dynamic_assignments = None
         self.H_init()
 
+        # process-var:
         self.Q_base = None
         self.Q_diag_multi_dynamic_assignments = None
         self.Q_init()
 
+        # measure-var:
         self.R_base = None
         # R_dynamic_assignments not implemented yet
         self.R_init()

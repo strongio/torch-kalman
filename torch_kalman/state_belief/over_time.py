@@ -113,18 +113,23 @@ class StateBeliefOverTime:
             self._measurement_distribution = self.distribution(loc=means, covariance_matrix=covs)
         return self._measurement_distribution
 
-    def components(self) -> Dict[Tuple[str, str, str], Tensor]:
+    def components(self) -> Dict[Tuple[str, str, str], Tuple[Tensor,Tensor]]:
         states_per_measure = defaultdict(list)
         for state_belief in self.state_beliefs:
             for m, measure in enumerate(self.design.measures):
-                states_per_measure[measure].append(state_belief.H[:, m, :] * state_belief.means.data)
+                H = state_belief.H[:, m, :].data
+                m = H * state_belief.means.data
+                std = H * torch.diagonal(state_belief.covs.data, dim1=-2, dim2=-1).sqrt()
+                states_per_measure[measure].append((m, std))
 
         out = {}
-        for measure, tens in states_per_measure.items():
-            tens = torch.stack(tens).permute(1, 0, 2)
+        for measure, means_and_stds in states_per_measure.items():
+            means, stds = zip(*means_and_stds)
+            means = torch.stack(means).permute(1, 0, 2)
+            stds = torch.stack(stds).permute(1, 0, 2)
             for s, (process_name, state_element) in enumerate(self.design.all_state_elements()):
-                if ~torch.isclose(tens[:, :, s].abs().max(), torch.zeros(1)):
-                    out[(measure, process_name, state_element)] = tens[:, :, s]
+                if ~torch.isclose(means[:, :, s].abs().max(), torch.zeros(1)):
+                    out[(measure, process_name, state_element)] = (means[:, :, s], stds[:, :, s])
         return out
 
     @property
