@@ -55,7 +55,7 @@ class DesignForBatch:
 
         unused_kwargs = (set(kwargs.keys()) - used_kwargs) - self.ok_kwargs
         if unused_kwargs:
-            warn(f"Unexpected kwargs:\n{unused_kwargs}.")
+            raise RuntimeError(f"Unexpected kwargs:\n{unused_kwargs}.")
 
         # measures:
         self.measures = design.measures
