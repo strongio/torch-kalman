@@ -116,7 +116,7 @@ class KalmanFilter(torch.nn.Module):
                  horizon: int,
                  num_iter: int,
                  from_datetimes: Optional[ndarray] = None,
-                 state_belief_to_measurements: Optional[Callable] = None,
+                 state_to_measured: Optional[Callable] = None,
                  **kwargs) -> List[Tensor]:
 
         assert horizon > 0
@@ -144,10 +144,10 @@ class KalmanFilter(torch.nn.Module):
         trajectories = initial_state._simulate_state_trajectories(design_for_batch=design_for_batch,
                                                                   **kwargs)
 
-        if state_belief_to_measurements is None:
-            state_belief_to_measurements = lambda traj: traj.measurement_distribution.sample()
+        if state_to_measured is None:
+            state_to_measured = lambda traj: traj.measurement_distribution.sample()
 
-        sim = state_belief_to_measurements(trajectories)
+        sim = state_to_measured(trajectories)
         return torch.chunk(sim, num_iter)
 
     def forecast(self,
