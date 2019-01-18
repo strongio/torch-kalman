@@ -1,4 +1,4 @@
-from typing import Generator, Tuple, Optional, Union, Sequence
+from typing import Generator, Tuple, Optional, Union, Sequence, Dict, List
 from warnings import warn
 
 from torch import Tensor
@@ -20,12 +20,10 @@ class FourierSeason(Process):
                  id: str,
                  seasonal_period: Union[int, float],
                  K: int,
-                 process_variance: bool = False,
                  decay: Union[bool, Tuple[float, float]] = False,
                  season_start: Optional[str] = None,
                  dt_unit: Optional[str] = None):
 
-        warn("This process is deprecated and will be removed in a future version.")
         # handle datetimes:
         self.dt_tracker = DTTracker(season_start=season_start, dt_unit=dt_unit)
 
@@ -41,6 +39,14 @@ class FourierSeason(Process):
             self.decay = None
 
         #
+        state_elements, transitions = self._setup(decay=decay)
+
+        super().__init__(id=id, state_elements=state_elements, transitions=transitions)
+
+        if self.dt_tracker.start_datetime:
+            self.expected_batch_kwargs.append('start_datetimes')
+
+    def _setup(self, decay: bool) -> Tuple[List[str], Dict[str, Dict]]:
         state_elements = []
         transitions = {}
         for r in range(self.K):
@@ -52,12 +58,7 @@ class FourierSeason(Process):
                 else:
                     transitions[element_name] = {element_name: 1.0}
 
-        self._dynamic_state_elements = state_elements if process_variance else []
-
-        super().__init__(id=id, state_elements=state_elements, transitions=transitions)
-
-        if self.dt_tracker.start_datetime:
-            self.expected_batch_kwargs.append('start_datetimes')
+        return state_elements, transitions
 
     def parameters(self) -> Generator[Parameter, None, None]:
         if self.decay is not None:
@@ -65,12 +66,7 @@ class FourierSeason(Process):
 
     @property
     def dynamic_state_elements(self) -> Sequence[str]:
-        return self._dynamic_state_elements
-
-    # noinspection PyMethodOverriding
-    def add_measure(self, measure: str) -> None:
-        for state_element in self.state_elements:
-            super().add_measure(measure=measure, state_element=state_element, value=None)
+        raise NotImplementedError
 
     def for_batch(self,
                   num_groups: int,
@@ -79,8 +75,63 @@ class FourierSeason(Process):
         # super:
         for_batch = super().for_batch(num_groups, num_timesteps)
 
+        self._modify_batch(for_batch, start_datetimes)
+
+        return for_batch
+
+    def _modify_batch(self, proc_for_batch: ProcessForBatch, start_datetimes: Optional[np.ndarray]) -> None:
+        raise NotImplementedError
+
+
+class FourierSeasonDynamic(FourierSeason):
+    def _setup(self, decay: bool) -> Tuple[List[str], Dict[str, Dict]]:
+        state_elements, transitions = super()._setup(decay=decay)
+        state_elements.append('position')
+
+        transitions['position'] = {}
+        for state_element in state_elements:
+            if state_element == 'position':
+                if decay:
+                    transitions['position'][state_element] = lambda pfb: pfb.process.decay.value
+                else:
+                    transitions['position'][state_element] = 1.0
+            else:
+                transitions['position'][state_element] = None
+
+        return state_elements, transitions
+
+    def _modify_batch(self, proc_for_batch: ProcessForBatch, start_datetimes: Optional[np.ndarray]) -> None:
         # determine the delta (integer time accounting for different groups having different start datetimes)
-        delta = self.dt_tracker.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
+        delta = self.dt_tracker.get_delta(proc_for_batch.num_groups, proc_for_batch.num_timesteps,
+                                          start_datetimes=start_datetimes)
+
+        # determine season:
+        season = delta % self.seasonal_period
+
+        # generate the fourier tensor:
+        fourier_tens = fourier_tensor(time=Tensor(season), seasonal_period=self.seasonal_period, K=self.K)
+
+        for state_element in self.state_elements:
+            if state_element == 'position':
+                continue
+            r, c = (int(x) for x in state_element.split(sep=","))
+            values = split_flat(fourier_tens[:, :, r, c], dim=1)
+            proc_for_batch.set_transition(from_element=state_element, to_element='position', values=values)
+
+    @property
+    def dynamic_state_elements(self) -> Sequence[str]:
+        return self.state_elements
+
+    # noinspection PyMethodOverriding
+    def add_measure(self, measure: str) -> None:
+        super().add_measure(measure=measure, state_element='position', value=1.0)
+
+
+class FourierSeasonFixed(FourierSeason):
+    def _modify_batch(self, proc_for_batch: ProcessForBatch, start_datetimes: Optional[np.ndarray]) -> None:
+        # determine the delta (integer time accounting for different groups having different start datetimes)
+        delta = self.dt_tracker.get_delta(proc_for_batch.num_groups, proc_for_batch.num_timesteps,
+                                          start_datetimes=start_datetimes)
 
         # determine season:
         season = delta % self.seasonal_period
@@ -92,6 +143,13 @@ class FourierSeason(Process):
             for state_element in self.state_elements:
                 r, c = (int(x) for x in state_element.split(sep=","))
                 values = split_flat(fourier_tens[:, :, r, c], dim=1)
-                for_batch.add_measure(measure=measure, state_element=state_element, values=values)
+                proc_for_batch.add_measure(measure=measure, state_element=state_element, values=values)
 
-        return for_batch
+    @property
+    def dynamic_state_elements(self) -> Sequence[str]:
+        return []
+
+    # noinspection PyMethodOverriding
+    def add_measure(self, measure: str) -> None:
+        for state_element in self.state_elements:
+            super().add_measure(measure=measure, state_element=state_element, value=None)
