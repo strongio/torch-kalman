@@ -10,12 +10,6 @@ def fourier_model_mat(dt: Union[np.ndarray, Series],
                       K: int,
                       period: Union[np.timedelta64, str],
                       start_dt: Optional[np.datetime64] = None) -> np.ndarray:
-    """
-    Sometimes it is useful to specify a seasonal structure via the 'HLM' process, rather than the 'Fourier' process, because
-    in the former case we can allow the seasonal structure to interact with other aspects of the HLM process (e.g., an hour-
-    in-day seasonality interacts with a 'weather' predictor). This utility function constructs a model-matrix that can be
-    passed to an HLM process (or concatenated to a larger model-matrix that's then passed).
-    """
 
     # parse period:
     if isinstance(period, str):
