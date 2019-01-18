@@ -120,7 +120,7 @@ class FourierSeasonDynamic(FourierSeason):
 
     @property
     def dynamic_state_elements(self) -> Sequence[str]:
-        return self.state_elements
+        return self.state_elements[:-1]
 
     def add_measure(self, measure: str, state_element='position', value=1.0) -> None:
         super().add_measure(measure=measure, state_element=state_element, value=value)
