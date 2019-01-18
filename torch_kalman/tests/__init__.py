@@ -7,7 +7,7 @@ import torch
 from torch import Tensor
 
 from torch_kalman.design import Design
-from torch_kalman.process import Process, FourierSeason, LocalLevel, Season, LinearModel
+from torch_kalman.process import Process, FourierSeasonFixed, LocalLevel, Season, LinearModel
 from torch_kalman.process.processes.local_trend import LocalTrend
 
 import numpy as np
@@ -42,13 +42,13 @@ def name_to_proc(id: str, **kwargs) -> Process:
     season_start = '2010-01-04'
 
     if 'hour_in_day' in id:
-        out = FourierSeason(id=id,
-                            seasonal_period=24, season_start=season_start, dt_unit='h',
-                            **kwargs)
+        out = FourierSeasonFixed(id=id,
+                                 seasonal_period=24, season_start=season_start, dt_unit='h',
+                                 **kwargs)
     elif 'day_in_year' in id:
-        out = FourierSeason(id=id,
-                            seasonal_period=24 * 364.25, season_start=season_start, dt_unit='h',
-                            **kwargs)
+        out = FourierSeasonFixed(id=id,
+                                 seasonal_period=24 * 364.25, season_start=season_start, dt_unit='h',
+                                 **kwargs)
     elif 'local_level' in id:
         out = LocalLevel(id=id, **kwargs)
     elif 'local_trend' in id:
