@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union
 from warnings import warn
 
 import numpy as np
@@ -8,7 +8,7 @@ class DTTracker:
     supported_dt_units = {'Y', 'D', 'h', 'm', 's'}
 
     def __init__(self,
-                 season_start: Optional[str] = None,
+                 season_start: Union[str, None, bool] = None,
                  dt_unit: Optional[str] = None):
         """
         :param season_start: A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
@@ -23,14 +23,16 @@ class DTTracker:
         if season_start is None:
             warn("`season_start` was not passed; will assume all groups start in same season.")
             self.start_datetime = None
+        elif season_start is False:
+            pass
         else:
-            assert dt_unit is not None, "If passing `season_start` must also pass `dt_unit`."
             if dt_unit in self.supported_dt_units:
                 self.start_datetime = np.datetime64(season_start, (dt_unit, 1))
             elif dt_unit == 'W':
                 self.start_datetime = np.datetime64(season_start, ('D', 1))
             else:
                 raise ValueError(f"dt_unit {dt_unit} not currently supported")
+            assert dt_unit is not None, "If passing `season_start` must also pass `dt_unit`."
 
     def get_delta(self, num_groups: int, num_timesteps: int, start_datetimes: np.ndarray) -> np.ndarray:
         if start_datetimes is None:

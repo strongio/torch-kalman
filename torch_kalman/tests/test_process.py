@@ -12,7 +12,7 @@ from torch_kalman.tests import TestCaseTK
 class TestProcess(TestCaseTK):
 
     def test_fourier_season(self):
-        season = FourierSeasonDynamic(id='season', seasonal_period=24, K=2, decay=False)
+        season = FourierSeasonDynamic(id='season', seasonal_period=24, K=2, decay=False, season_start=False)
         season.add_measure('measure')
         design = Design(processes=[season], measures=['measure'])
         for_batch = design.for_batch(1, 24 * 2)

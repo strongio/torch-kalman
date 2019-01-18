@@ -21,7 +21,7 @@ class FourierSeason(Process):
                  seasonal_period: Union[int, float],
                  K: int,
                  decay: Union[bool, Tuple[float, float]] = False,
-                 season_start: Optional[str] = None,
+                 season_start: Union[str, None, bool] = None,
                  dt_unit: Optional[str] = None):
 
         # handle datetimes:
