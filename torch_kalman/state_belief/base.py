@@ -112,7 +112,7 @@ class StateBelief:
 
     def _simulate_state_trajectories(self,
                                      design_for_batch: DesignForBatch,
-                                     ntry_diag_incr: int,
+                                     ntry_diag_incr: int = 1000,
                                      **kwargs) -> 'StateBeliefOverTime':
         kwargs = kwargs.copy()
         design = kwargs.pop('design', None)
