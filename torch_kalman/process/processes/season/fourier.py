@@ -86,18 +86,12 @@ class FourierSeason(Process):
 class FourierSeasonDynamic(FourierSeason):
     def _setup(self, decay: bool) -> Tuple[List[str], Dict[str, Dict]]:
         state_elements, transitions = super()._setup(decay=decay)
+
+        # all fourier components transition into position:
+        transitions['position'] = {se : None for se in state_elements}
+
+        # add position. note that it doesn't transition into itself
         state_elements.append('position')
-
-        transitions['position'] = {}
-        for state_element in state_elements:
-            if state_element == 'position':
-                if decay:
-                    transitions['position'][state_element] = lambda pfb: pfb.process.decay.value
-                else:
-                    transitions['position'][state_element] = 1.0
-            else:
-                transitions['position'][state_element] = None
-
         return state_elements, transitions
 
     def _modify_batch(self, proc_for_batch: ProcessForBatch, start_datetimes: Optional[np.ndarray]) -> None:
