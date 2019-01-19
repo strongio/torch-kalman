@@ -88,7 +88,7 @@ class FourierSeasonDynamic(FourierSeason):
         state_elements, transitions = super()._setup(decay=decay)
 
         # all fourier components transition into position:
-        transitions['position'] = {se : None for se in state_elements}
+        transitions['position'] = {se: None for se in state_elements}
 
         # add position. note that it doesn't transition into itself
         state_elements.append('position')

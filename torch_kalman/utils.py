@@ -65,10 +65,10 @@ def zpad(x: Any, n: int) -> str:
 
 def split_flat(tens: Tensor, dim: int, clone: bool):
     if clone:
-        return [tens.select(dim, i) for i in range(tens.shape[dim])]
+        return [tens.select(dim, i).clone() for i in range(tens.shape[dim])]
     else:
         assert not tens.requires_grad
-        return [tens.select(dim, i).clone() for i in range(tens.shape[dim])]
+        return [tens.select(dim, i) for i in range(tens.shape[dim])]
 
 
 def identity(x: Any) -> Any:
