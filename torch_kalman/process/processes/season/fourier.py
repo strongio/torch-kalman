@@ -109,7 +109,7 @@ class FourierSeasonDynamic(FourierSeason):
             if state_element == 'position':
                 continue
             r, c = (int(x) for x in state_element.split(sep=","))
-            values = split_flat(fourier_tens[:, :, r, c], dim=1)
+            values = split_flat(fourier_tens[:, :, r, c], dim=1, clone=True)
             proc_for_batch.set_transition(from_element=state_element, to_element='position', values=values)
 
     @property
@@ -135,7 +135,7 @@ class FourierSeasonFixed(FourierSeason):
         for measure in self.measures:
             for state_element in self.state_elements:
                 r, c = (int(x) for x in state_element.split(sep=","))
-                values = split_flat(fourier_tens[:, :, r, c], dim=1)
+                values = split_flat(fourier_tens[:, :, r, c], dim=1, clone=True)
                 proc_for_batch.add_measure(measure=measure, state_element=state_element, values=values)
 
     @property

@@ -10,7 +10,6 @@ def fourier_model_mat(dt: Union[np.ndarray, Series],
                       K: int,
                       period: Union[np.timedelta64, str],
                       start_dt: Optional[np.datetime64] = None) -> np.ndarray:
-
     # parse period:
     if isinstance(period, str):
         if period == 'weekly':
@@ -64,15 +63,12 @@ def zpad(x: Any, n: int) -> str:
     return str(x).rjust(n, "0")
 
 
-def batch_diag(bmat: Tensor) -> Tensor:
-    """
-    Returns the diagonals of a batch of square matrices; from torch.distributions.MultivariateNormal
-    """
-    return bmat.reshape(bmat.shape[:-2] + (-1,))[..., ::bmat.size(-1) + 1]
-
-
-def split_flat(tens: Tensor, dim: int):
-    return [tens.select(dim, i) for i in range(tens.shape[dim])]
+def split_flat(tens: Tensor, dim: int, clone: bool):
+    if clone:
+        return [tens.select(dim, i) for i in range(tens.shape[dim])]
+    else:
+        assert not tens.requires_grad
+        return [tens.select(dim, i).clone() for i in range(tens.shape[dim])]
 
 
 def identity(x: Any) -> Any:
