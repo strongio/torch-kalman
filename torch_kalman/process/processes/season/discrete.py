@@ -106,7 +106,7 @@ class Season(Process):
         transitions['to_measured'] = -transitions['to_next_state']
         transitions['from_measured_to_measured'] = torch.from_numpy(np.where(in_transition, -1., 1.).astype('float32'))
         for k in transitions.keys():
-            transitions[k] = split_flat(transitions[k], dim=1)
+            transitions[k] = split_flat(transitions[k], dim=1, clone=True)
             if self.decay is not None:
                 transitions[k] = [x * self.decay.value for x in transitions[k]]
 

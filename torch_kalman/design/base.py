@@ -27,7 +27,7 @@ class Design:
         self.measure_size = len(self.measures)
 
         # add processes:
-        self.processes = OrderedDict()
+        self.processes: Dict[str, Process] = OrderedDict()
         for process in processes:
 
             if process.id in self.processes.keys():
@@ -67,6 +67,12 @@ class Design:
         # process slices
         self._process_idx = None
 
+        # for each process, find the index of its state-elements
+        self.proc_idx_to_measure_idx = []
+        for process_id, process in self.processes.items():
+            measure_idx = [self.measures.index(measure) for measure in process.measures]
+            self.proc_idx_to_measure_idx.append((measure_idx, self.process_idx[process_id]))
+
         # measure-covariance:
         m_upper_tri = int(self.measure_size * (self.measure_size - 1) / 2)
         self.measure_cholesky_log_diag = Parameter(data=torch.zeros(self.measure_size, device=self.device))
@@ -83,6 +89,11 @@ class Design:
         ds_upper_tri = int(num_dyn_states * (num_dyn_states - 1) / 2)
         self.process_cholesky_log_diag = Parameter(torch.zeros(num_dyn_states, device=self.device))
         self.process_cholesky_off_diag = Parameter(torch.zeros(ds_upper_tri, device=self.device))
+
+    def measure_scaling(self):
+        return Covariance.from_log_cholesky(self.measure_cholesky_log_diag,
+                                            self.measure_cholesky_off_diag,
+                                            device=self.device)
 
     @property
     def process_idx(self) -> Dict[str, slice]:
@@ -109,10 +120,6 @@ class Design:
     def requires_grad_(self, requires_grad: bool):
         for param in self.parameters():
             param.requires_grad_(requires_grad=requires_grad)
-
-    def measure_covariance(self) -> Tensor:
-        return Covariance.from_log_cholesky(log_diag=self.measure_cholesky_log_diag,
-                                            off_diag=self.measure_cholesky_off_diag)
 
     def parameters(self) -> Generator[Parameter, None, None]:
         for process in self.processes.values():

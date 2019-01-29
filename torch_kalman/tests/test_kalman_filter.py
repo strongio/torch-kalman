@@ -4,8 +4,7 @@ from torch import Tensor
 
 from torch_kalman.covariance import Covariance
 from torch_kalman.kalman_filter import KalmanFilter
-from torch_kalman.process import FourierSeason
-from torch_kalman.tests import TestCaseTK, simple_mv_velocity_design, make_rw_data, name_to_proc
+from torch_kalman.tests import TestCaseTK, simple_mv_velocity_design, name_to_proc
 
 import numpy as np
 from filterpy.kalman import KalmanFilter as filterpy_KalmanFilter
@@ -15,9 +14,8 @@ class TestKalmanFilter(TestCaseTK):
     season_start = '2010-01-04'
 
     def test_complex_kf_init(self):
-        proc_specs = {'hour_in_day_static': {'K': 3, 'process_variance': False},
-                      'hour_in_day_dynamic': {'K': 3, 'process_variance': True, 'decay': (.95, 1.00)},
-                      'day_in_year': {'K': 3, 'process_variance': False},
+        proc_specs = {'hour_in_day': {'K': 3},
+                      'day_in_year': {'K': 3},
                       'local_level': {'decay': (.33, .95)},
                       'local_trend': {'decay_position': (0.95, 1.00), 'decay_velocity': (0.90, 1.00)}
                       }

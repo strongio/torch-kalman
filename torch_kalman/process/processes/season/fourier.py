@@ -1,4 +1,4 @@
-from typing import Generator, Tuple, Optional, Union, Sequence
+from typing import Generator, Tuple, Optional, Union, Sequence, Dict, List
 from warnings import warn
 
 from torch import Tensor
@@ -19,19 +19,19 @@ class FourierSeason(Process):
     def __init__(self,
                  id: str,
                  seasonal_period: Union[int, float],
-                 K: int,
-                 process_variance: bool = False,
+                 K: Union[int, float],
                  decay: Union[bool, Tuple[float, float]] = False,
-                 season_start: Optional[str] = None,
+                 season_start: Union[str, None, bool] = None,
                  dt_unit: Optional[str] = None):
 
-        warn("This process is deprecated and will be removed in a future version.")
         # handle datetimes:
         self.dt_tracker = DTTracker(season_start=season_start, dt_unit=dt_unit)
 
         # season structure:
         self.seasonal_period = seasonal_period
-        self.K = K
+        if isinstance(K, float):
+            assert K.is_integer()
+        self.K = int(K)
 
         if decay:
             assert not isinstance(decay, bool), "decay should be floats of bounds (or False for no decay)"
@@ -41,6 +41,14 @@ class FourierSeason(Process):
             self.decay = None
 
         #
+        state_elements, transitions = self._setup(decay=decay)
+
+        super().__init__(id=id, state_elements=state_elements, transitions=transitions)
+
+        if self.dt_tracker.start_datetime:
+            self.expected_batch_kwargs.append('start_datetimes')
+
+    def _setup(self, decay: bool) -> Tuple[List[str], Dict[str, Dict]]:
         state_elements = []
         transitions = {}
         for r in range(self.K):
@@ -52,12 +60,7 @@ class FourierSeason(Process):
                 else:
                     transitions[element_name] = {element_name: 1.0}
 
-        self._dynamic_state_elements = state_elements if process_variance else []
-
-        super().__init__(id=id, state_elements=state_elements, transitions=transitions)
-
-        if self.dt_tracker.start_datetime:
-            self.expected_batch_kwargs.append('start_datetimes')
+        return state_elements, transitions
 
     def parameters(self) -> Generator[Parameter, None, None]:
         if self.decay is not None:
@@ -65,12 +68,7 @@ class FourierSeason(Process):
 
     @property
     def dynamic_state_elements(self) -> Sequence[str]:
-        return self._dynamic_state_elements
-
-    # noinspection PyMethodOverriding
-    def add_measure(self, measure: str) -> None:
-        for state_element in self.state_elements:
-            super().add_measure(measure=measure, state_element=state_element, value=None)
+        raise NotImplementedError
 
     def for_batch(self,
                   num_groups: int,
@@ -79,8 +77,91 @@ class FourierSeason(Process):
         # super:
         for_batch = super().for_batch(num_groups, num_timesteps)
 
+        self._modify_batch(for_batch, start_datetimes)
+
+        return for_batch
+
+    def _modify_batch(self, proc_for_batch: ProcessForBatch, start_datetimes: Optional[np.ndarray]) -> None:
+        raise NotImplementedError
+
+
+class TBATS(FourierSeason):
+    def _setup(self, decay: bool) -> Tuple[List[str], Dict[str, Dict]]:
+        if decay:
+            raise NotImplementedError("TODO")
+
+        self.measured_state_elements = []
+
+        state_elements = []
+        transitions = {}
+        for j in range(self.K):
+            sj = f"s{j}"
+            s_star_j = f"s*{j}"
+            transitions[sj] = {sj: np.cos(self.lam(j)), s_star_j: np.sin(self.lam(j))}  #
+            transitions[s_star_j] = {sj: -np.sin(self.lam(j)), s_star_j: np.cos(self.lam(j))}
+            state_elements.extend([sj, s_star_j])
+            self.measured_state_elements.append(sj)
+
+        return state_elements, transitions
+
+    def lam(self, j: int):
+        return 2. * np.pi * j / self.seasonal_period
+
+    # noinspection PyMethodOverriding
+    def add_measure(self, measure: str):
+        for se in self.measured_state_elements:
+            super().add_measure(measure=measure, state_element=se, value=1.0)
+
+    def _modify_batch(self, proc_for_batch: ProcessForBatch, start_datetimes: Optional[np.ndarray]) -> None:
+        pass
+
+    @property
+    def dynamic_state_elements(self) -> Sequence[str]:
+        return self.state_elements
+
+
+class FourierSeasonDynamic(FourierSeason):
+    def _setup(self, decay: bool) -> Tuple[List[str], Dict[str, Dict]]:
+        state_elements, transitions = super()._setup(decay=decay)
+
+        # all fourier components transition into position:
+        transitions['position'] = {se: None for se in state_elements}
+
+        # add position. note that it doesn't transition into itself
+        state_elements.append('position')
+        return state_elements, transitions
+
+    def _modify_batch(self, proc_for_batch: ProcessForBatch, start_datetimes: Optional[np.ndarray]) -> None:
         # determine the delta (integer time accounting for different groups having different start datetimes)
-        delta = self.dt_tracker.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
+        delta = self.dt_tracker.get_delta(proc_for_batch.num_groups, proc_for_batch.num_timesteps,
+                                          start_datetimes=start_datetimes)
+
+        # determine season:
+        season = delta % self.seasonal_period
+
+        # generate the fourier tensor:
+        fourier_tens = fourier_tensor(time=Tensor(season), seasonal_period=self.seasonal_period, K=self.K)
+
+        for state_element in self.state_elements:
+            if state_element == 'position':
+                continue
+            r, c = (int(x) for x in state_element.split(sep=","))
+            values = split_flat(fourier_tens[:, :, r, c], dim=1, clone=True)
+            proc_for_batch.set_transition(from_element=state_element, to_element='position', values=values)
+
+    @property
+    def dynamic_state_elements(self) -> Sequence[str]:
+        return self.state_elements[:-1]
+
+    def add_measure(self, measure: str, state_element='position', value=1.0) -> None:
+        super().add_measure(measure=measure, state_element=state_element, value=value)
+
+
+class FourierSeasonFixed(FourierSeason):
+    def _modify_batch(self, proc_for_batch: ProcessForBatch, start_datetimes: Optional[np.ndarray]) -> None:
+        # determine the delta (integer time accounting for different groups having different start datetimes)
+        delta = self.dt_tracker.get_delta(proc_for_batch.num_groups, proc_for_batch.num_timesteps,
+                                          start_datetimes=start_datetimes)
 
         # determine season:
         season = delta % self.seasonal_period
@@ -91,7 +172,14 @@ class FourierSeason(Process):
         for measure in self.measures:
             for state_element in self.state_elements:
                 r, c = (int(x) for x in state_element.split(sep=","))
-                values = split_flat(fourier_tens[:, :, r, c], dim=1)
-                for_batch.add_measure(measure=measure, state_element=state_element, values=values)
+                values = split_flat(fourier_tens[:, :, r, c], dim=1, clone=True)
+                proc_for_batch.add_measure(measure=measure, state_element=state_element, values=values)
 
-        return for_batch
+    @property
+    def dynamic_state_elements(self) -> Sequence[str]:
+        return []
+
+    # noinspection PyMethodOverriding
+    def add_measure(self, measure: str) -> None:
+        for state_element in self.state_elements:
+            super().add_measure(measure=measure, state_element=state_element, value=None)

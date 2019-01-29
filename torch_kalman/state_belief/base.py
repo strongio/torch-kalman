@@ -1,6 +1,7 @@
 from typing import Tuple, Sequence, Optional, TypeVar
 
 import torch
+from IPython.core.debugger import Pdb
 
 from numpy.core.multiarray import ndarray
 from torch import Tensor
@@ -100,7 +101,7 @@ class StateBelief:
 
     def simulate(self,
                  design_for_batch: DesignForBatch,
-                 ntry_diag_incr: int = 100,
+                 ntry_diag_incr: int = 1000,
                  **kwargs) -> Tensor:
 
         trajectories = self._simulate_state_trajectories(design_for_batch=design_for_batch,
@@ -111,7 +112,7 @@ class StateBelief:
 
     def _simulate_state_trajectories(self,
                                      design_for_batch: DesignForBatch,
-                                     ntry_diag_incr: int = 100,
+                                     ntry_diag_incr: int = 1000,
                                      **kwargs) -> 'StateBeliefOverTime':
         kwargs = kwargs.copy()
         design = kwargs.pop('design', None)
@@ -142,8 +143,7 @@ class StateBelief:
         # the realized state has no variance (b/c it's realized), so uncertainty will only come in on the predict step
         # from process-covariance. but *actually* no variance causes numerical issues for those states w/o process
         # covariance, so we add a small amount of variance
-        if ntry < 1:
-            ntry = 1
+        assert ntry >= 1
 
         n = self.covs.shape[1]
 
@@ -154,7 +154,7 @@ class StateBelief:
                 new_means = self.to_distribution().sample()
             except RuntimeError as e:
                 lapack = e
-                self.covs[:, range(n), range(n)] += .0000000001
+                self.covs[:, range(n), range(n)] += .000000001
             if new_means is not None:
                 break
 

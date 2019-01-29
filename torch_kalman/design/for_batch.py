@@ -162,6 +162,15 @@ class DesignForBatch:
                 to_c = full_mat_dimnames.index(partial_mat_dimnames[c])
                 Q[:, to_r, to_c] = partial_proc_cov[r, c]
 
+        # process variances are scaled by the variances of the measurements they are associated with:
+        measure_log_stds = self.design.measure_scaling().diag().sqrt().log()
+        diag_flat = torch.ones(self.state_size, device=self.device)
+        for measure_idx, process_slice in self.design.proc_idx_to_measure_idx:
+            log_scaling = measure_log_stds[measure_idx].mean()
+            diag_flat[process_slice] = log_scaling.exp()
+        diag_multi = torch.diagflat(diag_flat).expand(self.num_groups, -1, -1)
+        Q = diag_multi.matmul(Q).matmul(diag_multi)
+
         # some variances might be inflated/deflated on a per-batch basis:
         diag_multi = torch.eye(self.state_size, device=self.device).expand(self.num_groups, -1, -1).clone()
         dynamic_assignments = []
@@ -196,9 +205,7 @@ class DesignForBatch:
 
     # measurement covariance ---
     def R_init(self) -> None:
-        R = Covariance.from_log_cholesky(self.design.measure_cholesky_log_diag,
-                                         self.design.measure_cholesky_off_diag,
-                                         device=self.device)
+        R = self.design.measure_scaling()
         self.R_base = R.expand(self.num_groups, -1, -1).clone()
 
     def R_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None):

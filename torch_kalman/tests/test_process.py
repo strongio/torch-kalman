@@ -3,13 +3,49 @@ from numpy import datetime64, array
 from torch import Tensor
 
 from torch_kalman.design import Design
-from torch_kalman.process import Season
+from torch_kalman.process import Season, FourierSeasonDynamic
 from torch_kalman.process.processes.local_trend import LocalTrend
+from torch_kalman.process.processes.season.fourier import TBATS
 
 from torch_kalman.tests import TestCaseTK
 
 
 class TestProcess(TestCaseTK):
+
+    def test_fourier_season(self):
+        season = FourierSeasonDynamic(id='season', seasonal_period=24, K=2, decay=False, season_start=False)
+        season.add_measure('measure')
+        design = Design(processes=[season], measures=['measure'])
+        for_batch = design.for_batch(1, 24 * 2)
+
+        positions = []
+        state = torch.randn(5)
+        for i in range(for_batch.num_timesteps):
+            state = for_batch.F(i)[0].matmul(state)
+            positions.append(round(state[-1].item() * 100) / 100.)
+
+        self.assertListEqual(positions[0:24], positions[-24:])
+
+    def test_tbats_season(self):
+        K = 3
+        season = TBATS(id='season', seasonal_period=24, K=K, decay=False, season_start=False)
+        season.add_measure('measure')
+        design = Design(processes=[season], measures=['measure'])
+        for_batch = design.for_batch(1, 24 * 7)
+
+        positions = []
+        state = torch.randn(int(K * 2))
+        for i in range(for_batch.num_timesteps):
+            state = for_batch.F(i)[0].matmul(state)
+            pos = for_batch.H(i)[0].matmul(state)
+            positions.append(round(pos.item() * 100) / 100.)
+
+        self.assertListEqual(positions[0:24], positions[-24:])
+        # import matplotlib
+        # matplotlib.use('TkAgg')
+        # from matplotlib import pyplot as plt
+        # plt.plot(positions)
+        # plt.show()
 
     def test_velocity(self):
         # no decay:

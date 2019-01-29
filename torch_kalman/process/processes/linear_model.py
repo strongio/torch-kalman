@@ -61,7 +61,7 @@ class LinearModel(Process):
 
         for i, covariate in enumerate(self.state_elements):
             for measure in self.measures:
-                values = split_flat(re_model_mat[:, :, i], dim=1)
+                values = split_flat(re_model_mat[:, :, i], dim=1, clone=True)
                 for_batch.add_measure(measure=measure, state_element=covariate, values=values)
 
         return for_batch
