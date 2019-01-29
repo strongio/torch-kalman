@@ -24,7 +24,7 @@ class DTTracker:
             warn("`season_start` was not passed; will assume all groups start in same season.")
             self.start_datetime = None
         elif season_start is False:
-            pass
+            self.start_datetime = None
         else:
             if dt_unit in self.supported_dt_units:
                 self.start_datetime = np.datetime64(season_start, (dt_unit, 1))

@@ -19,7 +19,7 @@ class FourierSeason(Process):
     def __init__(self,
                  id: str,
                  seasonal_period: Union[int, float],
-                 K: int,
+                 K: Union[int, float],
                  decay: Union[bool, Tuple[float, float]] = False,
                  season_start: Union[str, None, bool] = None,
                  dt_unit: Optional[str] = None):
@@ -29,7 +29,9 @@ class FourierSeason(Process):
 
         # season structure:
         self.seasonal_period = seasonal_period
-        self.K = K
+        if isinstance(K, float):
+            assert K.is_integer()
+        self.K = int(K)
 
         if decay:
             assert not isinstance(decay, bool), "decay should be floats of bounds (or False for no decay)"
@@ -81,6 +83,41 @@ class FourierSeason(Process):
 
     def _modify_batch(self, proc_for_batch: ProcessForBatch, start_datetimes: Optional[np.ndarray]) -> None:
         raise NotImplementedError
+
+
+class TBATS(FourierSeason):
+    def _setup(self, decay: bool) -> Tuple[List[str], Dict[str, Dict]]:
+        if decay:
+            raise NotImplementedError("TODO")
+
+        self.measured_state_elements = []
+
+        state_elements = []
+        transitions = {}
+        for j in range(self.K):
+            sj = f"s{j}"
+            s_star_j = f"s*{j}"
+            transitions[sj] = {sj: np.cos(self.lam(j)), s_star_j: np.sin(self.lam(j))}  #
+            transitions[s_star_j] = {sj: -np.sin(self.lam(j)), s_star_j: np.cos(self.lam(j))}
+            state_elements.extend([sj, s_star_j])
+            self.measured_state_elements.append(sj)
+
+        return state_elements, transitions
+
+    def lam(self, j: int):
+        return 2. * np.pi * j / self.seasonal_period
+
+    # noinspection PyMethodOverriding
+    def add_measure(self, measure: str):
+        for se in self.measured_state_elements:
+            super().add_measure(measure=measure, state_element=se, value=1.0)
+
+    def _modify_batch(self, proc_for_batch: ProcessForBatch, start_datetimes: Optional[np.ndarray]) -> None:
+        pass
+
+    @property
+    def dynamic_state_elements(self) -> Sequence[str]:
+        return self.state_elements
 
 
 class FourierSeasonDynamic(FourierSeason):
