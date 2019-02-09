@@ -1,4 +1,4 @@
-from typing import Union, Sequence, Dict, Tuple, List
+from typing import Union, Sequence, Dict, Tuple, List, Hashable, Any
 
 from torch import Tensor
 
@@ -6,169 +6,127 @@ if False:
     from torch_kalman.process import Process  # for type-hinting w/o circular ref
 
 
+class TensorAssignment:
+    def __init__(self, key: Hashable, value: Any):
+        self.key = key
+        self._value = value
+        self._idx = None
+
+    def set_idx(self, *args):
+        self._idx = args
+
+    def get_value(self, **kwargs) -> Tensor:
+        return self._value
+
+    @property
+    def idx(self) -> Tuple[int, ...]:
+        if self._idx is None:
+            raise RuntimeError("Must call `set_idx` first.")
+        return self._idx
+
+
+class DynamicTensorAssignment(TensorAssignment):
+    pass
+
+
+class PerTimeTensorAssignment(DynamicTensorAssignment):
+    def get_value(self, time: int):
+        return self._value[time]
+
+
 class ProcessForBatch:
     def __init__(self,
                  process: 'Process',
                  num_groups: int,
                  num_timesteps: int):
-
         self.process = process
         self.num_groups = num_groups
         self.num_timesteps = num_timesteps
 
-        self.id = str(self.process.id)
-        self.state_elements = list(self.process.state_elements)
-        self.state_element_idx = dict(self.process.state_element_idx)
+        self.id = self.process.id
 
         # transitions:
         self._transition_mat_assignments = None
-        self.batch_transitions = {}
+        self.transition_adjustments = {k: [] for k in self.process.transitions.keys()}
 
         # state-element-measurements:
         self._measurement_mat_assignments = None
-        self.batch_ses_to_measures = {}
+        self.measure_adjustments = {k: [] for k in self.process.ses_to_measures.keys()}
 
         # variance-modifications:
         self._variance_diag_multi_assignments = None
-        self.batch_var_adjustments = {}
+        self.variance_adjustments = {se: [] for se in self.process.dynamic_state_elements}
+
+    # measures ----
+    @property
+    def measurement_mat_assignments(self) -> Tuple[Dict, Dict]:
+        if self._measurement_mat_assignments is None:
+            base_vals = {}
+            dynamic_vals = {}
+            for s2m_key, base_value in self.process.ses_to_measures.items():
+                ilink_fun = self.process.ses_to_measures_ilinks[s2m_key]
+                if ilink_fun is None:
+                    if base_value is None:
+                        base_value = Tensor([0.])
+                    base_vals[s2m_key] = [base_value]
+                    dynamic_vals[s2m_key] = []
+                    for adjustment in self.measure_adjustments[s2m_key]:
+                        if isinstance(adjustment, (list, tuple)):
+                            dynamic_vals[s2m_key].append(adjustment)
+                        else:
+                            base_vals[s2m_key].append(adjustment)
+            self._measurement_mat_assignments = base_vals, dynamic_vals
+
+        return self._measurement_mat_assignments
+
+    def adjust_measure(self, measure: str, state_element: str, values: Union[Sequence, Tensor]):
+        self._measurement_mat_assignments = None
+        self._check_values(values)
+        self.measure_adjustments[(measure, state_element)].append(values)
+
+    # transitions ----
+    @property
+    def transition_mat_assignments(self) -> Tuple[Dict, Dict]:
+        if self._transition_mat_assignments is None:
+            transitions = []
+            for trans_key, base_value in self.process.transitions:
+                ilink_fun = self.process.transitions_ilinks[trans_key]
+                if base_value is None:
+                    base_value = Tensor([0.])
+
+                base_assign = TensorAssignment(key=trans_key, value=base_value)
+                transitions.append(base_assign)
+
+                for adjustment in self.transition_adjustments[trans_key]:
+                    if isinstance(adjustment, (list, tuple)):
+                        adjustment_assign = DynamicTensorAssignment(key=trans_key, value=adjustment)
+                    else:
+                        adjustment_assign = DynamicTensorAssignment(key=trans_key, value=adjustment)
+                    transitions.append(adjustment_assign)
+
+                if ilink_fun is not None:
+                    # if there's a link function:
+                    # if any dynamic, convert all base to dynamic
+                    # if no dynamic ?
+                    raise NotImplementedError
+
+            self._transition_mat_assignments = transitions
+        return self._transition_mat_assignments
+
+    def adjust_transition(self, from_element: str, to_element: str, values: Union[Sequence, Tensor]):
+        self._transition_mat_assignments = None
+        self._check_values(values)
+        self.transition_adjustments[(from_element, to_element)].append(values)
 
     # covariance ---
     @property
     def variance_diag_multi_assignments(self) -> Dict:
-        if self._variance_diag_multi_assignments is None:
-            base = {}
-            # for base-mods, functions get converted to values now
-            for k, value in self.process.var_adjustments.items():
-                base[k] = value(self) if callable(value) else value
+        raise NotImplementedError
 
-            mods = {}
-            for state_element, values in {**base, **self.batch_var_adjustments}.items():
-                idx = self.process.state_element_idx[state_element]
-                if values is None:
-                    raise ValueError(f"The value for variance-modification for '{state_element}' is None, which means that "
-                                     f"this needs to be set on a per-batch basis using the `add_variance_mod` method.")
-                mods[(idx, idx)] = values
-            self._variance_diag_multi_assignments = mods
-        return self._variance_diag_multi_assignments
-
-    def add_variance_adjustment(self,
-                                state_element: str,
-                                values: Union[Sequence, Tensor]):
+    def adjust_variance(self, state_element: str, values: Union[Sequence, Tensor]):
         self._variance_diag_multi_assignments = None
-
-        assert state_element in self.process.state_elements
-
         self._check_values(values)
-
-        already = self.process.var_adjustments.get(state_element, None)
-        if already:
-            raise ValueError(f"The variance for '{state_element}' was already modified for this batch, so do so again.")
-
-        if state_element in self.batch_var_adjustments.keys():
-            raise ValueError(f"The var-adjustment for '{state_element}' was already set for this Process, so can't give "
-                             f"it batch-specific values (unless set to `None`).")
-
-        # TODO: require None in base?
-
-        self.batch_var_adjustments[state_element] = values
-
-    # transitions ----
-    @property
-    def transition_mat_assignments(self) -> Dict:
-        if self._transition_mat_assignments is None:
-            transitions = {}
-
-            # merge transitions, with batch-transitions taking precedence:
-            all_transitions = {}
-            # for base-transitions, functions get converted to values now
-            for to_el, from_els in self.process.transitions.items():
-                for from_el, value in from_els.items():
-                    if callable(value):
-                        value = value(self)
-                    all_transitions[(to_el, from_el)] = value
-
-            for to_el, from_els in self.batch_transitions.items():
-                for from_el, value in from_els.items():
-                    all_transitions[(to_el, from_el)] = value
-
-            # check value, convert to idxs:
-            for (to_el, from_el), value in all_transitions.items():
-                r, c = self.process.state_element_idx[to_el], self.process.state_element_idx[from_el]
-                if value is None:
-                    raise ValueError(f"The value for transition from '{from_el}' to '{to_el}' is None, which means that "
-                                     f"this needs to be set on a per-batch basis using the `set_transition` method.")
-                transitions[(r, c)] = value
-            self._transition_mat_assignments = transitions
-        return self._transition_mat_assignments
-
-    def set_transition(self, from_element: str, to_element: str, values: Union[Sequence, Tensor]) -> None:
-        self._transition_mat_assignments = None
-
-        assert from_element in self.process.state_elements
-        assert to_element in self.process.state_elements
-
-        if to_element in self.process.transitions.keys():
-            already = self.process.transitions[to_element].get(from_element, None)
-            if already:
-                raise ValueError(f"The transition from '{from_element}' to '{to_element}' was already set for this Process,"
-                                 f" so can't give it batch-specific values (unless set to `None`).")
-        else:
-            raise ValueError(f"The transition from '{from_element}' to '{to_element}' must be `None` in the process in order"
-                             " to set transitions on a per-batch basis; use `Process.set_transition(value=None)`.")
-
-        if to_element not in self.batch_transitions.keys():
-            self.batch_transitions[to_element] = {}
-        elif from_element in self.batch_transitions[to_element]:
-            raise ValueError(f"The transition from '{from_element}' to '{to_element}' was already set for this batch,"
-                             f" so can't set it again.")
-
-        self._check_values(values)
-
-        self.batch_transitions[to_element][from_element] = values
-
-    # measures ----
-    @property
-    def measurement_mat_assignments(self) -> Dict:
-        if self._measurement_mat_assignments is None:
-            base = {}
-            # for base-measurements, functions get converted to values now
-            for k, value in self.process.state_elements_to_measures.items():
-                base[k] = value(self) if callable(value) else value
-            ses_to_measures = {**base, **self.batch_ses_to_measures}
-
-            state_measurements = {}
-            for (measure_id, state_element), values in ses_to_measures.items():
-                c = self.state_element_idx[state_element]
-                if values is None:
-                    raise ValueError(f"The measurement value for measure '{measure_id}' of process '{self.id}' is "
-                                     f"None, which means that this needs to be set on a per-batch basis using the "
-                                     f"`add_measure` method.")
-                state_measurements[(measure_id, c)] = values
-
-            self._measurement_mat_assignments = state_measurements
-        return self._measurement_mat_assignments
-
-    def add_measure(self,
-                    measure: str,
-                    state_element: str,
-                    values: Union[Sequence, Tensor]) -> None:
-        self._measurement_mat_assignments = None
-
-        assert state_element in self.process.state_elements, f"'{state_element}' is not in this process.'"
-
-        key = (measure, state_element)
-
-        already = self.process.state_elements_to_measures.get(key, None)
-        if already:
-            raise ValueError(f"The (measure, state_element) '{key}' was already added to this process, cannot modify.")
-
-        if key in self.batch_ses_to_measures.keys():
-            raise ValueError(f"The (measure, state_element) '{key}' was already added to this batch-process.")
-
-        # TODO: require None in base?
-
-        self._check_values(values)
-        self.batch_ses_to_measures[key] = values
+        self.variance_adjustments[state_element].append(values)
 
     # misc ----
     def _check_values(self, values: Union[Tensor, Tuple, List]) -> None:

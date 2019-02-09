@@ -7,8 +7,10 @@ from torch import Tensor
 
 from torch_kalman.covariance import Covariance
 
-
 # noinspection PyPep8Naming
+from torch_kalman.utils import _add
+
+
 class DesignForBatch:
     ok_kwargs = {'input', 'progress'}
 
@@ -91,16 +93,19 @@ class DesignForBatch:
     def F_init(self) -> None:
         F = torch.zeros(size=(self.num_groups, self.state_size, self.state_size),
                         device=self.device)
+        raise NotImplementedError("where does the link function come in?")
 
         dynamic_assignments = []
         for process_id, process in self.processes.items():
             o = self.process_start_idx[process_id]
-            for (r, c), values in process.transition_mat_assignments.items():
-                if isinstance(values, (tuple, list)):
-                    idx = (r + o, c + o)
-                    dynamic_assignments.append((idx, values))
-                else:
-                    F[:, r + o, c + o] = values
+            for type, transition_mat_assignments in zip(['base', 'dynamic'], process.transition_mat_assignments):
+                for trans_key, values in transition_mat_assignments.items():
+                    r, c = (process.state_element_idx[se] for se in trans_key)
+                    if type == 'dynamic':
+                        idx = (r + o, c + o)
+                        dynamic_assignments.append((idx, values))
+                    else:
+                        F[:, r + o, c + o] = _add(values)
         self.F_base = F
         self.F_dynamic_assignments = dynamic_assignments
 
@@ -109,8 +114,8 @@ class DesignForBatch:
             mat = base.clone()
         else:
             mat = base
-        for (r, c), values in self.F_dynamic_assignments:
-            mat[:, r, c] = values[t]
+        for (r, c), list_of_values in self.F_dynamic_assignments:
+            mat[:, r, c] = _add(values[t] for values in list_of_values)
         return mat
 
     def F(self, t: int) -> Tensor:
@@ -151,8 +156,8 @@ class DesignForBatch:
                                                         self.design.process_cholesky_off_diag,
                                                         device=self.device)
 
-        partial_mat_dimnames = list(self.design.all_dynamic_state_elements())
-        full_mat_dimnames = list(self.design.all_state_elements())
+        partial_mat_dimnames = list(self.design._all_dynamic_state_elements())
+        full_mat_dimnames = list(self.design._all_state_elements())
 
         # move from partial cov to full w/block-diag:
         Q = torch.zeros(size=(self.num_groups, self.state_size, self.state_size), device=self.device)

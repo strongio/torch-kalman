@@ -75,7 +75,7 @@ class StateBeliefOverTime:
     def partial_measurements(self, exclude: Sequence[Tuple[str, str]]) -> Tuple[Tensor, Tensor]:
         remaining = set(exclude)
         exclude_idx = []
-        for i, ps in enumerate(self.design.all_state_elements()):
+        for i, ps in enumerate(self.design._all_state_elements()):
             if ps in exclude:
                 exclude_idx.append(i)
                 remaining.remove(ps)
@@ -127,7 +127,7 @@ class StateBeliefOverTime:
             means, stds = zip(*means_and_stds)
             means = torch.stack(means).permute(1, 0, 2)
             stds = torch.stack(stds).permute(1, 0, 2)
-            for s, (process_name, state_element) in enumerate(self.design.all_state_elements()):
+            for s, (process_name, state_element) in enumerate(self.design._all_state_elements()):
                 if ~torch.isclose(means[:, :, s].abs().max(), torch.zeros(1)):
                     out[(measure, process_name, state_element)] = (means[:, :, s], stds[:, :, s])
         return out
