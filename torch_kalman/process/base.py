@@ -126,7 +126,7 @@ class Process:
     def initial_state_means_for_batch(self,
                                       parameters: Parameter,
                                       num_groups: int,
-                                      batch_inputs: Optional[Dict] = None) -> Tensor:
+                                      **kwargs) -> Tensor:
         return parameters.expand(num_groups, -1)
 
     def for_batch(self,
