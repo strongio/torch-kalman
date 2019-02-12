@@ -12,11 +12,11 @@ from torch_kalman.tests import TestCaseTK, simple_mv_velocity_design
 class TestDesign(TestCaseTK):
     def test_design_attrs(self):
         with self.assertRaises(AssertionError) as cm:
-            Design(measures=['same', 'same'], processes=[])
+            Design(measures=['same', 'same'], processes=[LocalTrend('test')])
         self.assertEqual(cm.exception.args[0], "Duplicate measures.")
 
         with self.assertRaises(ValueError) as cm:
-            Design(processes=[LocalTrend(id='same'), LocalTrend(id='same')], measures=[])
+            Design(processes=[LocalTrend(id='same'), LocalTrend(id='same')], measures=['test'])
         self.assertEqual(cm.exception.args[0], "Duplicate process-ids: same.")
 
         with self.assertRaises(ValueError) as cm:
@@ -31,15 +31,6 @@ class TestDesign(TestCaseTK):
 
         # F doesn't require grad:
         self.assertFalse(batch_design.F(0).requires_grad)
-
-        # we can't add batch-specific values that have already been set:
-        vd_init = torch.randn(2)
-        vel_damp = Parameter(vd_init)
-        with self.assertRaises(ValueError) as cm:
-            batch_design.processes['0'].set_transition(from_element='velocity', to_element='velocity', values=vel_damp)
-        self.assertEqual(first=cm.exception.args[0],
-                         second="The transition from 'velocity' to 'velocity' was already set for this Process, so can't "
-                                "give it batch-specific values (unless set to `None`).")
 
     def test_design_q(self):
         # design
@@ -73,21 +64,12 @@ class TestDesign(TestCaseTK):
         vel_2.add_measure('measure_2')
 
         vel_common = LocalTrend(id='vel_common')
-        vel_common.add_measure('measure_1', value=None)
-        vel_common.add_measure('measure_2', value=None)
+        vel_common.add_measure('measure_1')
+        vel_common.ses_to_measures[('measure_1','position')] = lambda: Tensor([1.0, 0.0])
+        vel_common.add_measure('measure_2')
+        vel_common.ses_to_measures[('measure_2', 'position')] = lambda: Tensor([0.0, 1.0])
 
         design = Design(processes=[vel_1, vel_2, vel_common], measures=['measure_1', 'measure_2'])
-
-        # since it's None, requires batch-specific param:
-        with self.assertRaises(ValueError) as cm:
-            batch_design = design.for_batch(num_groups=2, num_timesteps=1)
-        expected_msg_start = f"The measurement value for measure 'measure_1' of process 'vel_common' is None"
-        self.assertIn(expected_msg_start, cm.exception.args[0])
-
-        vel_common2 = LocalTrend(id='vel_common')
-        vel_common2.add_measure('measure_1', value=lambda x: Tensor([1.0, 0.0]))
-        vel_common2.add_measure('measure_2', value=lambda x: Tensor([0.0, 1.0]))
-        design = Design(processes=[vel_1, vel_2, vel_common2], measures=['measure_1', 'measure_2'])
         batch_design = design.for_batch(num_groups=2, num_timesteps=1)
 
         design_H = batch_design.H(0)

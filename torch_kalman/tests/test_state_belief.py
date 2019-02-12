@@ -8,7 +8,7 @@ from torch_kalman.tests import TestCaseTK, simple_mv_velocity_design
 class TestStateBelief(TestCaseTK):
     def test_update(self):
         design = simple_mv_velocity_design(dims=1)
-        batch_design = design.for_batch(1,1)
+        batch_design = design.for_batch(1, 1)
 
         # make data w/ large value
         data = Tensor([1000.])[:, None, None]

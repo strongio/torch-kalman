@@ -8,15 +8,19 @@ class DTTracker:
     supported_dt_units = {'Y', 'D', 'h', 'm', 's'}
 
     def __init__(self,
+                 process_id: str,
                  season_start: Union[str, None, bool] = None,
                  dt_unit: Optional[str] = None):
         """
+        :param process_id: For helpful error messages
         :param season_start: A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
         starts, which is useful to specify if season boundaries are meaningful. It is important to specify if different
         groups in your dataset start on different dates; when calling the kalman-filter you'll pass an array of
         `start_datetimes` for group in the input, and this will be used to align the seasons for each group.
         :param dt_unit: Currently supports {'Y', 'D', 'h', 'm', 's'}. 'W' is experimentally supported.
         """
+
+        self.process_id = process_id
 
         # parse date information:
         self.dt_unit = dt_unit
@@ -37,7 +41,7 @@ class DTTracker:
     def get_delta(self, num_groups: int, num_timesteps: int, start_datetimes: np.ndarray) -> np.ndarray:
         if start_datetimes is None:
             if self.start_datetime:
-                raise ValueError("`start_datetimes` argument required.")
+                raise ValueError(f"Must pass `start_datetimes` to process `{self.process_id}`.")
             delta = np.broadcast_to(np.arange(0, num_timesteps), shape=(num_groups, num_timesteps))
         else:
 

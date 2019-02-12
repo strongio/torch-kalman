@@ -1,4 +1,4 @@
-from typing import Optional, Union, Generator, Tuple, Callable, Sequence
+from typing import Optional, Union, Generator, Tuple, Sequence, Dict
 
 import numpy as np
 import torch
@@ -14,6 +14,7 @@ from torch_kalman.utils import split_flat
 
 
 class Season(Process):
+
     def __init__(self,
                  id: str,
                  seasonal_period: int,
@@ -35,7 +36,7 @@ class Season(Process):
         """
 
         # handle datetimes:
-        self.dt_tracker = DTTracker(season_start=season_start, dt_unit=dt_unit)
+        self.dt_tracker = DTTracker(season_start=season_start, dt_unit=dt_unit, process_id=id)
 
         #
         self.seasonal_period = seasonal_period
@@ -44,17 +45,17 @@ class Season(Process):
         # state-elements:
         self.measured_name = 'measured'
         pad_n = len(str(seasonal_period))
-        state_elements = [self.measured_name] + [str(i).rjust(pad_n, "0") for i in range(1, seasonal_period)]
+        super().__init__(id=id,
+                         state_elements=[self.measured_name] + [str(i).rjust(pad_n, "0") for i in range(1, seasonal_period)])
 
-        # transitions are placeholder, filled in w/batch
-        transitions = {}
-        for i in range(len(state_elements)):
-            current = state_elements[i]
-            transitions[current] = {current: None}
+        # transitions are placeholders, filled in w/batch
+        for i, current in enumerate(self.state_elements):
+            self._set_transition(from_element=current, to_element=current, value=0.)
             if i > 0:
-                prev = state_elements[i - 1]
-                transitions[current][prev] = None
-                transitions[self.measured_name][prev] = None
+                prev = self.state_elements[i - 1]
+                self._set_transition(from_element=prev, to_element=current, value=0.)
+                if i > 1:
+                    self._set_transition(from_element=prev, to_element=self.measured_name, value=0.)
 
         if decay:
             assert not isinstance(decay, bool), "decay should be floats of bounds (or False for no decay)"
@@ -63,24 +64,8 @@ class Season(Process):
         else:
             self.decay = None
 
-        # super:
-        super().__init__(id=id,
-                         state_elements=state_elements,
-                         transitions=transitions)
-
-        # expected for_batch kwargs:
-        self.expected_batch_kwargs = []
-        if self.dt_tracker.start_datetime:
-            self.expected_batch_kwargs.append('start_datetimes')
-
-        # writing transition-matrix is slow, no need to do it repeatedly:
-        self.transition_cache = {}
-
-    def add_measure(self,
-                    measure: str,
-                    state_element: str = 'measured',
-                    value: Union[float, Callable, None] = 1.0) -> None:
-        super().add_measure(measure=measure, state_element=state_element, value=value)
+    def add_measure(self, measure: str):
+        self._set_measure(measure=measure, state_element='measured', value=1.0)
 
     def parameters(self) -> Generator[Parameter, None, None]:
         if self.decay is not None:
@@ -95,7 +80,8 @@ class Season(Process):
                   num_timesteps: int,
                   start_datetimes: Optional[np.ndarray] = None) -> ProcessForBatch:
 
-        for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps, start_datetimes=start_datetimes)
+        for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
+
         delta = self.dt_tracker.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
 
         in_transition = (delta % self.season_duration) == (self.season_duration - 1)
@@ -108,7 +94,8 @@ class Season(Process):
         for k in transitions.keys():
             transitions[k] = split_flat(transitions[k], dim=1, clone=True)
             if self.decay is not None:
-                transitions[k] = [x * self.decay.value for x in transitions[k]]
+                decay_value = self.decay.get_value()
+                transitions[k] = [x * decay_value for x in transitions[k]]
 
         # this is convoluted, but the idea is to manipulate the transitions so that we use one less degree of freedom than
         # the number of seasons, by having the 'measured' state be equal to -sum(all others)
@@ -121,11 +108,11 @@ class Season(Process):
             else:
                 to_measured = transitions['to_measured']
 
-            for_batch.set_transition(from_element=prev, to_element=current, values=transitions['to_next_state'])
-            for_batch.set_transition(from_element=prev, to_element=self.measured_name, values=to_measured)
+            for_batch.adjust_transition(from_element=prev, to_element=current, adjustment=transitions['to_next_state'])
+            for_batch.adjust_transition(from_element=prev, to_element=self.measured_name, adjustment=to_measured)
 
             # from state to itself:
-            for_batch.set_transition(from_element=current, to_element=current, values=transitions['to_self'])
+            for_batch.adjust_transition(from_element=current, to_element=current, adjustment=transitions['to_self'])
 
         return for_batch
 

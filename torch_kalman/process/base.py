@@ -1,4 +1,4 @@
-from typing import Generator, Sequence, Union, Set, Callable, Optional
+from typing import Generator, Sequence, Union, Set, Callable, Optional, Dict, Tuple, List
 
 import torch
 from torch import Tensor
@@ -6,69 +6,48 @@ from torch.nn import Parameter
 
 from torch_kalman.process.for_batch import ProcessForBatch
 
+DesignMatAssignment = Union[float, Tensor, Callable]
+
 
 class Process:
-    """
-    - local level : transition matmul w/ logit link
-    - discrete season : transition completely overridden
-    - linear model / nn / static fourier : measure matmul w/identity link
-    - dynamic fourier : transition matmul w/ identity link
-    - offer fx : logit link?
-
-    So the odd one outfe is discrete seasons.
-    """
-
     def __init__(self,
                  id: str,
                  state_elements: Sequence[str]):
         self.id: str = str(id)
         self.state_elements: Sequence[str] = state_elements
         assert len(state_elements) == len(set(state_elements)), "Duplicate `state_elements`."
+        self.state_element_idx: Dict[str, int] = {se: i for i, se in enumerate(self.state_elements)}
 
-        self.ses_to_measures = {}
-        self.ses_to_measures_ilinks = {}
-        self.transitions = {}
-        self.transitions_ilinks = {}
-        """
-        process(for batch)
-        1. base-value / intercept (not applicable for var-adjust)
-        2. lists of els, where each element is either (a) tensor (if time-invariant), (b) list-of-tensors (if time-varying)
-        3. separate dict for (a) elements and (b) elements; each key'd by position in matrix
-        4. dict for inv_link function, key'd by position in matrix
-        design(for batch) 
-        5. create a "base" matrix (all (a)s) on the unconstrained scale.
-        6. when asking for matrix at time T, first assign any (b)s, then loop thru to convert to unconstrained scale
-        
-        other tweaks:
-        - ProcessForBatch *_assignments uses idx_in_design to offset the assignments
-        """
+        self.ses_to_measures: Dict[Tuple[str, str], DesignMatAssignment] = {}
+        self.ses_to_measures_ilinks: Dict[Tuple[str, str], Union[Callable, None]] = {}
+        self.transitions: Dict[Tuple[str, str], DesignMatAssignment] = {}
+        self.transitions_ilinks: Dict[Tuple[str, str], Union[Callable, None]] = {}
 
-        self._device = None
-        self._state_element_idx = None
+        self._device: torch.device = None
 
         #
-        self.expected_batch_kwargs = []
+        self.expected_config: List = []
 
     # measures ---
     def add_measure(self, measure: str):
-        # inheritors should usually call `set_measure`, as there's typically a clear choice of which element(s) are measured
-        pass
+        """
+        Calls 'set_measure' with default state_element, value
+        """
+        raise NotImplementedError
 
     def _set_measure(self,
                      measure: str,
                      state_element: str,
-                     value: Union[float, None],
-                     inv_link: Optional[Callable] = None):
+                     value: DesignMatAssignment,
+                     inv_link: Union[Callable, None, bool] = None):
         """
         sets the baseline contribution of state_element to measure; establishes a link function for how `adjust_measure`
-        changes this baseline.
-        passing value=None can aid clarity if the baseline is 0, but this will necessarily be modified in batch (so
-        differentiates from an unmeasureable state-element, which is also zero)
+        changes this baseline (inv_link=None means identity link-fun)
         """
 
-        if value is not None:
-            assert isinstance(value, float)
-            value = torch.Tensor([value])
+        assert state_element in self.state_elements
+
+        value = self._check_design_mat_assignment(value)
 
         key = (measure, state_element)
         assert key not in self.ses_to_measures, f"{key} already set"
@@ -78,19 +57,23 @@ class Process:
 
     @property
     def measures(self) -> Set[str]:
-        return set(self.ses_to_measures.keys())
+        return set(measure for measure, state_element in self.ses_to_measures.keys())
 
     # transitions ---
     def _set_transition(self,
                         from_element: str,
                         to_element: str,
-                        value: Union[float, None],
-                        inv_link: Optional[Callable] = torch.sigmoid
+                        value: DesignMatAssignment,
+                        inv_link: Union[Callable, None, bool] = None
                         ):
+        """
+       sets the baseline transition of between state_elements; establishes a link function for how `adjust_transition`
+       changes this baseline (inv_link=None means identity link-fun)
+       """
+        assert from_element in self.state_elements
+        assert to_element in self.state_elements
 
-        if value is not None:
-            assert isinstance(value, float)
-            value = torch.Tensor([value])
+        value = self._check_design_mat_assignment(value)
 
         key = (from_element, to_element)
         assert key not in self.transitions, f"{key} already set"
@@ -112,14 +95,18 @@ class Process:
     def parameters(self) -> Generator[torch.nn.Parameter, None, None]:
         raise NotImplementedError
 
-    def link_to_design(self, design: 'Design') -> None:
-        """
-        In addition to what's done here, this method is useful for processes that need to know about the design they're
-        nested within.
-
-        :param design: The design this process is embedded in.
-        """
-        self.set_device(design.device)
+    @staticmethod
+    def _check_design_mat_assignment(value: DesignMatAssignment) -> Union[Tensor, Callable]:
+        if isinstance(value, float):
+            value = torch.Tensor([value])
+        elif isinstance(value, Tensor):
+            assert value.numel() == 1
+            if value.grad_fn:
+                raise ValueError("If `value` is the result of computations that require_grad, need to wrap those "
+                                 "computations in a function and pass that for `value` instead.")
+        else:
+            assert callable(value), "`value` must be float, tensor, or a function that produces a tensor"
+        return value
 
     @property
     def device(self):
@@ -136,10 +123,16 @@ class Process:
         for param in self.parameters():
             param.requires_grad_(requires_grad=requires_grad)
 
-    def initial_state_means_for_batch(self, parameters: Parameter, num_groups: int, **kwargs) -> Tensor:
+    def initial_state_means_for_batch(self,
+                                      parameters: Parameter,
+                                      num_groups: int,
+                                      batch_inputs: Optional[Dict] = None) -> Tensor:
         return parameters.expand(num_groups, -1)
 
-    def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'ProcessForBatch':
+    def for_batch(self,
+                  num_groups: int,
+                  num_timesteps: int,
+                  **kwargs) -> 'ProcessForBatch':
         assert self.measures, f"The process `{self.id}` has no measures."
         assert self.transitions, f"The process `{self.id}` has no transitions."
         return ProcessForBatch(process=self,
