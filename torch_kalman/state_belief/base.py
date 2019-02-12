@@ -101,26 +101,24 @@ class StateBelief:
 
     def simulate(self,
                  design_for_batch: DesignForBatch,
-                 ntry_diag_incr: int = 1000,
-                 **kwargs) -> Tensor:
+                 progress: bool = False,
+                 ntry_diag_incr: int = 1000) -> Tensor:
 
-        trajectories = self._simulate_state_trajectories(design_for_batch=design_for_batch,
-                                                         ntry_diag_incr=ntry_diag_incr,
-                                                         **kwargs)
+        trajectories = self.simulate_state_trajectories(design_for_batch=design_for_batch,
+                                                        ntry_diag_incr=ntry_diag_incr,
+                                                        progress=progress)
 
         return trajectories.measurement_distribution.sample()
 
-    def _simulate_state_trajectories(self,
-                                     design_for_batch: DesignForBatch,
-                                     ntry_diag_incr: int = 1000,
-                                     **kwargs) -> 'StateBeliefOverTime':
-        kwargs = kwargs.copy()
-        design = kwargs.pop('design', None)
+    def simulate_state_trajectories(self,
+                                    design_for_batch: DesignForBatch,
+                                    progress: bool = False,
+                                    ntry_diag_incr: int = 1000) -> 'StateBeliefOverTime':
 
-        prog = kwargs.pop('progress', identity) or identity
-        if prog is True:
-            prog = tqdm
-        iterator = prog(range(design_for_batch.num_timesteps))
+        progress = progress or identity
+        if progress is True:
+            progress = tqdm
+        iterator = progress(range(design_for_batch.num_timesteps))
 
         state = self.__class__(means=self.means.clone(), covs=self.covs.clone())
         states = []
@@ -137,9 +135,9 @@ class StateBelief:
 
             states.append(state)
 
-        return self.__class__.concatenate_over_time(state_beliefs=states, design=design)
+        return self.__class__.concatenate_over_time(state_beliefs=states, design=design_for_batch.design)
 
-    def _realize(self, ntry: int) -> Tensor:
+    def _realize(self, ntry: int) -> None:
         # the realized state has no variance (b/c it's realized), so uncertainty will only come in on the predict step
         # from process-covariance. but *actually* no variance causes numerical issues for those states w/o process
         # covariance, so we add a small amount of variance
