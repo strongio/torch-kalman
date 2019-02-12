@@ -49,8 +49,8 @@ class KalmanFilter(torch.nn.Module):
     def design_for_batch(self,
                          num_groups: int,
                          num_timesteps: int,
-                         process_kwargs: Optional[Dict[str, Dict]] = None) -> DesignForBatch:
-        return self.design.for_batch(num_groups=num_groups, num_timesteps=num_timesteps, process_kwargs=process_kwargs)
+                         **kwargs) -> DesignForBatch:
+        return self.design.for_batch(num_groups=num_groups, num_timesteps=num_timesteps, **kwargs)
 
     # noinspection PyShadowingBuiltins
     def forward(self,
