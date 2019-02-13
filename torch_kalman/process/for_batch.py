@@ -1,7 +1,7 @@
 from typing import Union, Sequence, Dict, Tuple, List, Callable, Set
-from warnings import warn
 
 import torch
+
 from torch import Tensor
 
 from torch_kalman.utils import split_flat
@@ -134,11 +134,14 @@ class ProcessForBatch:
 
     def adjust_variance(self,
                         state_element: str,
-                        adjustment: Union[Sequence, Tensor],
+                        adjustment: DesignMatAdjustment,
                         check_slow_grad: bool = True):
         self._variance_diag_multi_assignments = None
         adjustment = self._validate_assignment(adjustment, check_slow_grad)
-        self.variance_adjustments[state_element].append(adjustment)
+        if state_element in self.variance_adjustments.keys():
+            self.variance_adjustments[state_element].append(adjustment)
+        else:
+            raise KeyError(f"`{state_element}` isn't in the dynamic_state_elements of this process.")
 
     # misc ----
     def _consolidate_adjustments(self,
