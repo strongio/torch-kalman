@@ -15,6 +15,7 @@ class NN(Process):
     """
     Uses a torch.nn.module to map an input tensor into a lower-dimensional state representation.
     """
+
     def __init__(self,
                  id: str,
                  input_dim: int,
@@ -34,6 +35,9 @@ class NN(Process):
         pad_n = len(str(state_dim))
         super().__init__(id=id,
                          state_elements=[str(i).rjust(pad_n, "0") for i in range(state_dim)])
+
+        for se in self.state_elements:
+            self._set_transition(from_element=se, to_element=se, value=1.0)
 
         # process covariance:
         self._dynamic_state_elements = []
@@ -73,7 +77,7 @@ class NN(Process):
 
         for measure in self.measures:
             for el in self.state_elements:
-                for_batch.adjust_measure(measure=measure, state_element=el, adjustment=nn_outputs[el])
+                for_batch.adjust_measure(measure=measure, state_element=el, adjustment=nn_outputs[el], check_slow_grad=False)
 
         return for_batch
 

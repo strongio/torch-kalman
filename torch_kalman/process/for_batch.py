@@ -69,11 +69,15 @@ class ProcessForBatch:
 
         return self._measurement_mat_assignments
 
-    def adjust_measure(self, measure: str, state_element: str, adjustment: DesignMatAdjustment):
+    def adjust_measure(self,
+                       measure: str,
+                       state_element: str,
+                       adjustment: DesignMatAdjustment,
+                       check_slow_grad: bool = True):
         key = (measure, state_element)
         if self.process.ses_to_measures_ilinks[key] is False:
             raise Exception(f"{key} is not adjustable")
-        adjustment = self._check_design_mat_assignment(adjustment)
+        adjustment = self._validate_assignment(adjustment, check_slow_grad)
         self._measurement_mat_assignments = None
         self.measure_adjustments[key].append(adjustment)
 
@@ -97,11 +101,15 @@ class ProcessForBatch:
             self._transition_mat_assignments = base_transitions, dynamic_transitions
         return self._transition_mat_assignments
 
-    def adjust_transition(self, from_element: str, to_element: str, adjustment: DesignMatAdjustment):
+    def adjust_transition(self,
+                          from_element: str,
+                          to_element: str,
+                          adjustment: DesignMatAdjustment,
+                          check_slow_grad: bool = True):
         key = (from_element, to_element)
         if self.process.transitions_ilinks[key] is False:
             raise Exception(f"{key} is not adjustable")
-        adjustment = self._check_design_mat_assignment(adjustment)
+        adjustment = self._validate_assignment(adjustment, check_slow_grad)
         self._transition_mat_assignments = None
         self.transition_adjustments[key].append(adjustment)
 
@@ -124,9 +132,12 @@ class ProcessForBatch:
             self._variance_diag_multi_assignments = base_adjustments, dynamic_adjustments
         return self._variance_diag_multi_assignments
 
-    def adjust_variance(self, state_element: str, adjustment: Union[Sequence, Tensor]):
+    def adjust_variance(self,
+                        state_element: str,
+                        adjustment: Union[Sequence, Tensor],
+                        check_slow_grad: bool = True):
         self._variance_diag_multi_assignments = None
-        adjustment = self._check_design_mat_assignment(adjustment)
+        adjustment = self._validate_assignment(adjustment, check_slow_grad)
         self.variance_adjustments[state_element].append(adjustment)
 
     # misc ----
@@ -184,7 +195,9 @@ class ProcessForBatch:
 
         return reduced_base, reduced_dynamic
 
-    def _check_design_mat_assignment(self, design_mat_assignment: DesignMatAdjustment) -> DesignMatAdjustment:
+    def _validate_assignment(self,
+                             design_mat_assignment: DesignMatAdjustment,
+                             check_slow_grad: bool = True) -> DesignMatAdjustment:
         if isinstance(design_mat_assignment, Tensor):
 
             if list(design_mat_assignment.shape) == [self.num_groups, self.num_timesteps]:
@@ -194,17 +207,17 @@ class ProcessForBatch:
                                      "containing a 1D tensor w/ len(groups) (or each containing a scalar tensor).")
                 design_mat_assignment = split_flat(design_mat_assignment, dim=1, clone=True)
             else:
-                self._check_tens(design_mat_assignment, in_list=False)
+                self._check_tens(design_mat_assignment, in_list=False, check_slow_grad=check_slow_grad)
 
         if isinstance(design_mat_assignment, (list, tuple)):
             assert len(design_mat_assignment) == self.num_timesteps
-            [self._check_tens(tens, in_list=True) for tens in design_mat_assignment]
+            [self._check_tens(tens, in_list=True, check_slow_grad=check_slow_grad) for tens in design_mat_assignment]
         else:
             raise ValueError("Expected `design_mat_assignment` be list/tuple or tensor")
 
         return design_mat_assignment
 
-    def _check_tens(self, tens: Tensor, in_list: bool) -> None:
+    def _check_tens(self, tens: Tensor, in_list: bool, check_slow_grad: bool = True) -> None:
         if tens.numel() != 1:
             if list(tens.shape) != [self.num_groups]:
                 msg = ("Expected {listof}1D tensor{plural} {each}with length == num_groups.".
@@ -213,14 +226,14 @@ class ProcessForBatch:
                               each='each ' if in_list else ''))
                 raise ValueError(msg)
         if in_list:
-            if tens.requires_grad:
+            if tens.requires_grad and check_slow_grad:
                 avoid_funs = {'CopyBackwards', 'SelectBackward'}
                 next_fun = tens.grad_fn.next_functions[0][0]
                 if (tens.grad_fn.__class__.__name__ in avoid_funs) or (next_fun.__class__.__name__ in avoid_funs):
-                    msg = (f"An adjustment made inside process `{self.process.id}` appears to have been generated "
-                           f"by first creating a tensor that requires_grad, then splitting it into a list of "
-                           f"tensors, one for each time-point. This will lead to a very slow backward pass, and "
-                           f"should be avoided; instead, first make a list of tensors, then do computations that "
-                           f"require_grad on each element of the list.")
-                    if getattr(self.process, 'allow_slow_backward', None) is None:
-                        raise RuntimeError(msg)
+                    raise RuntimeError(f"An adjustment made for process `{self.process.id}` appears to have been generated "
+                                       f"by first creating a tensor that requires_grad, then splitting it into a list of "
+                                       f"tensors, one for each time-point. If this is incorrect, avoid this msg by passing "
+                                       f"check_slow_grad=False to the adjustment method. Otherwise, this way of creating "
+                                       f"adjustments should be avoided because it leads to a very slow backwards pass; "
+                                       f"instead, first make a list of tensors, then do computations that require_grad on "
+                                       f"each element of the list.")
