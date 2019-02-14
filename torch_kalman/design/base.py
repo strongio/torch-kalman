@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Iterable, Generator, Tuple, Optional, Dict
+from typing import Generator, Tuple, Optional, Dict, Sequence
 
 import torch
 
@@ -13,9 +13,12 @@ from torch_kalman.process import Process
 
 class Design:
     def __init__(self,
-                 processes: Iterable[Process],
-                 measures: Iterable[str],
+                 processes: Sequence[Process],
+                 measures: Sequence[str],
                  device: Optional[torch.device] = None):
+
+        assert processes
+        assert measures
 
         if device is None:
             device = torch.device('cpu')
@@ -38,40 +41,34 @@ class Design:
 
         # now that they're all added, loop through again to get details
         used_measures = set()
-        self.state_size = 0
-        self.expected_batch_kwargs = set()
-        for process_name in self.processes.keys():
-            # link to design:
-            self.processes[process_name].link_to_design(self)
+        start_counter = 0
+        self.process_idx: Dict[str, slice] = {}
+        for process_name, process in self.processes.items():
+            end_counter = start_counter + len(process.state_elements)
+            self.process_idx[process_name] = slice(start_counter, end_counter)
 
-            # increase state-size:
-            self.state_size += len(self.processes[process_name].state_elements)
+            # set device:
+            process.set_device(self.device)
 
             # check measures:
-            for measure_id, _ in self.processes[process_name].state_elements_to_measures.keys():
+            for measure_id in process.measures:
                 if measure_id not in self.measures:
                     raise ValueError(f"Measure '{measure_id}' found in process '{process.id}' but not in `measures`.")
                 used_measures.add(measure_id)
 
-            # add expected kwargs
-            for kwarg in self.processes[process_name].expected_batch_kwargs:
-                self.expected_batch_kwargs.add(kwarg)
+            #
+            start_counter = end_counter
+        # noinspection PyUnboundLocalVariable
+        self.state_size = end_counter
 
         # any measures unused?
         unused_measures = set(self.measures).difference(used_measures)
         if unused_measures:
-            raise ValueError(f"The following `measures` are not in any of the `processes`:\n{unused_measures}"
-                             f"\nUse `Process.add_measure(value=None)` if the measurement-values will be decided per-batch "
-                             f"during prediction.")
+            raise ValueError(f"The following `measures` are not in any of the `processes`:\n{unused_measures}.")
 
-        # process slices
-        self._process_idx = None
-
-        # for each process, find the index of its state-elements
-        self.proc_idx_to_measure_idx = []
-        for process_id, process in self.processes.items():
-            measure_idx = [self.measures.index(measure) for measure in process.measures]
-            self.proc_idx_to_measure_idx.append((measure_idx, self.process_idx[process_id]))
+        #
+        self.all_state_elements_idx = {pse: i for i, pse in enumerate(self.all_state_elements())}
+        self.measures_idx = {measure: i for i, measure in enumerate(self.measures)}
 
         # measure-covariance:
         m_upper_tri = int(self.measure_size * (self.measure_size - 1) / 2)
@@ -90,22 +87,10 @@ class Design:
         self.process_cholesky_log_diag = Parameter(torch.zeros(num_dyn_states, device=self.device))
         self.process_cholesky_off_diag = Parameter(torch.zeros(ds_upper_tri, device=self.device))
 
-    def measure_scaling(self):
+    def measure_scaling(self) -> Tensor:
         return Covariance.from_log_cholesky(self.measure_cholesky_log_diag,
                                             self.measure_cholesky_off_diag,
                                             device=self.device)
-
-    @property
-    def process_idx(self) -> Dict[str, slice]:
-        if self._process_idx is None:
-            process_idx = {}
-            start = 0
-            for process_id, process in self.processes.items():
-                this_end = start + len(process.state_elements)
-                process_idx[process_id] = slice(start, this_end)
-                start = this_end
-            self._process_idx = process_idx
-        return self._process_idx
 
     def all_state_elements(self) -> Generator[Tuple[str, str], None, None]:
         for process_name, process in self.processes.items():
@@ -136,8 +121,14 @@ class Design:
         yield self.process_cholesky_log_diag
         yield self.process_cholesky_off_diag
 
-    def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'DesignForBatch':
-        return DesignForBatch(design=self, num_groups=num_groups, num_timesteps=num_timesteps, **kwargs)
+    def for_batch(self,
+                  num_groups: int,
+                  num_timesteps: int,
+                  process_kwargs: Optional[Dict[str, Dict]] = None) -> 'DesignForBatch':
+        return DesignForBatch(design=self,
+                              num_groups=num_groups,
+                              num_timesteps=num_timesteps,
+                              process_kwargs=process_kwargs)
 
     def __repr__(self):
         return f"{self.__class__.__name__}(processes={list(self.processes.values())}, measures={self.measures})"

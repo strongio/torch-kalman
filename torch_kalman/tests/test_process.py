@@ -69,7 +69,7 @@ class TestProcess(TestCaseTK):
         batch_vel = design.for_batch(2, 1)
         self.assertLess(batch_vel.F(0)[0][1, 1], 1.0)
         self.assertGreater(batch_vel.F(0)[0][1, 1], 0.5)
-        decay = design.processes['test'].decayed_transitions['velocity'].value
+        decay = design.processes['test'].decayed_transitions['velocity'].get_value()
         self.assertEqual(decay, batch_vel.F(0)[0][1, 1])
 
         state_mean = Tensor([[0.], [1.0]])
@@ -86,18 +86,20 @@ class TestProcess(TestCaseTK):
         # need to include start_datetimes since included above
         with self.assertRaises(ValueError) as cm:
             season.for_batch(1, 1)
-        self.assertEqual(cm.exception.args[0], "`start_datetimes` argument required.")
+        self.assertEqual(cm.exception.args[0], 'Must pass `start_datetimes` to process `day_of_week`.')
 
         design = Design(processes=[season], measures=['measure'])
-        batch_season = design.for_batch(1, 1, start_datetimes=array([datetime64('2018-01-01')]))
+        process_kwargs = {'day_of_week': {'start_datetimes': array([datetime64('2018-01-01')])}}
+        batch_season = design.for_batch(1, 1,
+                                        process_kwargs=process_kwargs)
 
         # test transitions manually:
         state_mean = torch.arange(0.0, 7.0)[:, None]
         state_mean[0] = -state_mean[1:].sum()
         for i in range(10):
             state_mean_last = state_mean
-            state_mean = torch.mm(batch_season.F(0)[0], state_mean)
-            self.assertTrue((state_mean[1:] == state_mean_last[:-1]).all())
+        state_mean = torch.mm(batch_season.F(0)[0], state_mean)
+        self.assertTrue((state_mean[1:] == state_mean_last[:-1]).all())
 
         self.assertListEqual(batch_season.H(0)[0].tolist(), [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
 

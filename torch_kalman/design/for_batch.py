@@ -1,22 +1,24 @@
 from collections import OrderedDict
-from typing import Sequence, Optional
-from warnings import warn
-
+from typing import Sequence, Optional, Tuple, List, Dict
 import torch
 from torch import Tensor
 
 from torch_kalman.covariance import Covariance
 
+if False:
+    from torch_kalman.design import Design  # for type-hinting w/o circular ref
+
+from torch_kalman.process.for_batch import SeqOfTensors, ProcessForBatch
+
 
 # noinspection PyPep8Naming
 class DesignForBatch:
-    ok_kwargs = {'input', 'progress'}
-
     def __init__(self,
                  design: 'Design',
                  num_groups: int,
                  num_timesteps: int,
-                 **kwargs):
+                 process_kwargs: Optional[Dict[str, Dict]] = None):
+        process_kwargs = process_kwargs or {}
 
         self.design = design
         self.device = design.device
@@ -33,33 +35,25 @@ class DesignForBatch:
         self.initial_covariance = init_cov.expand(num_groups, -1, -1)
 
         # create processes for batch:
-        used_kwargs = set()
+        assert set(process_kwargs.keys()).issubset(design.processes.keys())
         assert isinstance(design.processes, OrderedDict)  # below assumes key ordering
-        self.processes = OrderedDict()
+        self.processes: Dict[str, ProcessForBatch] = OrderedDict()
         for process_name, process in design.processes.items():
-            # kwargs for this process:
-            process_kwargs = {k: kwargs.get(k, None) for k in process.expected_batch_kwargs}
-            for kwarg in process.expected_batch_kwargs:
-                used_kwargs.add(kwarg)
+            this_proc_kwargs = process_kwargs.get(process_name, {})
 
             # assign process:
             self.processes[process_name] = process.for_batch(num_groups=num_groups,
                                                              num_timesteps=num_timesteps,
-                                                             **process_kwargs)
+                                                             **this_proc_kwargs)
 
             # assign initial mean:
             pslice = self.process_idx[process_name]
             self.initial_mean[:, pslice] = process.initial_state_means_for_batch(design.init_state_mean_params[pslice],
                                                                                  num_groups=num_groups,
-                                                                                 **process_kwargs)
-
-        unused_kwargs = (set(kwargs.keys()) - used_kwargs) - self.ok_kwargs
-        if unused_kwargs:
-            raise RuntimeError(f"Unexpected kwargs:\n{unused_kwargs}.")
+                                                                                 **this_proc_kwargs)
 
         # measures:
-        self.measures = design.measures
-        self.measure_idx = {measure_id: i for i, measure_id in enumerate(self.measures)}
+        self.measure_idx = {measure_id: i for i, measure_id in enumerate(design.measures)}
 
         # size:
         self.num_groups = num_groups
@@ -68,85 +62,88 @@ class DesignForBatch:
         self.measure_size = design.measure_size
 
         # transitions:
-        self.F_base = None
-        self.F_dynamic_assignments = None
-        self.F_init()
+        self._F_base: Tensor = None
+        self._F_dynamic_assignments: List[Tuple[Tuple[int, int], SeqOfTensors]] = None
+        self._F_init()
 
         # measurements:
-        self.H_base = None
-        self.H_dynamic_assignments = None
-        self.H_init()
+        self._H_base: Tensor = None
+        self._H_dynamic_assignments: List[Tuple[Tuple[int, int], SeqOfTensors]] = None
+        self._H_init()
 
         # process-var:
-        self.Q_base = None
-        self.Q_diag_multi_dynamic_assignments = None
-        self.Q_init()
+        self._Q_base: Tensor = None
+        self._Q_diag_multi_dynamic_assignments: List[Tuple[Tuple[int, int], SeqOfTensors]] = None
+        self._Q_init()
 
         # measure-var:
-        self.R_base = None
+        self._R_base: Tensor = None
         # R_dynamic_assignments not implemented yet
-        self.R_init()
+        self._R_init()
 
     # transitions ----
-    def F_init(self) -> None:
-        F = torch.zeros(size=(self.num_groups, self.state_size, self.state_size),
-                        device=self.device)
+    def _F_init(self) -> None:
+        F_base = torch.zeros(size=(self.num_groups, self.state_size, self.state_size),
+                             device=self.device)
 
         dynamic_assignments = []
         for process_id, process in self.processes.items():
             o = self.process_start_idx[process_id]
-            for (r, c), values in process.transition_mat_assignments.items():
-                if isinstance(values, (tuple, list)):
-                    idx = (r + o, c + o)
-                    dynamic_assignments.append((idx, values))
-                else:
-                    F[:, r + o, c + o] = values
-        self.F_base = F
-        self.F_dynamic_assignments = dynamic_assignments
+            for type, transition_mat_assignments in zip(['base', 'dynamic'], process.transition_mat_assignments):
+                for (from_element, to_element), values in transition_mat_assignments.items():
+                    r = process.state_element_idx[to_element] + o
+                    c = process.state_element_idx[from_element] + o
+                    if type == 'dynamic':
+                        dynamic_assignments.append(((r, c), values))
+                    else:
+                        F_base[:, r, c] = values
+        self._F_base = F_base
+        self._F_dynamic_assignments = dynamic_assignments
 
-    def F_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None) -> Tensor:
-        if clone or self.F_dynamic_assignments:
+    def _F_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None) -> Tensor:
+        if clone or self._F_dynamic_assignments:
             mat = base.clone()
         else:
             mat = base
-        for (r, c), values in self.F_dynamic_assignments:
+        for (r, c), values in self._F_dynamic_assignments:
             mat[:, r, c] = values[t]
         return mat
 
     def F(self, t: int) -> Tensor:
-        return self.F_dynamic(base=self.F_base, t=t, clone=None)
+        return self._F_dynamic(base=self._F_base, t=t, clone=None)
 
     # measurements ----
-    def H_init(self) -> None:
-        H = torch.zeros(size=(self.num_groups, self.measure_size, self.state_size),
-                        device=self.device)
+    def _H_init(self) -> None:
+        H_base = torch.zeros(size=(self.num_groups, self.measure_size, self.state_size),
+                             device=self.device)
         dynamic_assignments = []
         for process_id, process in self.processes.items():
             o = self.process_start_idx[process_id]
-            for (measure_id, c), values in process.measurement_mat_assignments.items():
-                r = self.measure_idx[measure_id]
-                if isinstance(values, (tuple, list)):
-                    idx = (r, c + o)
-                    dynamic_assignments.append((idx, values))
-                else:
-                    H[:, r, c + o] = values
-        self.H_base = H
-        self.H_dynamic_assignments = dynamic_assignments
+            for type, mmat_assignments in zip(['base', 'dynamic'], process.measurement_mat_assignments):
+                for (measure, state_element), values in mmat_assignments.items():
+                    r = self.measure_idx[measure]
+                    c = process.state_element_idx[state_element] + o
+                    if type == 'dynamic':
+                        dynamic_assignments.append(((r, c), values))
+                    else:
+                        H_base[:, r, c] = values
+        self._H_base = H_base
+        self._H_dynamic_assignments = dynamic_assignments
 
-    def H_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None) -> Tensor:
-        if clone or self.H_dynamic_assignments:
+    def _H_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None) -> Tensor:
+        if clone or self._H_dynamic_assignments:
             mat = base.clone()
         else:
             mat = base
-        for (r, c), values in self.H_dynamic_assignments:
+        for (r, c), values in self._H_dynamic_assignments:
             mat[:, r, c] = values[t]
         return mat
 
     def H(self, t: int) -> Tensor:
-        return self.H_dynamic(base=self.H_base, t=t, clone=None)
+        return self._H_dynamic(base=self._H_base, t=t, clone=None)
 
     # process covariance ----
-    def Q_init(self) -> None:
+    def _Q_init(self) -> None:
         partial_proc_cov = Covariance.from_log_cholesky(self.design.process_cholesky_log_diag,
                                                         self.design.process_cholesky_off_diag,
                                                         device=self.device)
@@ -165,50 +162,54 @@ class DesignForBatch:
         # process variances are scaled by the variances of the measurements they are associated with:
         measure_log_stds = self.design.measure_scaling().diag().sqrt().log()
         diag_flat = torch.ones(self.state_size, device=self.device)
-        for measure_idx, process_slice in self.design.proc_idx_to_measure_idx:
+        for process_name, process in self.processes.items():
+            measure_idx = [self.measure_idx[m] for m in process.measures]
             log_scaling = measure_log_stds[measure_idx].mean()
+            process_slice = self.process_idx[process_name]
             diag_flat[process_slice] = log_scaling.exp()
+
         diag_multi = torch.diagflat(diag_flat).expand(self.num_groups, -1, -1)
         Q = diag_multi.matmul(Q).matmul(diag_multi)
 
-        # some variances might be inflated/deflated on a per-batch basis:
+        # adjustments from processes:
         diag_multi = torch.eye(self.state_size, device=self.device).expand(self.num_groups, -1, -1).clone()
         dynamic_assignments = []
         for process_id, process in self.processes.items():
             o = self.process_start_idx[process_id]
-            for (r, c), values in process.variance_diag_multi_assignments.items():
-                if isinstance(values, (tuple, list)):
-                    idx = (r + o, c + o)
-                    dynamic_assignments.append((idx, values))
-                else:
-                    diag_multi[:, r + o, c + o] = values
+            for type, var_diag_multis in zip(['base', 'dynamic'], process.variance_diag_multi_assignments):
+                for state_element, values in var_diag_multis.items():
+                    i = process.state_element_idx[state_element] + o
+                    if type == 'dynamic':
+                        dynamic_assignments.append(((i, i), values))
+                    else:
+                        diag_multi[:, i, i] = values
 
-        self.Q_base = diag_multi.matmul(Q).matmul(diag_multi)
-        self.Q_diag_multi_dynamic_assignments = dynamic_assignments
+        self._Q_base = diag_multi.matmul(Q).matmul(diag_multi)
+        self._Q_diag_multi_dynamic_assignments = dynamic_assignments
 
-    def Q_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None) -> Tensor:
-        if clone or self.Q_diag_multi_dynamic_assignments:
+    def _Q_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None) -> Tensor:
+        if clone or self._Q_diag_multi_dynamic_assignments:
             mat = base.clone()
         else:
             mat = base
 
-        if self.Q_diag_multi_dynamic_assignments:
+        if self._Q_diag_multi_dynamic_assignments:
             diag_multi = torch.eye(self.state_size, device=self.device).expand(self.num_groups, -1, -1).clone()
-            for (r, c), values in self.Q_diag_multi_dynamic_assignments:
+            for (r, c), values in self._Q_diag_multi_dynamic_assignments:
                 diag_multi[:, r, c] = values[t]
             return diag_multi.matmul(mat).matmul(diag_multi)
         else:
             return mat
 
     def Q(self, t: int) -> Tensor:
-        return self.Q_dynamic(base=self.Q_base, t=t, clone=None)
+        return self._Q_dynamic(base=self._Q_base, t=t, clone=None)
 
     # measurement covariance ---
-    def R_init(self) -> None:
+    def _R_init(self) -> None:
         R = self.design.measure_scaling()
-        self.R_base = R.expand(self.num_groups, -1, -1).clone()
+        self._R_base = R.expand(self.num_groups, -1, -1).clone()
 
-    def R_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None):
+    def _R_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None):
         if clone:
             mat = base.clone()
         else:
@@ -216,4 +217,4 @@ class DesignForBatch:
         return mat
 
     def R(self, t: int) -> Tensor:
-        return self.R_dynamic(base=self.R_base, t=t, clone=None)
+        return self._R_dynamic(base=self._R_base, t=t, clone=None)

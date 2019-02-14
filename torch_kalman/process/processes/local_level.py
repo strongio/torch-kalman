@@ -1,8 +1,9 @@
-from typing import Union, Tuple, Generator, Callable, Sequence
+from typing import Union, Tuple, Generator, Sequence, Optional
 
 import torch
 
 from torch_kalman.process import Process
+
 from torch_kalman.process.utils.bounded import Bounded
 
 
@@ -10,22 +11,22 @@ class LocalLevel(Process):
     def __init__(self,
                  id: str,
                  decay: Union[bool, Tuple[float, float]] = False):
-        state_elements = ['position']
+        super().__init__(id=id, state_elements=['position'])
 
+        self.decay: Optional[Bounded] = None
         if decay:
             assert not isinstance(decay, bool), "decay should be floats of bounds (or False for no decay)"
             assert decay[0] >= -1. and decay[1] <= 1.
             self.decay = Bounded(*decay)
-            transitions = {'position': {'position': lambda proc_for_batch: proc_for_batch.process.decay.value}}
+            self._set_transition(from_element='position',
+                                 to_element='position',
+                                 value=self.decay.get_value,
+                                 inv_link=False)
         else:
-            self.decay = None
-            transitions = {'position': {'position': 1.0}}
+            self._set_transition(from_element='position', to_element='position', value=1.)
 
-        super().__init__(id=id, state_elements=state_elements, transitions=transitions)
-
-    def add_measure(self, measure: str, state_element: str = 'position', value: Union[float, Callable, None] = 1.0) -> None:
-        # default values (position, 1.0)
-        super().add_measure(measure=measure, state_element=state_element, value=value)
+    def add_measure(self, measure: str):
+        self._set_measure(measure=measure, state_element='position', value=1.0)
 
     def parameters(self) -> Generator[torch.nn.Parameter, None, None]:
         if self.decay is not None:

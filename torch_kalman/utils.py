@@ -73,3 +73,13 @@ def split_flat(tens: Tensor, dim: int, clone: bool):
 
 def identity(x: Any) -> Any:
     return x
+
+
+def _add(*args):
+    """
+    Add multiple values, applying the broadcasting rules used for `__add__`, avoiding in-place gradient issues for tensor.
+    """
+    out = args[0]
+    for arg in args[1:]:
+        out = out + arg
+    return out

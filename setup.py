@@ -9,6 +9,6 @@ setup(name='torch_kalman',
       license='MIT',
       packages=['torch_kalman'],
       zip_safe=False,
-      install_requires=['torch>=0.4.1', 'numpy>=1.14.2'],
+      install_requires=['torch>=1.0.0', 'numpy>=1.14.2', 'tqdm'],
       test_suite='nose.collector',
       tests_require=['nose'])

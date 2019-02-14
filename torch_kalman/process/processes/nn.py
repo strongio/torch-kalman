@@ -1,4 +1,4 @@
-from typing import Generator, Tuple, Optional
+from typing import Generator, Tuple, Optional, Callable, Dict
 
 import torch
 
@@ -23,7 +23,9 @@ class NN(Process):
                  nn_module: torch.nn.Module,
                  process_variance: bool = False,
                  add_module_params_to_process: bool = True,
-                 model_mat_kwarg_name: Optional[str] = None):
+                 inv_link: Optional[Callable] = None):
+
+        self.inv_link = inv_link
 
         self.add_module_params_to_process = add_module_params_to_process
         self.input_dim = input_dim
@@ -31,53 +33,42 @@ class NN(Process):
 
         #
         pad_n = len(str(state_dim))
-        state_elements = [str(i).rjust(pad_n, "0") for i in range(state_dim)]
-        transitions = {el: {el: 1.0} for el in state_elements}
+        super().__init__(id=id,
+                         state_elements=[str(i).rjust(pad_n, "0") for i in range(state_dim)])
+
+        for se in self.state_elements:
+            self._set_transition(from_element=se, to_element=se, value=1.0)
 
         # process covariance:
         self._dynamic_state_elements = []
         if process_variance:
-            self._dynamic_state_elements = state_elements
-
-        # super:
-        super().__init__(id=id, state_elements=state_elements, transitions=transitions)
-
-        # expected kwargs
-        model_mat_kwarg_name = model_mat_kwarg_name or id  # use the id if they didn't specify
-        self.expected_batch_kwargs = (model_mat_kwarg_name,)
+            self._dynamic_state_elements = self.state_elements
 
     @property
     def dynamic_state_elements(self):
         return self._dynamic_state_elements
 
-    # noinspection PyMethodOverriding
-    def add_measure(self, measure: str) -> None:
-        for state_element in self.state_elements:
-            super().add_measure(measure=measure, state_element=state_element, value=None)
-
     def parameters(self) -> Generator[Parameter, None, None]:
         if self.add_module_params_to_process:
             yield from self.nn_module.parameters()
 
-    def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> ProcessForBatch:
-        # validate args:
-        argname = self.expected_batch_kwargs[0]
-        nn_input = kwargs.get(argname, None)
-        if nn_input is None:
-            raise ValueError(f"Required argument `{argname}` not found.")
-        elif torch.isnan(nn_input).any():
-            raise ValueError(f"nans not allowed in `{argname}` tensor")
+    # noinspection PyMethodOverriding
+    def for_batch(self, num_groups: int, num_timesteps: int, nn_input: Tensor):
+        for_batch = super().for_batch(num_groups, num_timesteps)
 
-        mm_num_groups, mm_num_ts, mm_dim = nn_input.shape
-        assert mm_num_groups == num_groups, f"Batch-size is {num_groups}, but {argname}.shape[0] is {mm_num_groups}."
-        assert mm_num_ts == num_timesteps, f"Batch num. timesteps is {num_timesteps}, but {argname}.shape[1] is {mm_num_ts}."
-        assert mm_dim == self.input_dim, f"{argname}.shape[2] = {mm_dim}, but expected self.input_dim, {self.input_dim}."
+        if not isinstance(nn_input, Tensor):
+            raise ValueError(f"Process {self.id} received 'nn_input' that is not a Tensor.")
+        elif nn_input.requires_grad:
+            raise ValueError(f"Process {self.id} received 'nn_input' that requires_grad, which is not allowed.")
+
+        mm_num_groups, mm_num_ts, mm_num_preds = nn_input.shape
+        assert mm_num_groups == num_groups, f"Batch-size is {num_groups}, but nn_input.shape[0] is {mm_num_groups}."
+        assert mm_num_ts == num_timesteps, f"Batch num. timesteps is {num_timesteps}, but nn_input.shape[1] is {mm_num_ts}."
+        assert mm_num_preds == self.input_dim, f"Expected {self.input_dim} dim, but nn_input.shape[2] = {mm_num_preds}."
 
         # need to split nn-output by each output element and by time
         # we don't want to call the nn once then slice it, because then autograd will be forced to keep track of large
         # amounts of unnecessary zero-gradients. so instead, call multiple times.
-        for_batch = super().for_batch(num_groups, num_timesteps)
-
         nn_outputs = {el: [] for el in self.state_elements}
         for t in range(num_timesteps):
             nn_output = self.nn_module(nn_input[:, t, :])
@@ -86,6 +77,10 @@ class NN(Process):
 
         for measure in self.measures:
             for el in self.state_elements:
-                for_batch.add_measure(measure=measure, state_element=el, values=nn_outputs[el])
+                for_batch.adjust_measure(measure=measure, state_element=el, adjustment=nn_outputs[el], check_slow_grad=False)
 
         return for_batch
+
+    def add_measure(self, measure: str):
+        for se in self.state_elements:
+            self._set_measure(measure=measure, state_element=se, value=0., inv_link=self.inv_link)

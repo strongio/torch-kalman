@@ -9,6 +9,5 @@ class Bounded:
         self.range = upper - lower
         self.parameter = Parameter(torch.randn(1))
 
-    @property
-    def value(self) -> Tensor:
+    def get_value(self) -> Tensor:
         return torch.sigmoid(self.parameter) * self.range + self.lower

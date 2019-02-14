@@ -167,6 +167,7 @@ class TimeSeriesBatch:
 
             # times:
             times = df[datetime_colname].values
+            assert len(times) == len(set(times)), f"Group {g} has duplicate times"
             min_time = times[0]
             start_datetimes.append(min_time)
             time_idx = (times - min_time).astype(f'timedelta64[{dt_unit}]').view('int64')

@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Union, Tuple, Sequence, Optional, TypeVar
 
 import torch
@@ -22,39 +23,78 @@ class Gaussian(StateBelief):
 
     def update(self, obs: Tensor) -> StateBelief:
         assert isinstance(obs, Tensor)
-        measured_means, system_covariance = self.measurement
-        residuals = obs - measured_means
-        K = self.kalman_gain(system_covariance)
-
-        # clone tensors since autograd can't handle in-place changes
-        means_new = self.means.clone()
-        covs_new = self.covs.clone()
-
-        # handle kalman-update for groups w/missing values:
         isnan = (obs != obs)
+        num_dim = obs.shape[1]
+
+        means_new = self.means.data.clone()
+        covs_new = self.covs.data.clone()
+
+        # need to do a different update depending on which (if any) dimensions are missing:
+        update_groups = defaultdict(list)
         anynan_by_group = (torch.sum(isnan, 1) > 0)
-        nan_group_idx = anynan_by_group.nonzero().squeeze(-1)
+
+        # groups without nan:
+        nonan_group_idx = (~anynan_by_group).nonzero().squeeze(-1).tolist()
+        if len(nonan_group_idx):
+            update_groups[tuple(range(num_dim))] = nonan_group_idx
+
+        # groups with nan:
+        nan_group_idx = anynan_by_group.nonzero().squeeze(-1).tolist()
         for i in nan_group_idx:
-            group_isnan = isnan[i]
-            if group_isnan.all():  # if all nan, just don't perform update
-                continue
-            # if partial nan, perform partial update:
-            raise NotImplementedError("Partial update not currently implemented; please report error to package maintainer")
+            if isnan[i].all():
+                continue  # if all nan, then simply skip update
+            which_valid = (~isnan[i]).nonzero().squeeze(-1).tolist()
+            update_groups[tuple(which_valid)].append(i)
 
-        # faster kalman-update for groups w/o missing values
-        nonan_g = (~anynan_by_group).nonzero().squeeze(-1)
-        if len(nonan_g) > 0:
-            means_new[nonan_g] = self.means[nonan_g] + torch.bmm(K[nonan_g], residuals[nonan_g].unsqueeze(2)).squeeze(2)
-            covs_new[nonan_g] = self.covariance_update(self.covs[nonan_g], K[nonan_g], self.H[nonan_g], self.R[nonan_g])
+        measured_means, system_cov = self.measurement
 
+
+        # updates:
+        for which_valid, group_idx in update_groups.items():
+            group_covs = self.covs[group_idx]
+            group_H = torch.zeros_like(self.H[group_idx])
+            group_H[:, which_valid] = self.H[np.ix_(group_idx, which_valid)]
+            group_K = self.kalman_gain(system_covariance=system_cov[group_idx], covariance=group_covs, H=group_H)
+            group_obs = torch.zeros_like(obs[group_idx])
+            group_obs[:, which_valid] = obs[np.ix_(group_idx, which_valid)]
+            means_new[group_idx] = self.mean_update(means=self.means[group_idx], K=group_K,
+                                                    residuals=group_obs - measured_means[group_idx])
+            covs_new[group_idx] = self.covariance_update(covariance=group_covs, K=group_K, H=group_H, R=self.R[group_idx])
+
+        # calculate last-measured:
         any_measured_group_idx = (torch.sum(~isnan, 1) > 0).nonzero().squeeze(-1)
         last_measured = self.last_measured.clone()
         last_measured[any_measured_group_idx] = 0
         return self.__class__(means=means_new, covs=covs_new, last_measured=last_measured)
 
-    def kalman_gain(self, system_covariance, method='solve'):
-        Ht = self.H.permute(0, 2, 1)
-        covs_measured = torch.bmm(self.covs, Ht)
+    @staticmethod
+    def _batch_matrix_select(idx) -> Tuple:
+        return (slice(None),) + np.ix_(idx, idx)
+
+    @staticmethod
+    def mean_update(means: Tensor, K: Tensor, residuals: Tensor):
+        return means + K.matmul(residuals.unsqueeze(2)).squeeze(2)
+
+    @staticmethod
+    def covariance_update(covariance: Tensor, K: Tensor, H: Tensor, R: Tensor) -> Tensor:
+        """
+        "Joseph stabilized" covariance correction.
+        """
+        rank = covariance.shape[1]
+        I = torch.eye(rank, rank, device=covariance.device).expand(len(covariance), -1, -1)
+        p1 = I - K.matmul(H)
+        p2 = p1.matmul(covariance).matmul(p1.permute(0, 2, 1))  # p2=torch.bmm(torch.bmm(p1,covariance),p1.permute(0, 2, 1))
+        p3 = K.matmul(R).matmul(K.permute(0, 2, 1))  # p3 = torch.bmm(torch.bmm(K, R), K.permute(0, 2, 1))
+        return p2 + p3
+
+    @staticmethod
+    def kalman_gain(covariance: Tensor,
+                    system_covariance: Tensor,
+                    H: Tensor,
+                    method: str = 'solve'):
+
+        Ht = H.permute(0, 2, 1)
+        covs_measured = torch.bmm(covariance, Ht)
         if method == 'solve':
             A = system_covariance.permute(0, 2, 1)
             B = covs_measured.permute(0, 2, 1)
@@ -67,18 +107,6 @@ class Gaussian(StateBelief):
         else:
             raise ValueError(f"Unrecognized method '{method}'.")
         return K
-
-    @staticmethod
-    def covariance_update(covariance: Tensor, K: Tensor, H: Tensor, R: Tensor) -> Tensor:
-        """
-        "Joseph stabilized" covariance correction.
-        """
-        rank = covariance.shape[1]
-        I = torch.eye(rank, rank, device=covariance.device).expand(len(covariance), -1, -1)
-        p1 = (I - torch.bmm(K, H))
-        p2 = torch.bmm(torch.bmm(p1, covariance), p1.permute(0, 2, 1))
-        p3 = torch.bmm(torch.bmm(K, R), K.permute(0, 2, 1))
-        return p2 + p3
 
     @classmethod
     def concatenate_over_time(cls,

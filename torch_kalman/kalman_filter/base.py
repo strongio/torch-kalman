@@ -1,4 +1,4 @@
-from typing import TypeVar, Optional, Callable, List, Union
+from typing import TypeVar, Optional, Callable, List, Union, Dict
 
 import numpy as np
 import torch
@@ -46,10 +46,17 @@ class KalmanFilter(torch.nn.Module):
     def predict_initial_state(self, design_for_batch: DesignForBatch) -> 'Gaussian':
         return self.family(means=design_for_batch.initial_mean, covs=design_for_batch.initial_covariance)
 
+    def design_for_batch(self,
+                         num_groups: int,
+                         num_timesteps: int,
+                         **kwargs) -> DesignForBatch:
+        return self.design.for_batch(num_groups=num_groups, num_timesteps=num_timesteps, **kwargs)
+
     # noinspection PyShadowingBuiltins
     def forward(self,
                 input: Tensor,
                 initial_state: Optional[StateBelief] = None,
+                progress: Union[tqdm, bool] = False,
                 **kwargs) -> StateBeliefOverTime:
         """
         :param input: The multivariate time-series to be fit by the kalman-filter. A Tensor where the first dimension
@@ -57,18 +64,17 @@ class KalmanFilter(torch.nn.Module):
         measures.
         :param initial_state: If a StateBelief, this is used as the prediction for time=0; if None then each process
         generates initial values.
+        :param progress: Should progress-bar be generated?
         :param kwargs: Other kwargs that will be passed to the `design_for_batch` method.
         :return: A StateBeliefOverTime consisting of one-step-ahead predictions.
         """
-
-        kwargs = kwargs.copy()
 
         num_groups, num_timesteps, num_measures = input.shape
         if num_measures != self.measure_size:
             raise ValueError(f"This KalmanFilter has {self.measure_size} measurement-dimensions; but the input shape is "
                              f"{(num_groups, num_timesteps, num_measures)} (last dim should == measure-size).")
 
-        design_for_batch = self.design.for_batch(num_groups=num_groups,
+        design_for_batch = self.design_for_batch(num_groups=num_groups,
                                                  num_timesteps=num_timesteps,
                                                  **kwargs)
 
@@ -78,10 +84,10 @@ class KalmanFilter(torch.nn.Module):
         else:
             state_prediction = initial_state
 
-        prog = kwargs.pop('progress', identity) or identity
-        if prog is True:
-            prog = tqdm
-        iterator = prog(range(num_timesteps))
+        progress = progress or identity
+        if progress is True:
+            progress = tqdm
+        iterator = progress(range(num_timesteps))
 
         # generate one-step-ahead predictions:
         state_predictions = []
@@ -115,13 +121,12 @@ class KalmanFilter(torch.nn.Module):
                  states: StateBeliefOverTime,
                  horizon: int,
                  num_iter: int,
+                 progress: bool = False,
                  from_datetimes: Optional[ndarray] = None,
                  state_to_measured: Optional[Callable] = None,
                  **kwargs) -> List[Tensor]:
 
         assert horizon > 0
-
-        kwargs = kwargs.copy()
 
         # forecast-from time:
         if isinstance(states, StateBelief):
@@ -137,12 +142,12 @@ class KalmanFilter(torch.nn.Module):
                                                 covs=initial_state.covs.repeat((num_iter, 1, 1)),
                                                 last_measured=initial_state.last_measured.repeat(num_iter))
 
-        design_for_batch = self.design.for_batch(num_groups=initial_state.num_groups,
+        design_for_batch = self.design_for_batch(num_groups=initial_state.num_groups,
                                                  num_timesteps=horizon,
                                                  **kwargs)
 
-        trajectories = initial_state._simulate_state_trajectories(design_for_batch=design_for_batch,
-                                                                  **kwargs)
+        trajectories = initial_state.simulate_state_trajectories(design_for_batch=design_for_batch,
+                                                                 progress=progress)
 
         if state_to_measured is None:
             state_to_measured = lambda traj: traj.measurement_distribution.sample()
@@ -154,11 +159,10 @@ class KalmanFilter(torch.nn.Module):
                  states: Union[StateBeliefOverTime, StateBelief],
                  horizon: int,
                  forecast_from_datetimes: Optional[ndarray] = None,
+                 progress: bool = False,
                  **kwargs) -> StateBeliefOverTime:
 
         assert horizon > 0
-
-        kwargs = kwargs.copy()
 
         # forecast-from time:
         if forecast_from_datetimes is not None:
@@ -171,14 +175,14 @@ class KalmanFilter(torch.nn.Module):
             else:
                 state_prediction = states.slice_by_dt(datetimes=forecast_from_datetimes)
 
-        design_for_batch = self.design.for_batch(num_groups=state_prediction.num_groups,
+        design_for_batch = self.design_for_batch(num_groups=state_prediction.num_groups,
                                                  num_timesteps=horizon,
                                                  **kwargs)
 
-        prog = kwargs.pop('progress', identity) or identity
-        if prog is True:
-            prog = tqdm
-        iterator = prog(range(horizon))
+        progress = progress or identity
+        if progress is True:
+            progress = tqdm
+        iterator = progress(range(design_for_batch.num_timesteps))
 
         forecasts = []
         for t in iterator:
