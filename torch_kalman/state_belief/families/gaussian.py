@@ -48,18 +48,18 @@ class Gaussian(StateBelief):
 
         measured_means, system_cov = self.measurement
 
-
         # updates:
         for which_valid, group_idx in update_groups.items():
-            group_covs = self.covs[group_idx]
-            group_H = torch.zeros_like(self.H[group_idx])
-            group_H[:, which_valid] = self.H[np.ix_(group_idx, which_valid)]
-            group_K = self.kalman_gain(system_covariance=system_cov[group_idx], covariance=group_covs, H=group_H)
-            group_obs = torch.zeros_like(obs[group_idx])
-            group_obs[:, which_valid] = obs[np.ix_(group_idx, which_valid)]
-            means_new[group_idx] = self.mean_update(means=self.means[group_idx], K=group_K,
-                                                    residuals=group_obs - measured_means[group_idx])
-            covs_new[group_idx] = self.covariance_update(covariance=group_covs, K=group_K, H=group_H, R=self.R[group_idx])
+            group_obs = obs[np.ix_(group_idx, which_valid)]
+            group_means = self.means[group_idx]
+            group_cov = self.covs[group_idx]
+            group_measured_means = measured_means[np.ix_(group_idx, which_valid)]
+            group_system_cov = system_cov[np.ix_(group_idx, which_valid, which_valid)]
+            group_H = self.H[np.ix_(group_idx, which_valid)]
+            group_R = self.R[np.ix_(group_idx, which_valid, which_valid)]
+            group_K = self.kalman_gain(system_covariance=group_system_cov, covariance=group_cov, H=group_H)
+            means_new[group_idx] = self.mean_update(means=group_means, K=group_K, residuals=group_obs - group_measured_means)
+            covs_new[group_idx] = self.covariance_update(covariance=group_cov, K=group_K, H=group_H, R=group_R)
 
         # calculate last-measured:
         any_measured_group_idx = (torch.sum(~isnan, 1) > 0).nonzero().squeeze(-1)
