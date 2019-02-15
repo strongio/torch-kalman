@@ -1,7 +1,8 @@
 from collections import defaultdict
-from typing import Union, Tuple, Sequence, Optional, TypeVar
+from typing import Tuple, Sequence, Optional, TypeVar
 
 import torch
+
 from torch import Tensor
 from torch.distributions import MultivariateNormal as TorchMultivariateNormal, Distribution
 
@@ -33,11 +34,6 @@ class Gaussian(StateBelief):
         update_groups = defaultdict(list)
         anynan_by_group = (torch.sum(isnan, 1) > 0)
 
-        # groups without nan:
-        nonan_group_idx = (~anynan_by_group).nonzero().squeeze(-1).tolist()
-        if len(nonan_group_idx):
-            update_groups[tuple(range(num_dim))] = nonan_group_idx
-
         # groups with nan:
         nan_group_idx = anynan_by_group.nonzero().squeeze(-1).tolist()
         for i in nan_group_idx:
@@ -46,20 +42,33 @@ class Gaussian(StateBelief):
             which_valid = (~isnan[i]).nonzero().squeeze(-1).tolist()
             update_groups[tuple(which_valid)].append(i)
 
-        measured_means, system_cov = self.measurement
+        update_groups = list(update_groups.items())
+
+        # groups without nan:
+        if isnan.any():
+            nonan_group_idx = (~anynan_by_group).nonzero().squeeze(-1).tolist()
+            if len(nonan_group_idx):
+                update_groups.append((slice(None), nonan_group_idx))
+        else:
+            # if no nans at all, then faster to use slices:
+            update_groups.append((slice(None), slice(None)))
+
+        measured_means, system_covs = self.measurement
 
         # updates:
-        for which_valid, group_idx in update_groups.items():
-            group_obs = obs[np.ix_(group_idx, which_valid)]
+        for which_valid, group_idx in update_groups:
+            idx_2d = _bmat_idx(group_idx, which_valid)
+            idx_3d = _bmat_idx(group_idx, which_valid, which_valid)
+            group_obs = obs[idx_2d]
             group_means = self.means[group_idx]
-            group_cov = self.covs[group_idx]
-            group_measured_means = measured_means[np.ix_(group_idx, which_valid)]
-            group_system_cov = system_cov[np.ix_(group_idx, which_valid, which_valid)]
-            group_H = self.H[np.ix_(group_idx, which_valid)]
-            group_R = self.R[np.ix_(group_idx, which_valid, which_valid)]
-            group_K = self.kalman_gain(system_covariance=group_system_cov, covariance=group_cov, H=group_H)
+            group_covs = self.covs[group_idx]
+            group_measured_means = measured_means[idx_2d]
+            group_system_covs = system_covs[idx_3d]
+            group_H = self.H[idx_2d]
+            group_R = self.R[idx_3d]
+            group_K = self.kalman_gain(system_covariance=group_system_covs, covariance=group_covs, H=group_H)
             means_new[group_idx] = self.mean_update(means=group_means, K=group_K, residuals=group_obs - group_measured_means)
-            covs_new[group_idx] = self.covariance_update(covariance=group_cov, K=group_K, H=group_H, R=group_R)
+            covs_new[group_idx] = self.covariance_update(covariance=group_covs, K=group_K, H=group_H, R=group_R)
 
         # calculate last-measured:
         any_measured_group_idx = (torch.sum(~isnan, 1) > 0).nonzero().squeeze(-1)
@@ -154,3 +163,29 @@ class MultivariateNormal(TorchMultivariateNormal):
             return std * eps + self.loc
         else:
             return super().rsample(sample_shape=sample_shape)
+
+
+def _bmat_idx(*args) -> Tuple:
+    """
+    Create indices for tensor assignment that act like slices. E.g., batch[:,[1,2,3],[1,2,3]] does not select the upper
+    3x3 sub-matrix over batches, but batch[_bmat_idx(slice(None),[1,2,3],[1,2,3])] does.
+
+    :param args: Each arg is a sequence of integers. The first N args can be slices, and the last N args can be slices.
+    :return: A tuple that can be used for matrix/tensor-selection.
+    """
+    # trailing slices can simply be removed:
+    up_to_idx = len(args)
+    for arg in reversed(args):
+        if isinstance(arg, slice):
+            up_to_idx -= 1
+        else:
+            break
+    args = args[:up_to_idx]
+
+    if len(args) == 0:
+        return ()
+    elif isinstance(args[0], slice):
+        # leading slices can't be passed to np._ix, but can be prepended to it
+        return (args[0],) + _bmat_idx(*args[1:])
+    else:
+        return np.ix_(*args)
