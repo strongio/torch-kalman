@@ -1,6 +1,6 @@
-from typing import TypeVar, Optional, Callable, List, Union, Dict
+from typing import TypeVar, Optional, Callable, List, Union
+from warnings import warn
 
-import numpy as np
 import torch
 from numpy.core.multiarray import ndarray
 from torch import Tensor
@@ -130,13 +130,14 @@ class KalmanFilter(torch.nn.Module):
 
         # forecast-from time:
         if isinstance(states, StateBelief):
+            warn("A StateBelief was passed for `states`, so can't use `from_datetimes`")
             initial_state = states
         elif from_datetimes is None:
+            # a StateBeliefOverTime was passed, but no from_datetimes, so just pick the last one
             initial_state = states.last_prediction
         else:
+            # from_datetimes will be used to pick the slice
             initial_state = states.slice_by_dt(datetimes=from_datetimes)
-            if 'start_datetimes' not in kwargs.keys():
-                kwargs['start_datetimes'] = np.tile(from_datetimes, num_iter)
 
         initial_state = initial_state.__class__(means=initial_state.means.repeat((num_iter, 1)),
                                                 covs=initial_state.covs.repeat((num_iter, 1, 1)),
@@ -158,22 +159,22 @@ class KalmanFilter(torch.nn.Module):
     def forecast(self,
                  states: Union[StateBeliefOverTime, StateBelief],
                  horizon: int,
-                 forecast_from_datetimes: Optional[ndarray] = None,
+                 from_datetimes: Optional[ndarray] = None,
                  progress: bool = False,
                  **kwargs) -> StateBeliefOverTime:
 
         assert horizon > 0
 
         # forecast-from time:
-        if forecast_from_datetimes is not None:
-            kwargs['start_datetimes'] = forecast_from_datetimes
         if isinstance(states, StateBelief):
+            warn("A StateBelief was passed for `states`, so can't use `from_datetimes`")
             state_prediction = states
+        elif from_datetimes is None:
+            # a StateBeliefOverTime was passed, but no from_datetimes, so just pick the last one
+            state_prediction = states.last_prediction
         else:
-            if forecast_from_datetimes is None:
-                state_prediction = states.last_prediction
-            else:
-                state_prediction = states.slice_by_dt(datetimes=forecast_from_datetimes)
+            # from_datetimes will be used to pick the slice
+            state_prediction = states.slice_by_dt(datetimes=from_datetimes)
 
         design_for_batch = self.design_for_batch(num_groups=state_prediction.num_groups,
                                                  num_timesteps=horizon,
@@ -203,4 +204,4 @@ class KalmanFilter(torch.nn.Module):
 
         return self.family.concatenate_over_time(state_beliefs=forecasts,
                                                  design=self.design,
-                                                 start_datetimes=forecast_from_datetimes)
+                                                 start_datetimes=from_datetimes)
