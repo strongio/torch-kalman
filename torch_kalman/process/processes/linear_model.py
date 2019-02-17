@@ -1,13 +1,11 @@
-from typing import Generator, Tuple, Sequence, Optional, Union, Dict, Callable
+from typing import Generator, Sequence, Optional, Union, Callable
 
 import torch
-from torch import Tensor
-from torch.nn import Parameter
 
-from torch_kalman.covariance import Covariance
+from torch import Tensor
+
 from torch_kalman.process import Process
 from torch_kalman.process.for_batch import ProcessForBatch
-from torch_kalman.utils import itervalues_sorted_keys, split_flat
 
 
 class LinearModel(Process):
@@ -55,7 +53,7 @@ class LinearModel(Process):
         assert mm_num_covs == num_states, f"Expected {num_states} covariates, but lm_input.shape[2] = {mm_num_covs}."
 
         for measure in self.measures:
-            for i, cov in self.state_elements:
+            for i, cov in enumerate(self.state_elements):
                 for_batch.adjust_measure(measure=measure, state_element=cov, adjustment=lm_input[:, :, i])
 
         return for_batch
