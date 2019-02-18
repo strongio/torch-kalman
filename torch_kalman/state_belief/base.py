@@ -1,7 +1,6 @@
 from typing import Tuple, Sequence, Optional, TypeVar
 
 import torch
-from IPython.core.debugger import Pdb
 
 from numpy.core.multiarray import ndarray
 from torch import Tensor
