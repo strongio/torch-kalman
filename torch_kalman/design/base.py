@@ -107,19 +107,28 @@ class Design:
             param.requires_grad_(requires_grad=requires_grad)
 
     def parameters(self) -> Generator[Parameter, None, None]:
-        for process in self.processes.values():
-            for param in process.parameters():
-                yield param
+        yield from self.named_parameters().values()
 
-        yield self.measure_cholesky_log_diag
-        yield self.measure_cholesky_off_diag
+    def named_parameters(self) -> OrderedDict:
+        named_params = OrderedDict()
 
-        yield self.init_state_mean_params
-        yield self.init_cholesky_log_diag
-        yield self.init_cholesky_off_diag
+        for process_name, process in self.processes.items():
+            params = list(process.parameters())
+            names = getattr(process, 'parameter_names', range(len(params)))
+            for nm, param in zip(names, params):
+                named_params[(process_name, nm)] = param
 
-        yield self.process_cholesky_log_diag
-        yield self.process_cholesky_off_diag
+        named_params['measure_cholesky_log_diag'] = self.measure_cholesky_log_diag
+        named_params['measure_cholesky_off_diag'] = self.measure_cholesky_off_diag
+
+        named_params['init_state_mean_params'] = self.init_state_mean_params
+        named_params['init_cholesky_log_diag'] = self.init_cholesky_log_diag
+        named_params['init_cholesky_off_diag'] = self.init_cholesky_off_diag
+
+        named_params['process_cholesky_log_diag'] = self.process_cholesky_log_diag
+        named_params['process_cholesky_off_diag'] = self.process_cholesky_off_diag
+
+        return named_params
 
     def for_batch(self,
                   num_groups: int,
