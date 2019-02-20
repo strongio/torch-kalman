@@ -25,9 +25,6 @@ class Process:
 
         self._device: torch.device = None
 
-        #
-        self.expected_config: List = []
-
     # measures ---
     def add_measure(self, measure: str):
         """

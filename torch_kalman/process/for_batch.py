@@ -107,6 +107,8 @@ class ProcessForBatch:
                           adjustment: DesignMatAdjustment,
                           check_slow_grad: bool = True):
         key = (from_element, to_element)
+        if key not in self.process.transitions.keys():
+            raise Exception(f"Can't adjust transition for {key}, b/c base value wasn't set (via `Process._set_transition`).")
         if self.process.transitions_ilinks[key] is False:
             raise Exception(f"{key} is not adjustable")
         adjustment = self._validate_assignment(adjustment, check_slow_grad)

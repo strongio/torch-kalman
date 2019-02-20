@@ -42,9 +42,13 @@ class DesignForBatch:
             this_proc_kwargs = process_kwargs.get(process_name, {})
 
             # assign process:
-            self.processes[process_name] = process.for_batch(num_groups=num_groups,
-                                                             num_timesteps=num_timesteps,
-                                                             **this_proc_kwargs)
+            try:
+                self.processes[process_name] = process.for_batch(num_groups=num_groups,
+                                                                 num_timesteps=num_timesteps,
+                                                                 **this_proc_kwargs)
+            except TypeError as e:
+                # if missing kwargs, useful to know which process in the traceback
+                raise TypeError("`{pn}.for_batch` raised the following error:\n{e}".format(pn=process_name, e=e))
 
             # assign initial mean:
             pslice = self.process_idx[process_name]
