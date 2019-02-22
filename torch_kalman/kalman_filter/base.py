@@ -129,12 +129,12 @@ class KalmanFilter(torch.nn.Module):
         assert horizon > 0
 
         # forecast-from time:
-        if isinstance(states, StateBelief):
-            warn("A StateBelief was passed for `states`, so can't use `from_datetimes`")
-            initial_state = states
-        elif from_datetimes is None:
-            # a StateBeliefOverTime was passed, but no from_datetimes, so just pick the last one
-            initial_state = states.last_prediction
+        if from_datetimes is None:
+            if isinstance(states, StateBelief):
+                initial_state = states
+            else:
+                # a StateBeliefOverTime was passed, but no from_datetimes, so just pick the last one
+                initial_state = states.last_prediction
         else:
             # from_datetimes will be used to pick the slice
             initial_state = states.slice_by_dt(datetimes=from_datetimes)
@@ -166,12 +166,12 @@ class KalmanFilter(torch.nn.Module):
         assert horizon > 0
 
         # forecast-from time:
-        if isinstance(states, StateBelief):
-            warn("A StateBelief was passed for `states`, so can't use `from_datetimes`")
-            state_prediction = states
-        elif from_datetimes is None:
-            # a StateBeliefOverTime was passed, but no from_datetimes, so just pick the last one
-            state_prediction = states.last_prediction
+        if from_datetimes is None:
+            if isinstance(states, StateBelief):
+                state_prediction = states
+            else:
+                # a StateBeliefOverTime was passed, but no from_datetimes, so just pick the last one
+                state_prediction = states.last_prediction
         else:
             # from_datetimes will be used to pick the slice
             state_prediction = states.slice_by_dt(datetimes=from_datetimes)
