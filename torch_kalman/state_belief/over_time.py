@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Sequence, Dict, Tuple, TypeVar, Optional
+from typing import Sequence, Dict, Tuple, Optional
 
 import torch
 
@@ -10,8 +10,6 @@ from torch_kalman.design import Design
 from torch_kalman.state_belief import StateBelief
 
 import numpy as np
-
-from torch_kalman.state_belief.utils import log_prob_with_missings
 
 
 class StateBeliefOverTime:
@@ -61,16 +59,11 @@ class StateBeliefOverTime:
         return self._covs
 
     def log_prob(self, obs: Tensor) -> Tensor:
-        return log_prob_with_missings(self.measurement_distribution, obs)
-
-    @property
-    def distribution(self) -> TypeVar('Distribution'):
         raise NotImplementedError
 
     @property
     def measurements(self) -> Tensor:
-        # noinspection PyUnresolvedReferences
-        return self.measurement_distribution.loc
+        raise NotImplementedError
 
     def partial_measurements(self, exclude: Sequence[Tuple[str, str]]) -> Tuple[Tensor, Tensor]:
         remaining = set(exclude)
@@ -100,20 +93,13 @@ class StateBeliefOverTime:
 
     @property
     def state_distribution(self) -> Distribution:
-        if self._state_distribution is None:
-            self._state_distribution = self.distribution(loc=self.means, covariance_matrix=self.covs)
-        return self._state_distribution
+        raise NotImplementedError
 
     @property
     def measurement_distribution(self) -> Distribution:
-        if self._measurement_distribution is None:
-            means, covs = zip(*[state_belief.measurement for state_belief in self.state_beliefs])
-            means = torch.stack(means).permute(1, 0, 2)
-            covs = torch.stack(covs).permute(1, 0, 2, 3)
-            self._measurement_distribution = self.distribution(loc=means, covariance_matrix=covs)
-        return self._measurement_distribution
+        raise NotImplementedError
 
-    def components(self) -> Dict[Tuple[str, str, str], Tuple[Tensor,Tensor]]:
+    def components(self) -> Dict[Tuple[str, str, str], Tuple[Tensor, Tensor]]:
         states_per_measure = defaultdict(list)
         for state_belief in self.state_beliefs:
             for m, measure in enumerate(self.design.measures):

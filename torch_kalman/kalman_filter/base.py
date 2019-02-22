@@ -127,6 +127,7 @@ class KalmanFilter(torch.nn.Module):
                  progress: bool = False,
                  from_datetimes: Optional[ndarray] = None,
                  state_to_measured: Optional[Callable] = None,
+                 eps: Optional[Tensor] = None,
                  **kwargs) -> List[Tensor]:
 
         assert horizon > 0
@@ -151,7 +152,8 @@ class KalmanFilter(torch.nn.Module):
                                                  **kwargs)
 
         trajectories = initial_state.simulate_state_trajectories(design_for_batch=design_for_batch,
-                                                                 progress=progress)
+                                                                 progress=progress,
+                                                                 eps=eps)
 
         if state_to_measured is None:
             state_to_measured = lambda traj: traj.measurement_distribution.sample()

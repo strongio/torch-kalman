@@ -1,21 +1,28 @@
 from collections import defaultdict
-from typing import Tuple, Sequence, Optional, TypeVar
+from typing import Sequence, Optional, TypeVar
 
 import torch
 
 from torch import Tensor
-from torch.distributions import MultivariateNormal as TorchMultivariateNormal, Distribution
 
 from torch_kalman.design import Design
 from torch_kalman.state_belief import StateBelief
 
 import numpy as np
 
+from torch_kalman.state_belief.distributions.multivariate_normal import MultivariateNormal
 from torch_kalman.state_belief.over_time import StateBeliefOverTime
+
+from torch_kalman.state_belief.utils import bmat_idx
 
 
 # noinspection PyPep8Naming
 class Gaussian(StateBelief):
+    distribution = MultivariateNormal
+
+    def __init__(self, means: Tensor, covs: Tensor, last_measured: Optional[Tensor] = None):
+        super().__init__(means=means, covs=covs, last_measured=last_measured)
+
     def predict(self, F: Tensor, Q: Tensor) -> StateBelief:
         Ft = F.permute(0, 2, 1)
         means = torch.bmm(F, self.means[:, :, None]).squeeze(2)
@@ -57,8 +64,8 @@ class Gaussian(StateBelief):
 
         # updates:
         for which_valid, group_idx in update_groups:
-            idx_2d = _bmat_idx(group_idx, which_valid)
-            idx_3d = _bmat_idx(group_idx, which_valid, which_valid)
+            idx_2d = bmat_idx(group_idx, which_valid)
+            idx_3d = bmat_idx(group_idx, which_valid, which_valid)
             group_obs = obs[idx_2d]
             group_means = self.means[group_idx]
             group_covs = self.covs[group_idx]
@@ -75,10 +82,6 @@ class Gaussian(StateBelief):
         last_measured = self.last_measured.clone()
         last_measured[any_measured_group_idx] = 0
         return self.__class__(means=means_new, covs=covs_new, last_measured=last_measured)
-
-    @staticmethod
-    def _batch_matrix_select(idx) -> Tuple:
-        return (slice(None),) + np.ix_(idx, idx)
 
     @staticmethod
     def mean_update(means: Tensor, K: Tensor, residuals: Tensor):
@@ -124,68 +127,88 @@ class Gaussian(StateBelief):
                               start_datetimes: Optional[np.ndarray] = None) -> 'GaussianOverTime':
         return GaussianOverTime(state_beliefs=state_beliefs, design=design, start_datetimes=start_datetimes)
 
-    @property
-    def distribution(self) -> TypeVar('Distribution'):
-        return MultivariateNormal
+    def sample(self, eps: Optional[Tensor] = None) -> Tensor:
+        torch_distribution = self.distribution(loc=self.means, covariance_matrix=self.covs)
+        return torch_distribution.deterministic_sample(eps=eps)
+
+    def log_prob(self, obs: Tensor) -> Tensor:
+        measured_means, system_covariance = self.measurement
+        return self.log_prob_with_missings(self.distribution(measured_means, system_covariance), obs=obs)
+
+    @staticmethod
+    def log_prob_with_missings(distribution: MultivariateNormal, obs: Tensor) -> Tensor:
+        if obs.dim() not in (2, 3):
+            raise NotImplementedError("Only implemented for 2/3D tensors")
+        elif obs.dim() == 2:
+            squeeze_at_end = True
+            obs = obs[None, :, :]
+        else:
+            squeeze_at_end = False
+
+        # remove nans first, see https://github.com/pytorch/pytorch/issues/9688
+        isnan = torch.isnan(obs.detach())
+        obs = obs.clone()
+        obs[isnan] = 0.
+
+        # log-prob:
+        out = distribution.log_prob(obs)
+
+        # loop through, looking for partial observations that need to be replaced with a lower-dimensional version:
+        partial_idx = defaultdict(list)
+        partial_means = defaultdict(list)
+        partial_covs = defaultdict(list)
+        num_groups, num_times, num_dist_dims = obs.shape
+        for t in range(num_times):
+            if not isnan[:, t, :].any():
+                continue
+            for g in range(num_groups):
+                this_isnan = isnan[g, t, :]
+                if this_isnan.all():
+                    out[g, t] = 0.
+                    continue
+
+                valid_idx = tuple(np.where(1 - this_isnan.numpy())[0].tolist())
+                partial_idx[valid_idx].append((g, t, valid_idx))
+                partial_means[valid_idx].append(distribution.loc[g, t][~this_isnan])
+                partial_covs[valid_idx].append(distribution.covariance_matrix[g, t, valid_idx][:, ~this_isnan])
+
+        # do the replacing, minimizing the number of calls to distribution.__init__
+        for k, idxs in partial_idx.items():
+            dist = distribution.__class__(torch.stack(partial_means[k]), torch.stack(partial_covs[k]))
+            partial_obs = torch.stack([obs[idx] for idx in idxs])
+            log_probs = dist.log_prob(partial_obs)
+            for idx, lp in zip(idxs, log_probs):
+                out[idx[:-1]] = lp
+
+        if squeeze_at_end:
+            out = out.squeeze(0)
+
+        return out
 
 
 class GaussianOverTime(StateBeliefOverTime):
+    def log_prob(self, obs: Tensor) -> Tensor:
+        return self.family.log_prob_with_missings(self.measurement_distribution, obs)
+
     @property
-    def distribution(self) -> TypeVar('Distribution'):
-        return MultivariateNormal
+    def measurements(self) -> Tensor:
+        return self.measurement_distribution.loc
 
+    @property
+    def distribution(self) -> TypeVar('MultivariateNormal'):
+        return self.family.distribution
 
-class MultivariateNormal(TorchMultivariateNormal):
-    """
-    Workaround for https://github.com/pytorch/pytorch/issues/11333
-    """
+    @property
+    def state_distribution(self) -> MultivariateNormal:
+        if self._state_distribution is None:
+            self._state_distribution = self.distribution(loc=self.means, covariance_matrix=self.covs)
+        return self._state_distribution
 
-    def __init__(self, loc: Tensor, covariance_matrix: Tensor, validate_args: bool = False):
-        super().__init__(loc=loc, covariance_matrix=covariance_matrix, validate_args=validate_args)
-        self.univariate = len(self.event_shape) == 1 and self.event_shape[0] == 1
-
-    def log_prob(self, value):
-        if self.univariate:
-            value = torch.squeeze(value, -1)
-            mean = torch.squeeze(self.loc, -1)
-            var = torch.squeeze(torch.squeeze(self.covariance_matrix, -1), -1)
-            numer = -torch.pow(value - mean, 2) / (2. * var)
-            denom = .5 * torch.log(2. * np.pi * var)
-            log_prob = numer - denom
-        else:
-            log_prob = super().log_prob(value)
-        return log_prob
-
-    def rsample(self, sample_shape=None):
-        if self.univariate:
-            std = torch.sqrt(torch.squeeze(self.covariance_matrix, -1))
-            eps = self.loc.new(*self._extended_shape(sample_shape)).normal_()
-            return std * eps + self.loc
-        else:
-            return super().rsample(sample_shape=sample_shape)
-
-
-def _bmat_idx(*args) -> Tuple:
-    """
-    Create indices for tensor assignment that act like slices. E.g., batch[:,[1,2,3],[1,2,3]] does not select the upper
-    3x3 sub-matrix over batches, but batch[_bmat_idx(slice(None),[1,2,3],[1,2,3])] does.
-
-    :param args: Each arg is a sequence of integers. The first N args can be slices, and the last N args can be slices.
-    :return: A tuple that can be used for matrix/tensor-selection.
-    """
-    # trailing slices can simply be removed:
-    up_to_idx = len(args)
-    for arg in reversed(args):
-        if isinstance(arg, slice):
-            up_to_idx -= 1
-        else:
-            break
-    args = args[:up_to_idx]
-
-    if len(args) == 0:
-        return ()
-    elif isinstance(args[0], slice):
-        # leading slices can't be passed to np._ix, but can be prepended to it
-        return (args[0],) + _bmat_idx(*args[1:])
-    else:
-        return np.ix_(*args)
+    @property
+    def measurement_distribution(self) -> MultivariateNormal:
+        if self._measurement_distribution is None:
+            means, covs = zip(*[state_belief.measurement for state_belief in self.state_beliefs])
+            means = torch.stack(means).permute(1, 0, 2)
+            covs = torch.stack(covs).permute(1, 0, 2, 3)
+            self._measurement_distribution = self.distribution(loc=means, covariance_matrix=covs)
+        return self._measurement_distribution

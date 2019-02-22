@@ -4,16 +4,17 @@ import torch
 
 from numpy.core.multiarray import ndarray
 from torch import Tensor
-from torch.distributions import Distribution
+
 from tqdm import tqdm
 
 from torch_kalman.design import Design
 from torch_kalman.design.for_batch import DesignForBatch
-from torch_kalman.state_belief.utils import log_prob_with_missings
 from torch_kalman.utils import identity
 
 
 class StateBelief:
+    distribution = None
+
     def __init__(self, means: Tensor, covs: Tensor, last_measured: Optional[Tensor] = None):
         """
         Belief in the state of the system at a particular timepoint, for a batch of time-series.
@@ -87,31 +88,26 @@ class StateBelief:
                               start_datetimes: Optional[ndarray] = None) -> 'StateBeliefOverTime':
         raise NotImplementedError()
 
-    def to_distribution(self) -> Distribution:
-        return self.distribution(self.means, self.covs)
-
-    @property
-    def distribution(self) -> TypeVar('Distribution'):
-        raise NotImplementedError
-
     def log_prob(self, obs: Tensor) -> Tensor:
-        measured_means, system_covariance = self.measurement
-        return log_prob_with_missings(self.distribution(measured_means, system_covariance), obs=obs)
+        raise NotImplementedError
 
     def simulate(self,
                  design_for_batch: DesignForBatch,
                  progress: bool = False,
+                 eps: Optional[Tensor] = None,
                  ntry_diag_incr: int = 1000) -> Tensor:
 
         trajectories = self.simulate_state_trajectories(design_for_batch=design_for_batch,
                                                         ntry_diag_incr=ntry_diag_incr,
-                                                        progress=progress)
+                                                        progress=progress,
+                                                        eps=eps)
 
         return trajectories.measurement_distribution.sample()
 
     def simulate_state_trajectories(self,
                                     design_for_batch: DesignForBatch,
                                     progress: bool = False,
+                                    eps: Optional[Tensor] = None,
                                     ntry_diag_incr: int = 1000) -> 'StateBeliefOverTime':
 
         progress = progress or identity
@@ -127,7 +123,10 @@ class StateBelief:
                 state = state.predict(F=design_for_batch.F(t - 1), Q=design_for_batch.Q(t - 1))
 
             # realize the state:
-            state._realize(ntry=ntry_diag_incr)
+            t_eps = None
+            if eps is not None:
+                t_eps = eps[:, t, :]
+            state._realize(ntry=ntry_diag_incr, eps=t_eps)
 
             # measure the state:
             state.compute_measurement(H=design_for_batch.H(t), R=design_for_batch.R(t))
@@ -136,7 +135,7 @@ class StateBelief:
 
         return self.__class__.concatenate_over_time(state_beliefs=states, design=design_for_batch.design)
 
-    def _realize(self, ntry: int) -> None:
+    def _realize(self, ntry: int, eps: Optional[Tensor] = None) -> None:
         # the realized state has no variance (b/c it's realized), so uncertainty will only come in on the predict step
         # from process-covariance. but *actually* no variance causes numerical issues for those states w/o process
         # covariance, so we add a small amount of variance
@@ -148,7 +147,7 @@ class StateBelief:
         new_means = None
         for i in range(ntry):
             try:
-                new_means = self.to_distribution().sample()
+                new_means = self.sample(eps=eps)
             except RuntimeError as e:
                 lapack = e
                 self.covs[:, range(n), range(n)] += .000000001
@@ -160,3 +159,6 @@ class StateBelief:
 
         self.means = new_means
         self.covs[:] = 0.0
+
+    def sample(self, eps: Optional[Tensor] = None) -> Tensor:
+        raise NotImplementedError
