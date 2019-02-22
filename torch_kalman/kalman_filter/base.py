@@ -44,7 +44,10 @@ class KalmanFilter(torch.nn.Module):
         return self._family
 
     def predict_initial_state(self, design_for_batch: DesignForBatch) -> 'Gaussian':
-        return self.family(means=design_for_batch.initial_mean, covs=design_for_batch.initial_covariance)
+        return self.family(means=design_for_batch.initial_mean,
+                           covs=design_for_batch.initial_covariance,
+                           # we consider this a one-step-ahead prediction, so last measured one step ago:
+                           last_measured=torch.ones(design_for_batch.num_groups, dtype=torch.int))
 
     def design_for_batch(self,
                          num_groups: int,
