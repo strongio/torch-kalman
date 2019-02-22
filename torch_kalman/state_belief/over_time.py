@@ -60,8 +60,7 @@ class StateBeliefOverTime:
         return self._covs
 
     def log_prob(self, obs: Tensor) -> Tensor:
-        dist = self.measurement_distribution
-        return dist.log_prob_with_missings(self.measurement_distribution, obs)
+        return self.measurement_distribution.log_prob_with_missings(obs)
 
     def partial_measurements(self, exclude: Sequence[Tuple[str, str]]) -> Tuple[Tensor, Tensor]:
         remaining = set(exclude)
