@@ -121,7 +121,7 @@ class KalmanFilter(torch.nn.Module):
         raise NotImplementedError
 
     def simulate(self,
-                 states: StateBeliefOverTime,
+                 states: Union[StateBeliefOverTime, StateBelief],
                  horizon: int,
                  num_iter: int,
                  progress: bool = False,
@@ -137,7 +137,7 @@ class KalmanFilter(torch.nn.Module):
                 initial_state = states
             else:
                 # a StateBeliefOverTime was passed, but no from_datetimes, so just pick the last one
-                initial_state = states.last_prediction
+                initial_state = states.last_prediction()
         else:
             # from_datetimes will be used to pick the slice
             initial_state = states.slice_by_dt(datetimes=from_datetimes)
@@ -174,7 +174,7 @@ class KalmanFilter(torch.nn.Module):
                 state_prediction = states
             else:
                 # a StateBeliefOverTime was passed, but no from_datetimes, so just pick the last one
-                state_prediction = states.last_prediction
+                state_prediction = states.last_prediction()
         else:
             # from_datetimes will be used to pick the slice
             state_prediction = states.slice_by_dt(datetimes=from_datetimes)

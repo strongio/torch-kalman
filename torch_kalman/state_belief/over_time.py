@@ -132,28 +132,22 @@ class StateBeliefOverTime:
                     out[(measure, process_name, state_element)] = (means[:, :, s], stds[:, :, s])
         return out
 
-    @property
     def last_update(self) -> StateBelief:
-        if self._last_update is None:
-            no_updates = self.last_update_idx < 0
-            if no_updates.any():
-                raise ValueError(f"The following groups have never been updated:\n{no_updates.nonzero().squeeze().tolist()}")
-            means_covs = ((self.means[g, t, :], self.covs[g, t, :, :]) for g, t in enumerate(self.last_update_idx))
-            means, covs = zip(*means_covs)
-            self._last_update = self.family(means=torch.stack(means), covs=torch.stack(covs))
-        return self._last_update
+        no_updates = self.last_update_idx < 0
+        if no_updates.any():
+            raise ValueError(f"The following groups have never been updated:\n{no_updates.nonzero().squeeze().tolist()}")
+        means_covs = ((self.means[g, t, :], self.covs[g, t, :, :]) for g, t in enumerate(self.last_update_idx))
+        means, covs = zip(*means_covs)
+        return self.family(means=torch.stack(means), covs=torch.stack(covs))
 
-    @property
     def last_prediction(self) -> StateBelief:
-        if self._last_prediction is None:
-            no_predicts = self.last_predict_idx < 0
-            if no_predicts.any():
-                raise ValueError(f"The following groups have never been predicted:"
-                                 f"\n{no_predicts.nonzero().squeeze().tolist()}")
-            means_covs = ((self.means[g, t, :], self.covs[g, t, :, :]) for g, t in enumerate(self.last_predict_idx))
-            means, covs = zip(*means_covs)
-            self._last_prediction = self.family(means=torch.stack(means), covs=torch.stack(covs))
-        return self._last_prediction
+        no_predicts = self.last_predict_idx < 0
+        if no_predicts.any():
+            raise ValueError(f"The following groups have never been predicted:"
+                             f"\n{no_predicts.nonzero().squeeze().tolist()}")
+        means_covs = ((self.means[g, t, :], self.covs[g, t, :, :]) for g, t in enumerate(self.last_predict_idx))
+        means, covs = zip(*means_covs)
+        return self.family(means=torch.stack(means), covs=torch.stack(covs))
 
     def slice_by_dt(self, datetimes: np.ndarray) -> StateBelief:
         if self.start_datetimes is None:
