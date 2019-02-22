@@ -1,15 +1,16 @@
 from collections import defaultdict
-from typing import Sequence, Dict, Tuple, Optional
+from typing import Sequence, Dict, Tuple, Optional, TypeVar
 
 import torch
 
 from torch import Tensor
-from torch.distributions import Distribution
 
 from torch_kalman.design import Design
 from torch_kalman.state_belief import StateBelief
 
 import numpy as np
+
+from torch_kalman.state_belief.distributions.base import KalmanFilterDistributionMixin
 
 
 class StateBeliefOverTime:
@@ -59,11 +60,8 @@ class StateBeliefOverTime:
         return self._covs
 
     def log_prob(self, obs: Tensor) -> Tensor:
-        raise NotImplementedError
-
-    @property
-    def measurements(self) -> Tensor:
-        raise NotImplementedError
+        dist = self.measurement_distribution
+        return dist.log_prob_with_missings(self.measurement_distribution, obs)
 
     def partial_measurements(self, exclude: Sequence[Tuple[str, str]]) -> Tuple[Tensor, Tensor]:
         remaining = set(exclude)
@@ -90,14 +88,6 @@ class StateBeliefOverTime:
             covariances.append(torch.bmm(torch.bmm(H_partial, state_belief.covs), Ht_partial) + state_belief.R)
 
         return torch.stack(measurements).permute(1, 0, 2), torch.stack(covariances).permute(1, 0, 2, 3)
-
-    @property
-    def state_distribution(self) -> Distribution:
-        raise NotImplementedError
-
-    @property
-    def measurement_distribution(self) -> Distribution:
-        raise NotImplementedError
 
     def components(self) -> Dict[Tuple[str, str, str], Tuple[Tensor, Tensor]]:
         states_per_measure = defaultdict(list)
@@ -145,3 +135,26 @@ class StateBeliefOverTime:
         means_covs = ((self.means[g, t, :], self.covs[g, t, :, :]) for g, t in enumerate(idx))
         means, covs = zip(*means_covs)
         return self.family(means=torch.stack(means), covs=torch.stack(covs))
+
+    @property
+    def measurements(self) -> Tensor:
+        return self.measurement_distribution.mean
+
+    @property
+    def state_distribution(self) -> KalmanFilterDistributionMixin:
+        if self._state_distribution is None:
+            self._state_distribution = self.distribution(self.means, self.covs)
+        return self._state_distribution
+
+    @property
+    def measurement_distribution(self) -> KalmanFilterDistributionMixin:
+        if self._measurement_distribution is None:
+            means, covs = zip(*[state_belief.measurement for state_belief in self.state_beliefs])
+            means = torch.stack(means).permute(1, 0, 2)
+            covs = torch.stack(covs).permute(1, 0, 2, 3)
+            self._measurement_distribution = self.distribution(means, covs)
+        return self._measurement_distribution
+
+    @property
+    def distribution(self) -> TypeVar('KalmanFilterDistributionMixin'):
+        return self.family.distribution

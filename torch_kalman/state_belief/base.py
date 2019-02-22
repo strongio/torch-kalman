@@ -9,6 +9,9 @@ from tqdm import tqdm
 
 from torch_kalman.design import Design
 from torch_kalman.design.for_batch import DesignForBatch
+
+if False:
+    from torch_kalman.state_belief.over_time import StateBeliefOverTime
 from torch_kalman.utils import identity
 
 
@@ -90,19 +93,6 @@ class StateBelief:
 
     def log_prob(self, obs: Tensor) -> Tensor:
         raise NotImplementedError
-
-    def simulate(self,
-                 design_for_batch: DesignForBatch,
-                 progress: bool = False,
-                 eps: Optional[Tensor] = None,
-                 ntry_diag_incr: int = 1000) -> Tensor:
-
-        trajectories = self.simulate_state_trajectories(design_for_batch=design_for_batch,
-                                                        ntry_diag_incr=ntry_diag_incr,
-                                                        progress=progress,
-                                                        eps=eps)
-
-        return trajectories.measurement_distribution.sample()
 
     def simulate_state_trajectories(self,
                                     design_for_batch: DesignForBatch,

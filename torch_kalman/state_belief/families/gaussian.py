@@ -128,87 +128,16 @@ class Gaussian(StateBelief):
         return GaussianOverTime(state_beliefs=state_beliefs, design=design, start_datetimes=start_datetimes)
 
     def sample(self, eps: Optional[Tensor] = None) -> Tensor:
-        torch_distribution = self.distribution(loc=self.means, covariance_matrix=self.covs)
+        torch_distribution = self.distribution(self.means, self.covs)
         return torch_distribution.deterministic_sample(eps=eps)
 
     def log_prob(self, obs: Tensor) -> Tensor:
         measured_means, system_covariance = self.measurement
-        return self.log_prob_with_missings(self.distribution(measured_means, system_covariance), obs=obs)
-
-    @staticmethod
-    def log_prob_with_missings(distribution: MultivariateNormal, obs: Tensor) -> Tensor:
-        if obs.dim() not in (2, 3):
-            raise NotImplementedError("Only implemented for 2/3D tensors")
-        elif obs.dim() == 2:
-            squeeze_at_end = True
-            obs = obs[None, :, :]
-        else:
-            squeeze_at_end = False
-
-        # remove nans first, see https://github.com/pytorch/pytorch/issues/9688
-        isnan = torch.isnan(obs.detach())
-        obs = obs.clone()
-        obs[isnan] = 0.
-
-        # log-prob:
-        out = distribution.log_prob(obs)
-
-        # loop through, looking for partial observations that need to be replaced with a lower-dimensional version:
-        partial_idx = defaultdict(list)
-        partial_means = defaultdict(list)
-        partial_covs = defaultdict(list)
-        num_groups, num_times, num_dist_dims = obs.shape
-        for t in range(num_times):
-            if not isnan[:, t, :].any():
-                continue
-            for g in range(num_groups):
-                this_isnan = isnan[g, t, :]
-                if this_isnan.all():
-                    out[g, t] = 0.
-                    continue
-
-                valid_idx = tuple(np.where(1 - this_isnan.numpy())[0].tolist())
-                partial_idx[valid_idx].append((g, t, valid_idx))
-                partial_means[valid_idx].append(distribution.loc[g, t][~this_isnan])
-                partial_covs[valid_idx].append(distribution.covariance_matrix[g, t, valid_idx][:, ~this_isnan])
-
-        # do the replacing, minimizing the number of calls to distribution.__init__
-        for k, idxs in partial_idx.items():
-            dist = distribution.__class__(torch.stack(partial_means[k]), torch.stack(partial_covs[k]))
-            partial_obs = torch.stack([obs[idx] for idx in idxs])
-            log_probs = dist.log_prob(partial_obs)
-            for idx, lp in zip(idxs, log_probs):
-                out[idx[:-1]] = lp
-
-        if squeeze_at_end:
-            out = out.squeeze(0)
-
-        return out
+        dist = self.distribution(measured_means, system_covariance)
+        return dist.log_prob_with_missings(obs=obs)
 
 
 class GaussianOverTime(StateBeliefOverTime):
-    def log_prob(self, obs: Tensor) -> Tensor:
-        return self.family.log_prob_with_missings(self.measurement_distribution, obs)
-
-    @property
-    def measurements(self) -> Tensor:
-        return self.measurement_distribution.loc
-
     @property
     def distribution(self) -> TypeVar('MultivariateNormal'):
         return self.family.distribution
-
-    @property
-    def state_distribution(self) -> MultivariateNormal:
-        if self._state_distribution is None:
-            self._state_distribution = self.distribution(loc=self.means, covariance_matrix=self.covs)
-        return self._state_distribution
-
-    @property
-    def measurement_distribution(self) -> MultivariateNormal:
-        if self._measurement_distribution is None:
-            means, covs = zip(*[state_belief.measurement for state_belief in self.state_beliefs])
-            means = torch.stack(means).permute(1, 0, 2)
-            covs = torch.stack(covs).permute(1, 0, 2, 3)
-            self._measurement_distribution = self.distribution(loc=means, covariance_matrix=covs)
-        return self._measurement_distribution

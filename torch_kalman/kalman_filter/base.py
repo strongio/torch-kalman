@@ -1,4 +1,4 @@
-from typing import TypeVar, Optional, Callable, List, Union
+from typing import TypeVar, Optional, Callable, List, Union, Tuple
 from warnings import warn
 
 import torch
@@ -127,7 +127,7 @@ class KalmanFilter(torch.nn.Module):
                  progress: bool = False,
                  from_datetimes: Optional[ndarray] = None,
                  state_to_measured: Optional[Callable] = None,
-                 eps: Optional[Tensor] = None,
+                 white_noise: Optional[Tuple[Tensor, Tensor]] = None,
                  **kwargs) -> List[Tensor]:
 
         assert horizon > 0
@@ -151,14 +151,15 @@ class KalmanFilter(torch.nn.Module):
                                                  num_timesteps=horizon,
                                                  **kwargs)
 
+        process_wn, measure_wn = white_noise
         trajectories = initial_state.simulate_state_trajectories(design_for_batch=design_for_batch,
                                                                  progress=progress,
-                                                                 eps=eps)
-
+                                                                 eps=process_wn)
         if state_to_measured is None:
-            state_to_measured = lambda traj: traj.measurement_distribution.sample()
+            sim = trajectories.measurement_distribution.deterministic_sample(eps=measure_wn)
+        else:
+            sim = state_to_measured(trajectories)
 
-        sim = state_to_measured(trajectories)
         return torch.chunk(sim, num_iter)
 
     def forecast(self,
