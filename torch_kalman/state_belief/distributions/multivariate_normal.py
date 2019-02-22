@@ -4,11 +4,10 @@ from torch.distributions import MultivariateNormal as TorchMultivariateNormal
 from torch.distributions.multivariate_normal import _batch_mv
 from torch.distributions.utils import _standard_normal
 
-from torch_kalman.state_belief.distributions.base import DistributionMixin
 from math import pi
 
 
-class MultivariateNormal(TorchMultivariateNormal, DistributionMixin):
+class MultivariateNormal(TorchMultivariateNormal):
     def __init__(self, loc: Tensor, covariance_matrix: Tensor, validate_args: bool = False):
         super().__init__(loc=loc, covariance_matrix=covariance_matrix, validate_args=validate_args)
         self.univariate = len(self.event_shape) == 1 and self.event_shape[0] == 1
@@ -36,3 +35,12 @@ class MultivariateNormal(TorchMultivariateNormal, DistributionMixin):
                 shape = self._extended_shape(sample_shape)
                 eps = _standard_normal(shape, dtype=self.loc.dtype, device=self.loc.device)
             return self.loc + _batch_mv(self._unbroadcasted_scale_tril, eps)
+
+    def cdf(self, value):
+        raise NotImplementedError
+
+    def icdf(self, value):
+        raise NotImplementedError
+
+    def enumerate_support(self, expand=True):
+        raise NotImplementedError
