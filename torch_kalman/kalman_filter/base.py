@@ -1,4 +1,4 @@
-from typing import TypeVar, Optional, Callable, List, Union, Tuple
+from typing import TypeVar, Optional, Callable, List, Union, Tuple, Sequence
 from warnings import warn
 
 import torch
@@ -9,16 +9,20 @@ from tqdm import tqdm
 
 from torch_kalman.design import Design
 from torch_kalman.design.for_batch import DesignForBatch
+from torch_kalman.process import Process
 from torch_kalman.state_belief import Gaussian, StateBelief
 from torch_kalman.state_belief.over_time import StateBeliefOverTime
 from torch_kalman.utils import identity
 
 
 class KalmanFilter(torch.nn.Module):
-    def __init__(self, *args, **kwargs):
+    def __init__(self,
+                 measures: Sequence[str],
+                 processes: Sequence[Process],
+                 device: Optional[torch.device] = None):
         super().__init__()
         self.design: Design = None
-        self._init_design(*args, **kwargs)
+        self._init_design(measures=measures, processes=processes, device=device)
 
         # parameters from design:
         self.design_parameters = ParameterList()
