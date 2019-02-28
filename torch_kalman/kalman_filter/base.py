@@ -117,9 +117,7 @@ class KalmanFilter(torch.nn.Module):
             # append to output:
             state_predictions.append(state_prediction)
 
-        return self.family.concatenate_over_time(state_beliefs=state_predictions,
-                                                 design=self.design,
-                                                 start_datetimes=kwargs.get('start_datetimes', None))
+        return self.family.concatenate_over_time(state_beliefs=state_predictions, design=self.design)
 
     def smooth(self, states: StateBeliefOverTime):
         raise NotImplementedError
@@ -129,7 +127,7 @@ class KalmanFilter(torch.nn.Module):
                  horizon: int,
                  num_iter: int,
                  progress: bool = False,
-                 from_datetimes: Optional[ndarray] = None,
+                 from_times: Sequence[int] = None,
                  state_to_measured: Optional[Callable] = None,
                  white_noise: Optional[Tuple[Tensor, Tensor]] = None,
                  ntry_diag_incr: int = 1000,
@@ -138,7 +136,7 @@ class KalmanFilter(torch.nn.Module):
         assert horizon > 0
 
         # forecast-from time:
-        if from_datetimes is None:
+        if from_times is None:
             if isinstance(states, StateBelief):
                 initial_state = states
             else:
@@ -146,7 +144,7 @@ class KalmanFilter(torch.nn.Module):
                 initial_state = states.last_prediction()
         else:
             # from_datetimes will be used to pick the slice
-            initial_state = states.slice_by_dt(datetimes=from_datetimes)
+            initial_state = states.get_state_belief(from_times)
 
         initial_state = initial_state.__class__(means=initial_state.means.repeat((num_iter, 1)),
                                                 covs=initial_state.covs.repeat((num_iter, 1, 1)),
@@ -171,14 +169,14 @@ class KalmanFilter(torch.nn.Module):
     def forecast(self,
                  states: Union[StateBeliefOverTime, StateBelief],
                  horizon: int,
-                 from_datetimes: Optional[ndarray] = None,
+                 from_times: Optional[Sequence[int]] = None,
                  progress: bool = False,
                  **kwargs) -> StateBeliefOverTime:
 
         assert horizon > 0
 
         # forecast-from time:
-        if from_datetimes is None:
+        if from_times is None:
             if isinstance(states, StateBelief):
                 state_prediction = states
             else:
@@ -186,7 +184,7 @@ class KalmanFilter(torch.nn.Module):
                 state_prediction = states.last_prediction()
         else:
             # from_datetimes will be used to pick the slice
-            state_prediction = states.slice_by_dt(datetimes=from_datetimes)
+            state_prediction = states.get_state_belief(from_times)
 
         design_for_batch = self.design_for_batch(num_groups=state_prediction.num_groups,
                                                  num_timesteps=horizon,
@@ -214,6 +212,4 @@ class KalmanFilter(torch.nn.Module):
             # append to output:
             forecasts.append(state_prediction)
 
-        return self.family.concatenate_over_time(state_beliefs=forecasts,
-                                                 design=self.design,
-                                                 start_datetimes=from_datetimes)
+        return self.family.concatenate_over_time(state_beliefs=forecasts, design=self.design)

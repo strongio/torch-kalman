@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Sequence, Dict, Tuple, Optional, TypeVar
+from typing import Sequence, Dict, Tuple, TypeVar
 
 import torch
 
@@ -8,22 +8,16 @@ from torch import Tensor
 from torch_kalman.design import Design
 from torch_kalman.state_belief import StateBelief
 
-import numpy as np
-
 from torch_kalman.state_belief.distributions.base import KalmanFilterDistributionMixin
 
 
 class StateBeliefOverTime:
-    def __init__(self,
-                 state_beliefs: Sequence['StateBelief'],
-                 design: Design,
-                 start_datetimes: Optional[np.ndarray] = None):
+    def __init__(self, state_beliefs: Sequence['StateBelief'], design: Design):
         """
         Belief in the state of the system over a range of times, for a batch of time-serieses.
         """
         self.state_beliefs = state_beliefs
         self.design = design
-        self.start_datetimes = start_datetimes
         self.family = self.state_beliefs[0].__class__
         self.num_groups = self.state_beliefs[0].num_groups
 
@@ -124,14 +118,8 @@ class StateBeliefOverTime:
         means, covs = zip(*means_covs)
         return self.family(means=torch.stack(means), covs=torch.stack(covs))
 
-    def slice_by_dt(self, datetimes: np.ndarray) -> StateBelief:
-        if self.start_datetimes is None:
-            raise ValueError("Cannot use `slice_by_dt` if `start_datetimes` was not passed originally.")
-        act = datetimes.dtype
-        exp = self.start_datetimes.dtype
-        assert act == exp, f"Expected datetimes with dtype {exp}, got {act}."
-        idx = (datetimes - self.start_datetimes).view('int64')
-        means_covs = ((self.means[g, t, :], self.covs[g, t, :, :]) for g, t in enumerate(idx))
+    def get_state_belief(self, times: Sequence[int]) -> StateBelief:
+        means_covs = ((self.means[g, t, :], self.covs[g, t, :, :]) for g, t in enumerate(times))
         means, covs = zip(*means_covs)
         return self.family(means=torch.stack(means), covs=torch.stack(covs))
 
