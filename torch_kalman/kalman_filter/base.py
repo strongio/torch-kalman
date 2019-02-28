@@ -132,6 +132,7 @@ class KalmanFilter(torch.nn.Module):
                  from_datetimes: Optional[ndarray] = None,
                  state_to_measured: Optional[Callable] = None,
                  white_noise: Optional[Tuple[Tensor, Tensor]] = None,
+                 ntry_diag_incr: int = 1000,
                  **kwargs) -> List[Tensor]:
 
         assert horizon > 0
@@ -158,6 +159,7 @@ class KalmanFilter(torch.nn.Module):
         process_wn, measure_wn = white_noise
         trajectories = initial_state.simulate_state_trajectories(design_for_batch=design_for_batch,
                                                                  progress=progress,
+                                                                 ntry_diag_incr=ntry_diag_incr,
                                                                  eps=process_wn)
         if state_to_measured is None:
             sim = trajectories.measurement_distribution.deterministic_sample(eps=measure_wn)
