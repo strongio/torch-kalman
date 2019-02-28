@@ -154,7 +154,10 @@ class KalmanFilter(torch.nn.Module):
                                                  num_timesteps=horizon,
                                                  **kwargs)
 
-        process_wn, measure_wn = white_noise
+        if white_noise is None:
+            process_wn, measure_wn = None, None
+        else:
+            process_wn, measure_wn = white_noise
         trajectories = initial_state.simulate_state_trajectories(design_for_batch=design_for_batch,
                                                                  progress=progress,
                                                                  ntry_diag_incr=ntry_diag_incr,
