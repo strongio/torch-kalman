@@ -1,7 +1,8 @@
 from setuptools import setup, find_packages
+from torch_kalman import __version__
 
 setup(name='torch_kalman',
-      version='0.1',
+      version=__version__,
       description='Kalman filters with pytorch',
       url='http://github.com/strongio/torch_kalman',
       author='Jacob Dink',
