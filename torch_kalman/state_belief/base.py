@@ -85,10 +85,7 @@ class StateBelief:
         raise NotImplementedError
 
     @classmethod
-    def concatenate_over_time(cls,
-                              state_beliefs: Sequence['StateBelief'],
-                              design: Design,
-                              start_datetimes: Optional[ndarray] = None) -> 'StateBeliefOverTime':
+    def concatenate_over_time(cls, state_beliefs: Sequence['StateBelief'], design: Design) -> 'StateBeliefOverTime':
         raise NotImplementedError()
 
     def log_prob(self, obs: Tensor) -> Tensor:

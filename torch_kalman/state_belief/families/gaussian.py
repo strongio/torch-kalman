@@ -121,11 +121,8 @@ class Gaussian(StateBelief):
         return K
 
     @classmethod
-    def concatenate_over_time(cls,
-                              state_beliefs: Sequence['Gaussian'],
-                              design: Design,
-                              start_datetimes: Optional[np.ndarray] = None) -> 'GaussianOverTime':
-        return GaussianOverTime(state_beliefs=state_beliefs, design=design, start_datetimes=start_datetimes)
+    def concatenate_over_time(cls, state_beliefs: Sequence['Gaussian'], design: Design) -> 'GaussianOverTime':
+        return GaussianOverTime(state_beliefs=state_beliefs, design=design)
 
     def sample(self, eps: Optional[Tensor] = None) -> Tensor:
         torch_distribution = self.distribution(self.means, self.covs)
