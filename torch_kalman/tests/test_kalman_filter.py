@@ -24,7 +24,7 @@ class TestKalmanFilter(TestCaseTK):
             processes.append(name_to_proc(id, **pkwargs))
             processes[-1].add_measure('measure')
 
-        kf = KalmanFilter(processes, measures=['measure'])
+        kf = KalmanFilter(measures=['measure'], processes=processes)
 
     def test_equations(self):
         data = Tensor([[-50., 50., 1.]])[:, :, None]
