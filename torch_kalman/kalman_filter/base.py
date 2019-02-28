@@ -2,7 +2,7 @@ from typing import TypeVar, Optional, Callable, List, Union, Tuple, Sequence
 from warnings import warn
 
 import torch
-from numpy.core.multiarray import ndarray
+from numpy import ndarray
 from torch import Tensor
 from torch.nn import ParameterList
 from tqdm import tqdm
@@ -140,10 +140,10 @@ class KalmanFilter(torch.nn.Module):
             if isinstance(states, StateBelief):
                 initial_state = states
             else:
-                # a StateBeliefOverTime was passed, but no from_datetimes, so just pick the last one
+                # a StateBeliefOverTime was passed, but no from_times, so just pick the last one
                 initial_state = states.last_prediction()
         else:
-            # from_datetimes will be used to pick the slice
+            # from_times will be used to pick the slice
             initial_state = states.get_state_belief(from_times)
 
         initial_state = initial_state.__class__(means=initial_state.means.repeat((num_iter, 1)),
@@ -180,10 +180,10 @@ class KalmanFilter(torch.nn.Module):
             if isinstance(states, StateBelief):
                 state_prediction = states
             else:
-                # a StateBeliefOverTime was passed, but no from_datetimes, so just pick the last one
+                # a StateBeliefOverTime was passed, but no from_times, so just pick the last one
                 state_prediction = states.last_prediction()
         else:
-            # from_datetimes will be used to pick the slice
+            # from_times will be used to pick the slice
             state_prediction = states.get_state_belief(from_times)
 
         design_for_batch = self.design_for_batch(num_groups=state_prediction.num_groups,
