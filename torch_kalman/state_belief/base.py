@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 from torch_kalman.design import Design
 from torch_kalman.design.for_batch import DesignForBatch
+from torch_kalman.state_belief.distributions.base import KalmanFilterDistributionMixin
 
 if False:
     from torch_kalman.state_belief.over_time import StateBeliefOverTime
@@ -16,7 +17,7 @@ from torch_kalman.utils import identity
 
 
 class StateBelief:
-    distribution = None
+    distribution: KalmanFilterDistributionMixin = None
 
     def __init__(self, means: Tensor, covs: Tensor, last_measured: Optional[Tensor] = None):
         """

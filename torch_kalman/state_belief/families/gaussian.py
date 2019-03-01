@@ -8,8 +8,6 @@ from torch import Tensor
 from torch_kalman.design import Design
 from torch_kalman.state_belief import StateBelief
 
-import numpy as np
-
 from torch_kalman.state_belief.distributions.multivariate_normal import MultivariateNormal
 from torch_kalman.state_belief.over_time import StateBeliefOverTime
 
@@ -23,16 +21,14 @@ class Gaussian(StateBelief):
     def __init__(self, means: Tensor, covs: Tensor, last_measured: Optional[Tensor] = None):
         super().__init__(means=means, covs=covs, last_measured=last_measured)
 
-    def predict(self, F: Tensor, Q: Tensor) -> StateBelief:
+    def predict(self, F: Tensor, Q: Tensor) -> 'Gaussian':
         Ft = F.permute(0, 2, 1)
-        means = torch.bmm(F, self.means[:, :, None]).squeeze(2)
-        covs = torch.bmm(torch.bmm(F, self.covs), Ft) + Q
+        means = F.matmul(self.means.unsqueeze(2)).squeeze(2)
+        covs = F.matmul(self.covs).matmul(Ft) + Q
         return self.__class__(means=means, covs=covs, last_measured=self.last_measured + 1)
 
-    def update(self, obs: Tensor) -> StateBelief:
-        assert isinstance(obs, Tensor)
+    def update(self, obs: Tensor) -> 'Gaussian':
         isnan = (obs != obs)
-        num_dim = obs.shape[1]
 
         means_new = self.means.data.clone()
         covs_new = self.covs.data.clone()
@@ -74,7 +70,7 @@ class Gaussian(StateBelief):
             group_H = self.H[idx_2d]
             group_R = self.R[idx_3d]
             group_K = self.kalman_gain(system_covariance=group_system_covs, covariance=group_covs, H=group_H)
-            means_new[group_idx] = self.mean_update(means=group_means, K=group_K, residuals=group_obs - group_measured_means)
+            means_new[group_idx] = self.mean_update(mean=group_means, K=group_K, residuals=group_obs - group_measured_means)
             covs_new[group_idx] = self.covariance_update(covariance=group_covs, K=group_K, H=group_H, R=group_R)
 
         # calculate last-measured:
@@ -84,8 +80,8 @@ class Gaussian(StateBelief):
         return self.__class__(means=means_new, covs=covs_new, last_measured=last_measured)
 
     @staticmethod
-    def mean_update(means: Tensor, K: Tensor, residuals: Tensor):
-        return means + K.matmul(residuals.unsqueeze(2)).squeeze(2)
+    def mean_update(mean: Tensor, K: Tensor, residuals: Tensor):
+        return mean + K.matmul(residuals.unsqueeze(2)).squeeze(2)
 
     @staticmethod
     def covariance_update(covariance: Tensor, K: Tensor, H: Tensor, R: Tensor) -> Tensor:
@@ -100,24 +96,16 @@ class Gaussian(StateBelief):
         return p2 + p3
 
     @staticmethod
-    def kalman_gain(covariance: Tensor,
-                    system_covariance: Tensor,
-                    H: Tensor,
-                    method: str = 'solve'):
+    def kalman_gain(covariance: Tensor, system_covariance: Tensor, H: Tensor):
 
         Ht = H.permute(0, 2, 1)
         covs_measured = torch.bmm(covariance, Ht)
-        if method == 'solve':
-            A = system_covariance.permute(0, 2, 1)
-            B = covs_measured.permute(0, 2, 1)
-            Kt, _ = torch.gesv(B, A)
-            K = Kt.permute(0, 2, 1)
-        elif method == 'inverse':
-            Sinv = torch.cat([torch.inverse(system_covariance[i, :, :]).unsqueeze(0)
-                              for i in range(len(system_covariance))], 0)
-            K = torch.bmm(covs_measured, Sinv)
-        else:
-            raise ValueError(f"Unrecognized method '{method}'.")
+
+        A = system_covariance.permute(0, 2, 1)
+        B = covs_measured.permute(0, 2, 1)
+        Kt, _ = torch.gesv(B, A)
+        K = Kt.permute(0, 2, 1)
+
         return K
 
     @classmethod
