@@ -19,17 +19,19 @@ class KalmanFilter(torch.nn.Module):
     def __init__(self,
                  measures: Sequence[str],
                  processes: Sequence[Process],
-                 device: Optional[torch.device] = None):
+                 device: Optional[torch.device] = None,
+                 **kwargs):
+
         super().__init__()
         self.design: Design = None
-        self._init_design(measures=measures, processes=processes, device=device)
+        self._init_design(measures=measures, processes=processes, device=device, **kwargs)
 
         # parameters from design:
         self.design_parameters = ParameterList()
         for param in self.design.parameters():
             self.design_parameters.append(param)
 
-        # the distributional family, implemented by property (default gaussian)
+        # the StateBelief family, implemented by property (default gaussian)
         self._family = None
 
         self.to(device=self.design.device)
