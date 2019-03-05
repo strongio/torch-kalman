@@ -77,24 +77,24 @@ class StateBelief:
         return self.__class__(means=means, covs=covs, last_measured=self.last_measured + 1)
 
     def update(self, obs: Tensor) -> 'StateBelief':
-        isnan = (obs != obs)
+        is_nan = (obs != obs)
 
         # need to do a different update depending on which (if any) dimensions are missing:
         update_groups = defaultdict(list)
-        anynan_by_group = (torch.sum(isnan, 1) > 0)
+        anynan_by_group = (torch.sum(is_nan, 1) > 0)
 
         # groups with nan:
         nan_group_idx = anynan_by_group.nonzero().squeeze(-1).tolist()
         for i in nan_group_idx:
-            if isnan[i].all():
+            if is_nan[i].all():
                 continue  # if all nan, then simply skip update
-            which_valid = (~isnan[i]).nonzero().squeeze(-1).tolist()
+            which_valid = (~is_nan[i]).nonzero().squeeze(-1).tolist()
             update_groups[tuple(which_valid)].append(i)
 
         update_groups = list(update_groups.items())
 
         # groups without nan:
-        if isnan.any():
+        if is_nan.any():
             nonan_group_idx = (~anynan_by_group).nonzero().squeeze(-1).tolist()
             if len(nonan_group_idx):
                 update_groups.append((slice(None), nonan_group_idx))
@@ -110,11 +110,14 @@ class StateBelief:
                                                                            group_idx=group_idx,
                                                                            which_valid=which_valid)
 
-        # calculate last-measured:
-        any_measured_group_idx = (torch.sum(~isnan, 1) > 0).nonzero().squeeze(-1)
+        last_measured = self._update_last_measured(obs)
+        return self.__class__(means=means_new, covs=covs_new, last_measured=last_measured)
+
+    def _update_last_measured(self, obs: Tensor) -> Tensor:
+        any_measured_group_idx = (torch.sum(~torch.isnan(obs), 1) > 0).nonzero().squeeze(-1)
         last_measured = self.last_measured.clone()
         last_measured[any_measured_group_idx] = 0
-        return self.__class__(means=means_new, covs=covs_new, last_measured=last_measured)
+        return last_measured
 
     @staticmethod
     def mean_update(mean: Tensor, K: Tensor, residuals: Tensor) -> Tensor:
