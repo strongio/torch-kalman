@@ -146,7 +146,7 @@ class KalmanFilter(torch.nn.Module):
                 initial_state = states.last_prediction()
         else:
             # from_times will be used to pick the slice
-            initial_state = states.get_state_belief(from_times)
+            initial_state = states.state_belief_for_time(from_times)
 
         initial_state = initial_state.__class__(means=initial_state.means.repeat((num_iter, 1)),
                                                 covs=initial_state.covs.repeat((num_iter, 1, 1)),
@@ -160,12 +160,12 @@ class KalmanFilter(torch.nn.Module):
             process_wn, measure_wn = None, None
         else:
             process_wn, measure_wn = white_noise
-        trajectories = initial_state.simulate_state_trajectories(design_for_batch=design_for_batch,
-                                                                 progress=progress,
-                                                                 ntry_diag_incr=ntry_diag_incr,
-                                                                 eps=process_wn)
+        trajectories = initial_state.simulate_trajectories(design_for_batch=design_for_batch,
+                                                           progress=progress,
+                                                           ntry_diag_incr=ntry_diag_incr,
+                                                           eps=process_wn)
         if state_to_measured is None:
-            sim = trajectories.measurement_distribution.deterministic_sample(eps=measure_wn)
+            sim = trajectories.sample_measurements(eps=measure_wn)
         else:
             sim = state_to_measured(trajectories)
 
@@ -189,7 +189,7 @@ class KalmanFilter(torch.nn.Module):
                 state_prediction = states.last_prediction()
         else:
             # from_times will be used to pick the slice
-            state_prediction = states.get_state_belief(from_times)
+            state_prediction = states.state_belief_for_time(from_times)
 
         design_for_batch = self.design_for_batch(num_groups=state_prediction.num_groups,
                                                  num_timesteps=horizon,

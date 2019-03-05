@@ -1,5 +1,6 @@
 from collections import defaultdict
-from typing import Sequence, Dict, Tuple, TypeVar
+from typing import Sequence, Dict, Tuple, Union, Optional
+from warnings import warn
 
 import torch
 
@@ -8,7 +9,7 @@ from torch import Tensor
 from torch_kalman.design import Design
 from torch_kalman.state_belief import StateBelief
 
-from torch_kalman.state_belief.distributions.base import KalmanFilterDistributionMixin
+Selector = Union[Sequence[int], slice]
 
 
 class StateBeliefOverTime:
@@ -30,16 +31,14 @@ class StateBeliefOverTime:
             self.last_predict_idx[state_belief.last_measured == 1] = t
             self.last_update_idx[state_belief.last_measured == 0] = t
 
-        self._state_distribution = None
-        self._measurement_distribution = None
         self._means = None
         self._covs = None
         self._last_measured = None
 
     def _means_covs(self) -> None:
         means, covs = zip(*[(state_belief.means, state_belief.covs) for state_belief in self.state_beliefs])
-        self._means = torch.stack(means).permute(1, 0, 2)
-        self._covs = torch.stack(covs).permute(1, 0, 2, 3)
+        self._means = torch.stack(means, 1)
+        self._covs = torch.stack(covs, 1)
 
     @property
     def means(self) -> Tensor:
@@ -52,35 +51,6 @@ class StateBeliefOverTime:
         if self._covs is None:
             self._means_covs()
         return self._covs
-
-    def log_prob(self, obs: Tensor) -> Tensor:
-        return self.measurement_distribution.log_prob_with_missings(obs)
-
-    def partial_measurements(self, exclude: Sequence[Tuple[str, str]]) -> Tuple[Tensor, Tensor]:
-        remaining = set(exclude)
-        exclude_idx = []
-        for i, ps in enumerate(self.design.all_state_elements()):
-            if ps in exclude:
-                exclude_idx.append(i)
-                remaining.remove(ps)
-        if remaining:
-            raise ValueError(f"The following were in `exclude` but weren't found in design:\n{remaining}.")
-
-        measurements = []
-        covariances = []
-        for state_belief in self.state_beliefs:
-            # only some states contribute:
-            H_partial = state_belief.H.clone()
-            H_partial[:, :, exclude_idx] = 0.
-
-            # mean:
-            measurements.append(torch.bmm(H_partial, state_belief.means[:, :, None]).squeeze(2))
-
-            # cov:
-            Ht_partial = H_partial.permute(0, 2, 1)
-            covariances.append(torch.bmm(torch.bmm(H_partial, state_belief.covs), Ht_partial) + state_belief.R)
-
-        return torch.stack(measurements).permute(1, 0, 2), torch.stack(covariances).permute(1, 0, 2, 3)
 
     def components(self) -> Dict[Tuple[str, str, str], Tuple[Tensor, Tensor]]:
         states_per_measure = defaultdict(list)
@@ -118,30 +88,60 @@ class StateBeliefOverTime:
         means, covs = zip(*means_covs)
         return self.family(means=torch.stack(means), covs=torch.stack(covs))
 
-    def get_state_belief(self, times: Sequence[int]) -> StateBelief:
+    def state_belief_for_time(self, times: Sequence[int]) -> StateBelief:
         means_covs = ((self.means[g, t, :], self.covs[g, t, :, :]) for g, t in enumerate(times))
         means, covs = zip(*means_covs)
         return self.family(means=torch.stack(means), covs=torch.stack(covs))
 
-    @property
-    def measurements(self) -> Tensor:
-        return self.measurement_distribution.mean
+    def log_prob(self, obs: Tensor) -> Tensor:
+        if obs.grad_fn is not None:
+            warn("`obs` has a grad_fn, nans may propagate to gradient")
 
-    @property
-    def state_distribution(self) -> KalmanFilterDistributionMixin:
-        if self._state_distribution is None:
-            self._state_distribution = self.distribution(self.means, self.covs)
-        return self._state_distribution
+        num_groups, num_times, num_dist_dims, *_ = obs.shape
 
-    @property
-    def measurement_distribution(self) -> KalmanFilterDistributionMixin:
-        if self._measurement_distribution is None:
-            means, covs = zip(*[state_belief.measurement for state_belief in self.state_beliefs])
-            means = torch.stack(means).permute(1, 0, 2)
-            covs = torch.stack(covs).permute(1, 0, 2, 3)
-            self._measurement_distribution = self.distribution(means, covs)
-        return self._measurement_distribution
+        all_valid_times = list()
+        last_nonan_t = -1
+        lp_groups = defaultdict(list)
+        for t in range(num_times):
+            if self._is_nan(obs[:, t]).all():
+                # no log-prob needed
+                continue
 
-    @property
-    def distribution(self) -> TypeVar('KalmanFilterDistributionMixin'):
-        return self.family.distribution
+            if not self._is_nan(obs[:, t]).any():
+                # will be updated as block:
+                if last_nonan_t == (t - 1):
+                    last_nonan_t += 1
+                else:
+                    all_valid_times.append(t)
+                continue
+
+            for g in range(num_groups):
+                gt_is_nan = self._is_nan(obs[g, t])
+                lp_groups[tuple(gt_is_nan.nonzero().tolist())].append((g, t))
+
+        # from [(g1,t1), (g2, t2)] to [(g1,g2), (t1,t2)]
+        lp_groups = [(which_valid_idx, tuple(zip(*gt_idx))) for which_valid_idx, gt_idx in lp_groups.items()]
+
+        # shortcuts:
+        if last_nonan_t >= 0:
+            gt_idx = (slice(None), slice(last_nonan_t + 1))
+            lp_groups.append((slice(None), gt_idx))
+        for t in all_valid_times:
+            gt_idx = (slice(None), t)
+            lp_groups.append((slice(None), gt_idx))
+
+        # compute log-probs by dims available:
+        out = torch.zeros((num_groups, num_times))
+        for which_valid_idx, (group_idx, time_idx) in lp_groups:
+            out[group_idx, time_idx] = self._log_prob(obs, subset=(group_idx, time_idx, which_valid_idx))
+
+        return out
+
+    def _log_prob(self, obs: Tensor, subset: Optional[Tuple[Selector, Selector, Selector]] = None):
+        raise NotImplementedError
+
+    def _is_nan(self, x: Tensor) -> Tensor:
+        return torch.isnan(x)
+
+    def sample_measurements(self, eps: Optional[Tensor] = None):
+        raise NotImplementedError
