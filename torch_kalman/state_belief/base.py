@@ -53,6 +53,8 @@ class StateBelief:
             self.last_measured = last_measured
 
     def compute_measurement(self, H: Tensor, R: Tensor) -> None:
+        assert H.ndimension() == 3
+        assert R.ndimension() == 3
         self._H = H
         self._R = R
 
