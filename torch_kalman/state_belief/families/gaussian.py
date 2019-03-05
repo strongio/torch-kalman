@@ -89,7 +89,7 @@ class GaussianOverTime(StateBeliefOverTime):
     def __init__(self, state_beliefs: Sequence['StateBelief'], design: Design):
         super().__init__(state_beliefs=state_beliefs, design=design)
         means_covs = [(sb.measured_means, sb.system_uncertainty) for sb in self.state_beliefs]
-        self.measured_means, self.system_uncertainty = zip(*means_covs)
+        self.measured_means, self.system_uncertainty = (torch.stack(x, 1) for x in zip(*means_covs))
 
     def sample_measurements(self, eps: Optional[Tensor] = None) -> Tensor:
         distribution = torch.distributions.MultivariateNormal(self.measured_means, self.system_uncertainty)
