@@ -63,7 +63,7 @@ def zpad(x: Any, n: int) -> str:
     return str(x).rjust(n, "0")
 
 
-def split_flat(tens: Tensor, dim: int, clone: bool):
+def split_flat(tens: Tensor, dim: int, clone: bool = False):
     if clone:
         return [tens.select(dim, i).clone() for i in range(tens.shape[dim])]
     else:
