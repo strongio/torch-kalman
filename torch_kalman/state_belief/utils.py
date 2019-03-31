@@ -52,3 +52,32 @@ def deterministic_sample_mvnorm(distribution: MultivariateNormal, eps: Optional[
         else:
             assert eps.size() == expected_shape, f"expected-shape:{expected_shape}, actual:{eps.size()}"
         return distribution.loc + _batch_mv(distribution._unbroadcasted_scale_tril, eps)
+
+
+    # def log_prob(self, obs: Tensor):
+    #     obs, lower, upper = torch.chunk(obs, 3, 3)
+    #
+    #     num_dim = obs.shape[2]
+    #
+    #     out = torch.zeros_like(obs)
+    #     for m in range(num_dim):
+    #         Pdb().set_trace()  # TODO: generalize to other dims?
+    #         mmean = self.mean[:, :, m]
+    #         var = self.cov[:, :, m, m]
+    #         mstd = var.sqrt()
+    #         mobs = obs[:, :, m]
+    #         mlower = lower[:, :, m]
+    #         mupper = upper[:, :, m]
+    #
+    #         is_cens_low = (mobs <= mlower)
+    #         is_cens_high = (mobs >= mupper)
+    #         no_cens = ~(is_cens_low | is_cens_high)
+    #
+    #         lprob = torch.zeros_like(mmean)
+    #         lprob[no_cens] = std_normal.log_prob((mobs[no_cens] - mmean[no_cens]) / mstd[no_cens]) - mstd.log()
+    #         lprob[is_cens_high] = std_normal.cdf((mobs[is_cens_high] - mmean[is_cens_high]) / mstd[is_cens_high]).log()
+    #         lprob[is_cens_low] = std_normal.cdf((mmean[is_cens_low] - mobs[is_cens_low]) / mstd[is_cens_low]).log()
+    #
+    #         out[:, :, m] = lprob
+    #
+    #     return torch.sum(out, dim=2)

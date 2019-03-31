@@ -27,6 +27,21 @@ class TestStateBelief(TestCaseTK):
 
         self.assertTrue((update2.means < update1.means).all())
 
+    # def test_censored(self):
+    #     foo = CensoredGaussian(torch.zeros(1, 1), torch.ones(1, 1, 1))
+    #     bar = foo.predict(F=torch.eye(1).expand(1, -1, -1), Q=torch.eye(1).expand(1, -1, -1))
+    #     print(f"pre-mean: {bar.means}")
+    #     bar.compute_measurement(H=torch.ones(1, 1, 1), R=torch.ones(1, 1, 1))
+    #     print(f"obs: {obs}")
+    #     print(f"post-mean: {bar.update(obs).means}")
+    #
+    #     foo = CensoredGaussian(torch.zeros(1, 1) - 1, torch.ones(1, 1, 1))
+    #     bar = foo.predict(F=torch.eye(1).expand(1, -1, -1), Q=torch.eye(1).expand(1, -1, -1))
+    #     print(f"pre-mean: {bar.means}")
+    #     bar.compute_measurement(H=torch.ones(1, 1, 1), R=torch.ones(1, 1, 1))
+    #     print(f"obs: {obs-1}")
+    #     print(f"post-mean: {bar.update(obs-1).means}")
+
     def test_predict(self):
         # TODO
         pass

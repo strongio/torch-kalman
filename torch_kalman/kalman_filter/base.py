@@ -1,8 +1,6 @@
 from typing import TypeVar, Optional, Callable, List, Union, Tuple, Sequence
-from warnings import warn
 
 import torch
-from numpy import ndarray
 from torch import Tensor
 from torch.nn import ParameterList
 from tqdm import tqdm
@@ -16,6 +14,8 @@ from torch_kalman.utils import identity
 
 
 class KalmanFilter(torch.nn.Module):
+    family: TypeVar('StateBelief') = Gaussian
+
     def __init__(self,
                  measures: Sequence[str],
                  processes: Sequence[Process],
@@ -42,12 +42,6 @@ class KalmanFilter(torch.nn.Module):
     @property
     def measure_size(self) -> int:
         return self.design.measure_size
-
-    @property
-    def family(self) -> TypeVar('Gaussian'):
-        if self._family is None:
-            self._family = Gaussian
-        return self._family
 
     def predict_initial_state(self, design_for_batch: DesignForBatch) -> 'Gaussian':
         return self.family(means=design_for_batch.initial_mean,
@@ -78,10 +72,10 @@ class KalmanFilter(torch.nn.Module):
         :return: A StateBeliefOverTime consisting of one-step-ahead predictions.
         """
 
-        num_groups, num_timesteps, num_measures = input.shape
+        num_groups, num_timesteps, num_measures, *_ = input.shape
         if num_measures != self.measure_size:
             raise ValueError(f"This KalmanFilter has {self.measure_size} measurement-dimensions; but the input shape is "
-                             f"{(num_groups, num_timesteps, num_measures)} (last dim should == measure-size).")
+                             f"{(num_groups, num_timesteps, num_measures)} (3rd dim should == measure-size).")
 
         design_for_batch = self.design_for_batch(num_groups=num_groups,
                                                  num_timesteps=num_timesteps,
