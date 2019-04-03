@@ -1,4 +1,4 @@
-from typing import TypeVar, Optional, Callable, List, Union, Tuple, Sequence
+from typing import TypeVar, Optional, Callable, List, Union, Tuple, Sequence, Any
 
 import torch
 from torch import Tensor
@@ -14,7 +14,7 @@ from torch_kalman.utils import identity
 
 
 class KalmanFilter(torch.nn.Module):
-    family: TypeVar('StateBelief') = Gaussian
+    family: TypeVar(StateBelief) = Gaussian
 
     def __init__(self,
                  measures: Sequence[str],
@@ -57,14 +57,14 @@ class KalmanFilter(torch.nn.Module):
 
     # noinspection PyShadowingBuiltins
     def forward(self,
-                input: Tensor,
+                input: Any,
                 initial_state: Optional[StateBelief] = None,
                 progress: Union[tqdm, bool] = False,
                 **kwargs) -> StateBeliefOverTime:
         """
-        :param input: The multivariate time-series to be fit by the kalman-filter. A Tensor where the first dimension
-        represents the groups, the second dimension represents the time-points, and the third dimension represents the
-        measures.
+        :param input: The multivariate time-series to be fit by the kalman-filter. The exact structure depends on the kalman-
+        filter `family`; for most, it is a tensor where the first dimension represents the groups, the second dimension
+        represents the time-points, and the third dimension represents the measures.
         :param initial_state: If a StateBelief, this is used as the prediction for time=0; if None then each process
         generates initial values.
         :param progress: Should progress-bar be generated?
@@ -72,7 +72,7 @@ class KalmanFilter(torch.nn.Module):
         :return: A StateBeliefOverTime consisting of one-step-ahead predictions.
         """
 
-        num_groups, num_timesteps, num_measures, *_ = input.shape
+        num_groups, num_timesteps, num_measures, *_ = self.family.get_input_dim(input)
         if num_measures != self.measure_size:
             raise ValueError(f"This KalmanFilter has {self.measure_size} measurement-dimensions; but the input shape is "
                              f"{(num_groups, num_timesteps, num_measures)} (3rd dim should == measure-size).")
@@ -97,7 +97,7 @@ class KalmanFilter(torch.nn.Module):
         for t in iterator:
             if t > 0:
                 # take state-prediction of previous t (now t-1), correct it according to what was actually measured at at t-1
-                state_belief = state_prediction.update(obs=input[:, t - 1, :])
+                state_belief = state_prediction.update_from_input(input, time=t - 1)
 
                 # predict the state for t, from information from t-1
                 # F at t-1 is transition *from* t-1 *to* t

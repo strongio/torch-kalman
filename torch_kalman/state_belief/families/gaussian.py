@@ -95,10 +95,13 @@ class GaussianOverTime(StateBeliefOverTime):
         distribution = torch.distributions.MultivariateNormal(self.measured_means, self.system_uncertainty)
         return deterministic_sample_mvnorm(distribution, eps=eps)
 
-    def _log_prob(self, obs: Tensor, subset: Optional[Tuple[Selector, Selector, Selector]] = None) -> Tensor:
+    def _log_prob_with_subsetting(self,
+                                  obs: Tensor,
+                                  subset: Optional[Tuple[Selector, Selector, Selector]] = None,
+                                  **kwargs) -> Tensor:
         if subset is None:
             subset = (slice(None), slice(None), slice(None))
         m = self.measured_means[subset]
-        c = self.system_uncertainty[subset][:, :, :, subset[-1]]
+        c = self.system_uncertainty[subset][..., subset[-1]]
         dist = torch.distributions.MultivariateNormal(m, c)
         return dist.log_prob(obs[subset])

@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Tuple, Sequence, Optional, TypeVar
+from typing import Tuple, Sequence, Optional, TypeVar, Dict
 
 import torch
 
@@ -52,6 +52,13 @@ class StateBelief:
             assert last_measured.shape[0] == self.num_groups and last_measured.dim() == 1
             self.last_measured = last_measured
 
+    @classmethod
+    def get_input_dim(cls, input: Tensor) -> Tuple[int, int, int]:
+        return input.shape
+
+    def update_from_input(self, input: Tensor, time: int):
+        return self.update(obs=input[:, time, :])
+
     def compute_measurement(self, H: Tensor, R: Tensor) -> None:
         assert H.ndimension() == 3
         assert R.ndimension() == 3
@@ -78,8 +85,8 @@ class StateBelief:
         # noinspection PyTypeChecker
         return self.__class__(means=means, covs=covs, last_measured=self.last_measured + 1)
 
-    def update(self, obs: Tensor) -> 'StateBelief':
-        is_nan = (obs != obs)
+    def update(self, obs: Tensor, **kwargs) -> 'StateBelief':
+        is_nan = torch.isnan(obs)
 
         # need to do a different update depending on which (if any) dimensions are missing:
         update_groups = defaultdict(list)
@@ -110,7 +117,8 @@ class StateBelief:
         for which_valid, group_idx in update_groups:
             means_new[group_idx], covs_new[group_idx] = self._update_group(obs=obs,
                                                                            group_idx=group_idx,
-                                                                           which_valid=which_valid)
+                                                                           which_valid=which_valid,
+                                                                           **kwargs)
 
         last_measured = self._update_last_measured(obs)
         return self.__class__(means=means_new, covs=covs_new, last_measured=last_measured)

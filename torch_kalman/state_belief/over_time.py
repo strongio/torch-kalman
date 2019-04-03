@@ -93,11 +93,11 @@ class StateBeliefOverTime:
         means, covs = zip(*means_covs)
         return self.family(means=torch.stack(means), covs=torch.stack(covs))
 
-    def log_prob(self, obs: Tensor) -> Tensor:
+    def log_prob(self, obs: Tensor, **kwargs) -> Tensor:
         if obs.grad_fn is not None:
             warn("`obs` has a grad_fn, nans may propagate to gradient")
 
-        num_groups, num_times, num_dist_dims, *_ = obs.shape
+        num_groups, num_times, num_dist_dims = obs.shape
 
         # group into chunks where the same dimensions were nan, so that we can evaluate those chunks marginalizing out the
         # missing dims. uses two shortcuts:
@@ -109,11 +109,11 @@ class StateBeliefOverTime:
         last_nonan_t = -1
         lp_groups = defaultdict(list)
         for t in range(num_times):
-            if self._is_nan(obs[:, t]).all():
+            if torch.isnan(obs[:, t]).all():
                 # no log-prob needed
                 continue
 
-            if not self._is_nan(obs[:, t]).any():
+            if not torch.isnan(obs[:, t]).any():
                 # will be updated as block:
                 if last_nonan_t == (t - 1):
                     last_nonan_t += 1
@@ -122,7 +122,7 @@ class StateBeliefOverTime:
                 continue
 
             for g in range(num_groups):
-                gt_is_nan = self._is_nan(obs[g, t])
+                gt_is_nan = torch.isnan(obs[g, t])
                 lp_groups[tuple(gt_is_nan.nonzero().tolist())].append((g, t))
 
         # from [(g1,t1), (g2, t2)] to [(g1,g2), (t1,t2)]
@@ -139,15 +139,15 @@ class StateBeliefOverTime:
         # compute log-probs by dims available:
         out = torch.zeros((num_groups, num_times))
         for which_valid_idx, (group_idx, time_idx) in lp_groups:
-            out[group_idx, time_idx] = self._log_prob(obs, subset=(group_idx, time_idx, which_valid_idx))
+            out[group_idx, time_idx] = self._log_prob_with_subsetting(obs, subset=(group_idx, time_idx, which_valid_idx))
 
         return out
 
-    def _log_prob(self, obs: Tensor, subset: Optional[Tuple[Selector, Selector, Selector]] = None):
+    def _log_prob_with_subsetting(self,
+                                  obs: Tensor,
+                                  subset: Optional[Tuple[Selector, Selector, Selector]] = None,
+                                  **kwargs):
         raise NotImplementedError
-
-    def _is_nan(self, x: Tensor) -> Tensor:
-        return torch.isnan(x)
 
     def sample_measurements(self, eps: Optional[Tensor] = None):
         raise NotImplementedError
