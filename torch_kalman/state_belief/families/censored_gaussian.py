@@ -1,4 +1,5 @@
 from typing import Optional, Sequence, Tuple, Union
+from warnings import warn
 
 import torch
 from torch import Tensor
@@ -7,8 +8,6 @@ from torch_kalman.design import Design
 from torch_kalman.state_belief.families.gaussian import Gaussian
 from torch_kalman.state_belief.over_time import StateBeliefOverTime
 from torch_kalman.state_belief.utils import bmat_idx
-
-from IPython.core.debugger import Pdb
 
 from torch_kalman.utils import split_flat
 
@@ -121,10 +120,8 @@ class CensoredGaussian(Gaussian):
 def tobit_adjustment(mean: Tensor,
                      cov: Tensor,
                      lower: Optional[Tensor] = None,
-                     upper: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
-    if mean.ndimension() != 2:
-        Pdb().set_trace()
-
+                     upper: Optional[Tensor] = None,
+                     diag_offset: float = .001) -> Tuple[Tensor, Tensor]:
     if lower is None and upper is None:
         return mean, cov
     else:
@@ -166,13 +163,19 @@ def tobit_adjustment(mean: Tensor,
     part2a = torch.zeros_like(part1)
     part2a[is_cens_lo] = std[is_cens_lo] * lower[is_cens_lo] * dens_lo[is_cens_lo]
     part2b = torch.zeros_like(part1)
-    part2b[is_cens_up] = upper[is_cens_up,] * dens_up[is_cens_up]  # no std in front
+    part2b[is_cens_up] = upper[is_cens_up] * dens_up[is_cens_up]  # no std in front
     part2 = (part2a - part2b) / prob_obs
 
     part3 = (mean - std * lamb) ** 2
 
     diag_adj = part1 + part2 - part3
     cov_adj = _matrix_diag(diag_adj)
+
+    if (diag_adj < 0).any():
+        warn(f"`tobit_adjustment` covariance < 0; will set to {diag_offset}")
+        diag_adj_new = diag_offset * torch.ones_like(diag_adj)
+        diag_adj_new[diag_adj > diag_offset] = diag_adj[diag_adj > diag_offset]
+        cov_adj = _matrix_diag(diag_adj_new)
 
     return mean_adj, cov_adj
 
@@ -181,13 +184,6 @@ def tobit_probs(mean: Tensor,
                 cov: Tensor,
                 lower: Optional[Tensor] = None,
                 upper: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
-    if mean.ndimension() == 2:
-        pass
-    elif mean.ndimension() == 3:
-        Pdb().set_trace()
-    else:
-        raise NotImplementedError("Expected 2/3D mean")
-
     if upper is None:
         upper = torch.empty_like(mean)
         upper[:] = float('inf')
@@ -272,25 +268,34 @@ class CensoredGaussianOverTime(StateBeliefOverTime):
 
         if subset is None:
             subset = (slice(None), slice(None), slice(None))
+        else:
+            if len(subset) != 3:
+                raise RuntimeError("Expected subset to have three elements for the three dimensions: group, time, measure")
 
-        Pdb().set_trace()
+        # for state mats, don't subset last dim:
+        means = self.means[subset[-1]]
+        covs = self.covs[subset[-1]]
+
+        # subset measure-related mats:
         H = self.H[subset]
-        Ht = H.permute(0, 2, 1)
-        measured_means = H.matmul(self.means[subset].unsqueeze(3)).squeeze(3)
+        Ht = H.permute(0, 1, 3, 2)
+        measured_means = H.matmul(means.unsqueeze(3)).squeeze(3)
         R = self.R[subset][..., subset[-1]]
 
-        raise NotImplementedError
+        # calculate prob-obs:
+        prob_lo, prob_up = tobit_probs(measured_means, R, lower=lower, upper=upper)
+        prob_obs = _matrix_diag(1 - prob_up - prob_lo)
 
-        Radj = tobit_cov_adjustment(mean=measured_means,
-                                    cov=R,
-                                    lower=lower,
-                                    upper=upper,
-                                    prob_obs=prob_obs)
+        # calculate adjusted measure mean and cov:
+        mm_adj, R_adj = tobit_adjustment(mean=measured_means,
+                                         cov=R,
+                                         lower=lower,
+                                         upper=upper)
 
-        covariance = self.covs[subset[-1]]
-        system_uncertainty = prob_obs.matmul(H).matmul(covariance).matmul(Ht).matmul(prob_obs) + Radj
+        # system uncertainty:
+        system_uncertainty = prob_obs.matmul(H).matmul(covs).matmul(Ht).matmul(prob_obs) + R_adj
 
-        dist = torch.distributions.MultivariateNormal(None, system_uncertainty)
+        dist = torch.distributions.MultivariateNormal(mm_adj, system_uncertainty)
         return dist.log_prob(obs)
 
     def sample_measurements(self,
@@ -302,7 +307,6 @@ class CensoredGaussianOverTime(StateBeliefOverTime):
         raise NotImplementedError
 
     def _is_nan(self, x: Tensor) -> Tensor:
-        Pdb().set_trace()
         return torch.isnan(x[..., 0])
 
     @property
@@ -310,101 +314,3 @@ class CensoredGaussianOverTime(StateBeliefOverTime):
         if self._measured_means is None:
             self._measured_means = self.H.matmul(self.means.unsqueeze(3)).squeeze(3)
         return self._measured_means
-
-# def to_restore(lower, upper, this_mean, std, prob_obs):
-#     var = std ** 2
-#     is_cens_up = torch.isfinite(upper[:, m])
-#     dens_up = torch.zeros_like(std)
-#     dens_up[is_cens_up] = std_normal.pdf((upper[is_cens_up, m] - this_mean[is_cens_up]) / std[is_cens_up])
-#
-#     is_cens_lo = torch.isfinite(lower[:, m])
-#     dens_lo = torch.zeros_like(std)
-#     dens_lo[is_cens_lo] = std_normal.pdf((lower[is_cens_lo, m] - this_mean[is_cens_lo]) / std[is_cens_lo])
-#
-#     lamb = (dens_up - dens_lo) / prob_obs[:, m, m]
-#
-#     # E(measurement^2|uncensored)
-#     part1 = this_mean ** 2 + var - std * this_mean * lamb
-#     part2a = torch.zeros_like(part1)
-#     part2a[is_cens_lo] = std[is_cens_lo] * lower[is_cens_lo, m] * dens_lo[is_cens_lo]
-#     part2b = torch.zeros_like(part1)
-#     part2b[is_cens_up] = upper[is_cens_up, m] * dens_up[is_cens_up]  # no std in front
-#     part2 = (part2a - part2b) / prob_obs[:, m, m]
-#     # E(measurement|uncensored)^2
-#     part3 = (this_mean - std * lamb) ** 2
-#
-#     return part1 + part2 - part3
-
-# def tobit_expected_value(mean: Tensor,
-#                          cov: Tensor,
-#                          lower: Optional[Tensor] = None,
-#                          upper: Optional[Tensor] = None,
-#                          ) -> Tensor:
-#     if upper is None:
-#         upper = torch.empty_like(mean)
-#         upper[:] = float('inf')
-#     if lower is None:
-#         lower = torch.empty_like(mean)
-#         lower[:] = float('-inf')
-#
-#     prob_lo, prob_up = tobit_probs(mean=mean, cov=cov, lower=lower, upper=upper)
-#     std = torch.diagonal(cov, dim1=-2, dim2=-1).sqrt()
-#
-#     is_cens_up = torch.isfinite(upper)
-#     dens_up = torch.zeros_like(mean)
-#     dens_up[is_cens_up] = std_normal.pdf((upper[is_cens_up] - mean[is_cens_up]) / std[is_cens_up])
-#     upper_adj = torch.zeros_like(mean)
-#     upper_adj[is_cens_up] = prob_up[is_cens_up] * upper[is_cens_up]
-#
-#     is_cens_lo = torch.isfinite(lower)
-#     dens_lo = torch.zeros_like(mean)
-#     dens_lo[is_cens_lo] = std_normal.pdf((lower[is_cens_lo] - mean[is_cens_lo]) / std[is_cens_lo])
-#     lower_adj = torch.zeros_like(mean)
-#     lower_adj[is_cens_lo] = prob_lo[is_cens_lo] * lower[is_cens_lo]
-#
-#     prob_obs = (1. - prob_up - prob_lo)
-#     mean_adj = mean - std * (dens_up - dens_lo) / prob_obs
-#
-#     return mean_adj + upper_adj + lower_adj
-# def tobit_cov_adjustment(mean: Tensor,
-#                          cov: Tensor,
-#                          prob_obs: Optional[Tensor] = None,
-#                          lower: Optional[Tensor] = None,
-#                          upper: Optional[Tensor] = None) -> Tensor:
-#     if mean.ndimension() == 2:
-#         pass
-#     elif mean.ndimension() == 3:
-#         Pdb().set_trace()
-#     else:
-#         raise NotImplementedError("Expected 2/3D mean")
-#
-#     if upper is None:
-#         upper = torch.empty_like(mean)
-#         upper[:] = float('inf')
-#     if lower is None:
-#         lower = torch.empty_like(mean)
-#         lower[:] = float('-inf')
-#     if prob_obs is None:
-#         raise NotImplementedError
-#
-#     assert (upper.grad_fn is None) and (lower.grad_fn is None), "upper/lower cannot have grad_fn"
-#
-#     num_groups, num_dim, *_ = cov.shape
-#     cov_adjusted = torch.zeros_like(cov)
-#
-#     for m in range(num_dim):
-#         this_mean = mean[:, m]
-#         var = cov[:, m, m]
-#         std = var.sqrt()
-#
-#         if torch.isfinite(upper[:, m]).any():
-#             raise RuntimeError()
-#
-#         if torch.isfinite(lower[:, m]).all():
-#             z = (lower[:, m] - this_mean) / std
-#             dsqig = std_normal.imr(z) * (std_normal.imr(z) - z)
-#             cov_adjusted[:, m, m] = var * (1. - dsqig)
-#         elif ~any(torch.isfinite(upper[:, m])):
-#             cov_adjusted[:, m, m] = var
-#
-#     return cov_adjusted

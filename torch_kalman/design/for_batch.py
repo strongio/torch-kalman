@@ -32,7 +32,7 @@ class DesignForBatch:
         init_cov = Covariance.from_log_cholesky(log_diag=design.init_cholesky_log_diag,
                                                 off_diag=design.init_cholesky_off_diag,
                                                 device=self.device)
-        self.initial_covariance = init_cov.expand(num_groups, -1, -1)
+        self.initial_covariance = init_cov.expand(num_groups, -1, -1).clone()
 
         # create processes for batch:
         assert set(process_kwargs.keys()).issubset(design.processes.keys())

@@ -99,6 +99,12 @@ class StateBeliefOverTime:
 
         num_groups, num_times, num_dist_dims, *_ = obs.shape
 
+        # group into chunks where the same dimensions were nan, so that we can evaluate those chunks marginalizing out the
+        # missing dims. uses two shortcuts:
+        # (1) the first N time-slices that are nan-free will all be evaluated as a chunk
+        # (2) any time-slices that are nan-free (but not contiguous with the first N) will each be evaluated as a chunk.
+        # all other chunks need to slice by group X time
+
         all_valid_times = list()
         last_nonan_t = -1
         lp_groups = defaultdict(list)
