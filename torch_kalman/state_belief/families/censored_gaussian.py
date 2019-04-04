@@ -140,6 +140,14 @@ class CensoredGaussian(Gaussian):
             return super().sample_transition(eps=eps)
         raise NotImplementedError
 
+    @property
+    def measured_means(self):
+        raise NotImplementedError
+
+    @property
+    def system_uncertainty(self):
+        raise NotImplementedError
+
 
 def tobit_adjustment(mean: Tensor,
                      cov: Tensor,
@@ -243,24 +251,7 @@ class CensoredGaussianOverTime(StateBeliefOverTime):
     def __init__(self,
                  state_beliefs: Sequence['CensoredGaussian'],
                  design: Design):
-        # does not call GaussianOverTime.__init__
-        # super(GaussianOverTime, self).__init__(state_beliefs=state_beliefs, design=design)
         super().__init__(state_beliefs=state_beliefs, design=design)
-        self._H = None
-        self._R = None
-        self._measured_means = None
-
-    @property
-    def H(self) -> Tensor:
-        if self._H is None:
-            self._H = torch.stack([sb.H for sb in self.state_beliefs], 1)
-        return self._H
-
-    @property
-    def R(self) -> Tensor:
-        if self._R is None:
-            self._R = torch.stack([sb.R for sb in self.state_beliefs], 1)
-        return self._R
 
     def log_prob(self,
                  obs: Tensor,
@@ -268,64 +259,71 @@ class CensoredGaussianOverTime(StateBeliefOverTime):
                  upper: Optional[Tensor] = None) -> Tensor:
         return super().log_prob(obs=obs, lower=lower, upper=upper)
 
+    @staticmethod
+    def _subset_obs_and_bounds(obs: Tensor,
+                               lower: Optional[Tensor],
+                               upper: Optional[Tensor],
+                               idx_3d: Tuple) -> Tuple[Tensor, Tensor, Tensor]:
+
+        obs = obs[idx_3d]
+
+        if lower is None:
+            lower = torch.empty_like(obs)
+            lower[:] = float('-inf')
+        else:
+            assert not lower.isnan().any(), "nans in 'lower'"
+            lower = lower[idx_3d]
+            assert (obs >= lower).all(), "Not all obs are >= lower censoring limit"
+
+        if upper is None:
+            upper = torch.empty_like(obs)
+            upper[:] = float('inf')
+        else:
+            assert not upper.isnan().any(), "nans in 'upper'"
+            upper = upper[idx_3d]
+            assert (obs <= upper).all(), "Not all obs are <= upper censoring limit"
+
+        return obs, lower, upper
+
     def _log_prob_with_subsetting(self,
                                   obs: Tensor,
-                                  subset: Optional[Tuple[Selector, Selector, Selector]] = None,
+                                  group_idx: Selector,
+                                  time_idx: Selector,
+                                  measure_idx: Selector,
                                   lower: Optional[Tensor] = None,
                                   upper: Optional[Tensor] = None) -> Tensor:
+        self._check_lp_sub_input(group_idx, time_idx)
 
-        # TODO: use subset as early as possible, instead of as late as possible
+        idx_3d = bmat_idx(group_idx, time_idx, measure_idx)
+        idx_4d = bmat_idx(group_idx, time_idx, measure_idx, measure_idx)
 
-        if subset is None:
-            subset = (slice(None), slice(None), slice(None))
-        else:
-            if len(subset) != 3:
-                raise RuntimeError("Expected subset to have three elements for the three dimensions: group, time, measure")
+        # subset obs, lower, upper:
+        group_obs, group_lower, group_upper = self._subset_obs_and_bounds(obs, lower, upper, idx_3d)
 
-        # subset obs:
-        obs = obs[subset]
-
-        # subset lower and upper, or handle if None:
-        if (lower is not None) or (upper is not None):
-            if lower is None:
-                lower = torch.empty_like(obs)
-                lower[:] = float('-inf')
-            else:
-                assert not lower.isnan().any(), "nans in 'lower'"
-                assert (obs >= lower).all(), "Not all obs are >= lower censoring limit"
-                lower = lower[subset]
-
-            if upper is None:
-                upper = torch.empty_like(obs)
-                upper[:] = float('inf')
-            else:
-                assert not upper.isnan().any(), "nans in 'upper'"
-                assert (obs <= upper).all(), "Not all obs are <= upper censoring limit"
-                upper = upper[subset]
-
-        measured_means = self.H.matmul(self.means.unsqueeze(3)).squeeze(3)
+        #
+        group_means = self.means[group_idx, time_idx]
+        group_covs = self.covs[group_idx, time_idx]
+        group_H = self.H[idx_3d]
+        group_R = self.R[idx_4d]
+        group_measured_means = group_H.matmul(group_means.unsqueeze(3)).squeeze(3)
 
         # calculate adjusted measure mean and cov:
-        mm_adj, R_adj = tobit_adjustment(mean=measured_means,
-                                         cov=self.R,
-                                         lower=lower,
-                                         upper=upper)
+        mm_adj, R_adj = tobit_adjustment(mean=group_measured_means,
+                                         cov=group_R,
+                                         lower=group_lower,
+                                         upper=group_upper)
 
         # calculate prob-obs:
-        prob_lo, prob_up = tobit_probs(measured_means, self.R, lower=lower, upper=upper)
+        prob_lo, prob_up = tobit_probs(group_measured_means, group_R, lower=group_lower, upper=group_upper)
         prob_obs = _matrix_diag(1 - prob_up - prob_lo)
 
         # system uncertainty:
-        Ht = self.H.permute(0, 1, 3, 2)
-        system_uncertainty = prob_obs.matmul(self.H).matmul(self.covs).matmul(Ht).matmul(prob_obs) + R_adj
-
-        # subset:
-        mm_adj = mm_adj[subset]
-        system_uncertainty = system_uncertainty[subset][..., subset[-1]]
+        Ht = group_H.permute(0, 1, 3, 2)
+        system_uncertainty = prob_obs.matmul(group_H).matmul(group_covs).matmul(Ht).matmul(prob_obs) + R_adj
 
         # log prob:
         dist = torch.distributions.MultivariateNormal(mm_adj, system_uncertainty)
-        return dist.log_prob(obs)
+        return dist.log_prob(group_obs)
 
     def sample_measurements(self,
                             lower: Optional[Tensor] = None,
@@ -337,9 +335,3 @@ class CensoredGaussianOverTime(StateBeliefOverTime):
 
     def _is_nan(self, x: Tensor) -> Tensor:
         return torch.isnan(x[..., 0])
-
-    @property
-    def measured_means(self) -> Tensor:
-        if self._measured_means is None:
-            self._measured_means = self.H.matmul(self.means.unsqueeze(3)).squeeze(3)
-        return self._measured_means

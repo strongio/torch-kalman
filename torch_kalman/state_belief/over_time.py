@@ -34,6 +34,10 @@ class StateBeliefOverTime:
         self._means = None
         self._covs = None
         self._last_measured = None
+        self._H = None
+        self._R = None
+        self._predictions = None
+        self._prediction_uncertainty = None
 
     def _means_covs(self) -> None:
         means, covs = zip(*[(state_belief.means, state_belief.covs) for state_belief in self.state_beliefs])
@@ -51,6 +55,18 @@ class StateBeliefOverTime:
         if self._covs is None:
             self._means_covs()
         return self._covs
+
+    @property
+    def H(self) -> Tensor:
+        if self._H is None:
+            self._H = torch.stack([sb.H for sb in self.state_beliefs], 1)
+        return self._H
+
+    @property
+    def R(self) -> Tensor:
+        if self._R is None:
+            self._R = torch.stack([sb.R for sb in self.state_beliefs], 1)
+        return self._R
 
     def components(self) -> Dict[Tuple[str, str, str], Tuple[Tensor, Tensor]]:
         states_per_measure = defaultdict(list)
@@ -93,19 +109,27 @@ class StateBeliefOverTime:
         means, covs = zip(*means_covs)
         return self.family(means=torch.stack(means), covs=torch.stack(covs))
 
+    def _which_valid_key(self, is_nan: Tensor) -> Tuple[int]:
+        num_multi_dims = sum(x > 1 for x in is_nan.shape)
+        if num_multi_dims > 1:
+            raise ValueError("Expected `tensor` to be 1D (or have only one non-singleton dimension.")
+        is_valid = ~is_nan
+        return tuple(is_valid.nonzero().squeeze(-1).tolist())
+
     def log_prob(self, obs: Tensor, **kwargs) -> Tensor:
         if obs.grad_fn is not None:
             warn("`obs` has a grad_fn, nans may propagate to gradient")
 
         num_groups, num_times, num_dist_dims = obs.shape
 
-        # group into chunks where the same dimensions were nan, so that we can evaluate those chunks marginalizing out the
-        # missing dims. uses two shortcuts:
+        # group into chunks for log-prob evaluation. the way indexing works makes this tricky, and slow if we just create a
+        # separate group X measure index for each separate time-slice. two shortcuts are used to mitigate this:
         # (1) the first N time-slices that are nan-free will all be evaluated as a chunk
-        # (2) any time-slices that are nan-free (but not contiguous with the first N) will each be evaluated as a chunk.
-        # all other chunks need to slice by group X time
+        # (2) subsequent nan-free slices use `slice` notation instead of having to iterate through each group, checking
+        #     which measures were nan
+        # For all other time-points, we need a separate (group-indices, time-index, measure-indices) tuple.
 
-        all_valid_times = list()
+        times_without_nan = list()
         last_nonan_t = -1
         lp_groups = defaultdict(list)
         for t in range(num_times):
@@ -118,36 +142,68 @@ class StateBeliefOverTime:
                 if last_nonan_t == (t - 1):
                     last_nonan_t += 1
                 else:
-                    all_valid_times.append(t)
+                    times_without_nan.append(t)
                 continue
 
             for g in range(num_groups):
-                gt_is_nan = torch.isnan(obs[g, t])
-                lp_groups[tuple(gt_is_nan.nonzero().tolist())].append((g, t))
+                is_nan = torch.isnan(obs[g, t])
+                if is_nan.all():
+                    # no log-prob needed
+                    continue
+                measure_idx = self._which_valid_key(is_nan)
+                lp_groups[(t, measure_idx)].append(g)
 
-        # from [(g1,t1), (g2, t2)] to [(g1,g2), (t1,t2)]
-        lp_groups = [(which_valid_idx, tuple(zip(*gt_idx))) for which_valid_idx, gt_idx in lp_groups.items()]
+        lp_groups = [(gidx, t, midx) for (t, midx), gidx in lp_groups.items()]
 
         # shortcuts:
         if last_nonan_t >= 0:
-            gt_idx = (slice(None), slice(last_nonan_t + 1))
-            lp_groups.append((slice(None), gt_idx))
-        for t in all_valid_times:
-            gt_idx = (slice(None), t)
-            lp_groups.append((slice(None), gt_idx))
+            gtm = slice(None), slice(last_nonan_t + 1), slice(None)
+            lp_groups.append(gtm)
+        if len(times_without_nan):
+            gtm = slice(None), times_without_nan, slice(None)
+            lp_groups.append(gtm)
 
         # compute log-probs by dims available:
         out = torch.zeros((num_groups, num_times))
-        for which_valid_idx, (group_idx, time_idx) in lp_groups:
-            out[group_idx, time_idx] = self._log_prob_with_subsetting(obs, subset=(group_idx, time_idx, which_valid_idx))
+        for group_idx, time_idx, measure_idx in lp_groups:
+            if isinstance(time_idx, int):
+                # assignment is dimensionless in time; needed b/c group isn't a slice
+                lp = self._log_prob_with_subsetting(obs, group_idx=group_idx, time_idx=(time_idx,), measure_idx=measure_idx)
+                out[group_idx, time_idx] = lp.squeeze(-1)
+            else:
+                # time has dimension, but group is a slice so it's OK
+                out[group_idx, time_idx] = \
+                    self._log_prob_with_subsetting(obs, group_idx=group_idx, time_idx=time_idx, measure_idx=measure_idx)
 
         return out
 
     def _log_prob_with_subsetting(self,
                                   obs: Tensor,
-                                  subset: Optional[Tuple[Selector, Selector, Selector]] = None,
-                                  **kwargs):
+                                  group_idx: Selector,
+                                  time_idx: Selector,
+                                  measure_idx: Selector,
+                                  **kwargs) -> Tensor:
         raise NotImplementedError
+
+    @staticmethod
+    def _check_lp_sub_input(group_idx: Selector, time_idx: Selector):
+        if isinstance(group_idx, Sequence) and isinstance(time_idx, Sequence):
+            if len(group_idx) > 1 and len(time_idx) > 1:
+                warn("Both `group_idx` and `time_idx` are indices (i.e. neither is an int or a slice). This is rarely the "
+                     "expected input.")
 
     def sample_measurements(self, eps: Optional[Tensor] = None):
         raise NotImplementedError
+
+    @property
+    def predictions(self) -> Tensor:
+        if self._predictions is None:
+            self._predictions = self.H.matmul(self.means.unsqueeze(3)).squeeze(3)
+        return self._predictions
+
+    @property
+    def prediction_uncertainty(self) -> Tensor:
+        if self._prediction_uncertainty is None:
+            Ht = self.H.permute(0, 1, 3, 2)
+            self._prediction_uncertainty = self.H.matmul(self.covs).matmul(Ht) + self.R
+        return self._prediction_uncertainty

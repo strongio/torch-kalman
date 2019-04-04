@@ -1,4 +1,5 @@
 from typing import Sequence, Optional, Union, Tuple
+from warnings import warn
 
 import torch
 
@@ -23,20 +24,24 @@ class Gaussian(StateBelief):
                       obs: Tensor,
                       group_idx: Union[slice, Sequence[int]],
                       which_valid: Union[slice, Sequence[int]]) -> Tuple[Tensor, Tensor]:
-
         idx_2d = bmat_idx(group_idx, which_valid)
         idx_3d = bmat_idx(group_idx, which_valid, which_valid)
         group_obs = obs[idx_2d]
         group_means = self.means[group_idx]
         group_covs = self.covs[group_idx]
-        group_measured_means = self.measured_means[idx_2d]
-        group_system_covs = self.system_uncertainty[idx_3d]
         group_H = self.H[idx_2d]
         group_R = self.R[idx_3d]
+        group_measured_means = group_H.matmul(group_means.unsqueeze(2)).squeeze(2)
+        group_system_covs = self.system_uncertainty(covs=group_covs, H=group_H, R=group_R)
         group_K = self.kalman_gain(system_covariance=group_system_covs, covariance=group_covs, H=group_H)
         means_new = self.mean_update(mean=group_means, K=group_K, residuals=group_obs - group_measured_means)
         covs_new = self.covariance_update(covariance=group_covs, K=group_K, H=group_H, R=group_R)
         return means_new, covs_new
+
+    @staticmethod
+    def system_uncertainty(covs: Tensor, H: Tensor, R: Tensor):
+        Ht = H.permute(0, 2, 1)
+        return H.matmul(covs).matmul(Ht) + R
 
     @staticmethod
     def covariance_update(covariance: Tensor, K: Tensor, H: Tensor, R: Tensor) -> Tensor:
@@ -52,7 +57,6 @@ class Gaussian(StateBelief):
 
     @staticmethod
     def kalman_gain(covariance: Tensor, system_covariance: Tensor, H: Tensor):
-
         Ht = H.permute(0, 2, 1)
         covs_measured = torch.bmm(covariance, Ht)
 
@@ -71,37 +75,25 @@ class Gaussian(StateBelief):
         distribution = torch.distributions.MultivariateNormal(loc=self.means, covariance_matrix=self.covs)
         return deterministic_sample_mvnorm(distribution, eps=eps)
 
-    @property
-    def measured_means(self):
-        if self._measured_means is None:
-            self._measured_means = self.H.matmul(self.means.unsqueeze(2)).squeeze(2)
-        return self._measured_means
-
-    @property
-    def system_uncertainty(self):
-        if self._system_uncertainty is None:
-            Ht = self.H.permute(0, 2, 1)
-            self._system_uncertainty = self.H.matmul(self.covs).matmul(Ht) + self.R
-        return self._system_uncertainty
-
 
 class GaussianOverTime(StateBeliefOverTime):
     def __init__(self, state_beliefs: Sequence['StateBelief'], design: Design):
         super().__init__(state_beliefs=state_beliefs, design=design)
-        means_covs = [(sb.measured_means, sb.system_uncertainty) for sb in self.state_beliefs]
-        self.measured_means, self.system_uncertainty = (torch.stack(x, 1) for x in zip(*means_covs))
 
     def sample_measurements(self, eps: Optional[Tensor] = None) -> Tensor:
-        distribution = torch.distributions.MultivariateNormal(self.measured_means, self.system_uncertainty)
+        distribution = torch.distributions.MultivariateNormal(self.predictions, self.prediction_uncertainty)
         return deterministic_sample_mvnorm(distribution, eps=eps)
 
     def _log_prob_with_subsetting(self,
                                   obs: Tensor,
-                                  subset: Optional[Tuple[Selector, Selector, Selector]] = None,
+                                  group_idx: Selector,
+                                  time_idx: Selector,
+                                  measure_idx: Selector,
                                   **kwargs) -> Tensor:
-        if subset is None:
-            subset = (slice(None), slice(None), slice(None))
-        m = self.measured_means[subset]
-        c = self.system_uncertainty[subset][..., subset[-1]]
-        dist = torch.distributions.MultivariateNormal(m, c)
-        return dist.log_prob(obs[subset])
+        self._check_lp_sub_input(group_idx, time_idx)
+
+        idx_3d = bmat_idx(group_idx, time_idx, measure_idx)
+        idx_4d = bmat_idx(group_idx, time_idx, measure_idx, measure_idx)
+
+        dist = torch.distributions.MultivariateNormal(self.predictions[idx_3d], self.prediction_uncertainty[idx_4d])
+        return dist.log_prob(obs[idx_3d])
