@@ -11,10 +11,11 @@ class LocalTrend(Process):
     def __init__(self,
                  id: str,
                  decay_velocity: Union[bool, Tuple[float, float]] = (.95, 1.00),
-                 decay_position: Union[bool, Tuple[float, float]] = False):
+                 decay_position: Union[bool, Tuple[float, float]] = False,
+                 multi: float = 1.0):
 
         super().__init__(id=id, state_elements=['position', 'velocity'])
-        self._set_transition(from_element='velocity', to_element='position', value=1.0)
+        self._set_transition(from_element='velocity', to_element='position', value=multi)
 
         self.decayed_transitions = {}
         if decay_position:
