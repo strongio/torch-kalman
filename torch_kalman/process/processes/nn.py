@@ -60,6 +60,8 @@ class NN(Process):
             raise ValueError(f"Process {self.id} received 'nn_input' that is not a Tensor.")
         elif nn_input.requires_grad:
             raise ValueError(f"Process {self.id} received 'nn_input' that requires_grad, which is not allowed.")
+        elif torch.isnan(nn_input).any():
+            raise ValueError(f"Process {self.id} received 'lm_input' that has nans.")
 
         mm_num_groups, mm_num_ts, mm_num_preds = nn_input.shape
         assert mm_num_groups == num_groups, f"Batch-size is {num_groups}, but nn_input.shape[0] is {mm_num_groups}."

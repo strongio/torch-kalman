@@ -45,6 +45,8 @@ class LinearModel(Process):
             raise ValueError(f"Process {self.id} received 'lm_input' that is not a Tensor.")
         elif lm_input.requires_grad:
             raise ValueError(f"Process {self.id} received 'lm_input' that requires_grad, which is not allowed.")
+        elif torch.isnan(lm_input).any():
+            raise ValueError(f"Process {self.id} received 'lm_input' that has nans.")
 
         num_states = len(self.state_elements)
         mm_num_groups, mm_num_ts, mm_num_covs = lm_input.shape

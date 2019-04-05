@@ -35,6 +35,10 @@ class StateBeliefOverTime:
         self._means = None
         self._covs = None
         self._last_measured = None
+        self._H = None
+        self._R = None
+        self._prediction_uncertainty = None
+        self._predictions = None
 
     def _means_covs(self) -> None:
         means, covs = zip(*[(state_belief.means, state_belief.covs) for state_belief in self.state_beliefs])
@@ -145,3 +149,28 @@ class StateBeliefOverTime:
     @property
     def distribution(self) -> TypeVar('KalmanFilterDistributionMixin'):
         return self.family.distribution
+
+    @property
+    def H(self) -> Tensor:
+        if self._H is None:
+            self._H = torch.stack([sb.H for sb in self.state_beliefs], 1)
+        return self._H
+
+    @property
+    def R(self) -> Tensor:
+        if self._R is None:
+            self._R = torch.stack([sb.R for sb in self.state_beliefs], 1)
+        return self._R
+
+    @property
+    def predictions(self) -> Tensor:
+        if self._predictions is None:
+            self._predictions = self.H.matmul(self.means.unsqueeze(3)).squeeze(3)
+        return self._predictions
+
+    @property
+    def prediction_uncertainty(self) -> Tensor:
+        if self._prediction_uncertainty is None:
+            Ht = self.H.permute(0, 1, 3, 2)
+            self._prediction_uncertainty = self.H.matmul(self.covs).matmul(Ht) + self.R
+        return self._prediction_uncertainty
