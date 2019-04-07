@@ -56,18 +56,6 @@ class StateBeliefOverTime:
             self._means_covs()
         return self._covs
 
-    @property
-    def H(self) -> Tensor:
-        if self._H is None:
-            self._H = torch.stack([sb.H for sb in self.state_beliefs], 1)
-        return self._H
-
-    @property
-    def R(self) -> Tensor:
-        if self._R is None:
-            self._R = torch.stack([sb.R for sb in self.state_beliefs], 1)
-        return self._R
-
     def components(self) -> Dict[Tuple[str, str, str], Tuple[Tensor, Tensor]]:
         states_per_measure = defaultdict(list)
         for state_belief in self.state_beliefs:
@@ -168,12 +156,14 @@ class StateBeliefOverTime:
         for group_idx, time_idx, measure_idx in lp_groups:
             if isinstance(time_idx, int):
                 # assignment is dimensionless in time; needed b/c group isn't a slice
-                lp = self._log_prob_with_subsetting(obs, group_idx=group_idx, time_idx=(time_idx,), measure_idx=measure_idx)
+                lp = self._log_prob_with_subsetting(obs, group_idx=group_idx, time_idx=(time_idx,), measure_idx=measure_idx,
+                                                    **kwargs)
                 out[group_idx, time_idx] = lp.squeeze(-1)
             else:
                 # time has dimension, but group is a slice so it's OK
                 out[group_idx, time_idx] = \
-                    self._log_prob_with_subsetting(obs, group_idx=group_idx, time_idx=time_idx, measure_idx=measure_idx)
+                    self._log_prob_with_subsetting(obs, group_idx=group_idx, time_idx=time_idx, measure_idx=measure_idx,
+                                                   **kwargs)
 
         return out
 
@@ -194,6 +184,18 @@ class StateBeliefOverTime:
 
     def sample_measurements(self, eps: Optional[Tensor] = None):
         raise NotImplementedError
+
+    @property
+    def H(self) -> Tensor:
+        if self._H is None:
+            self._H = torch.stack([sb.H for sb in self.state_beliefs], 1)
+        return self._H
+
+    @property
+    def R(self) -> Tensor:
+        if self._R is None:
+            self._R = torch.stack([sb.R for sb in self.state_beliefs], 1)
+        return self._R
 
     @property
     def predictions(self) -> Tensor:

@@ -1,4 +1,4 @@
-from typing import Optional, Sequence, Tuple, Union
+from typing import Optional, Sequence, Tuple, Union, Callable
 from warnings import warn
 
 import torch
@@ -6,8 +6,7 @@ from torch import Tensor
 
 from torch_kalman.design import Design
 from torch_kalman.state_belief import StateBelief
-from torch_kalman.state_belief.families.gaussian import Gaussian
-from torch_kalman.state_belief.over_time import StateBeliefOverTime
+from torch_kalman.state_belief.families.gaussian import Gaussian, GaussianOverTime
 from torch_kalman.state_belief.utils import bmat_idx
 
 Selector = Union[Sequence[int], slice]
@@ -15,10 +14,8 @@ Selector = Union[Sequence[int], slice]
 
 class Normal(torch.distributions.Normal):
     def pdf(self, value: Tensor) -> Tensor:
+        # TODO: calculate on prob-scale instead of on log-scale then taking exp
         return self.log_prob(value=value).exp()
-
-    def enumerate_support(self, expand=True):
-        raise NotImplementedError
 
     def imr(self, value: Tensor) -> Tensor:
         return self.pdf(value) / (1 - self.cdf(value))
@@ -93,6 +90,7 @@ class CensoredGaussian(Gaussian):
 
         # update
         means_new = self.mean_update(mean=means, K=K, residuals=vals - mm_adj)
+
         covs_new = self.covariance_update(covariance=covs, K=K, H=H, prob_obs=prob_obs)
         return means_new, covs_new
 
@@ -140,20 +138,20 @@ class CensoredGaussian(Gaussian):
             return super().sample_transition(eps=eps)
         raise NotImplementedError
 
-    @property
-    def measured_means(self):
-        raise NotImplementedError
 
-    @property
-    def system_uncertainty(self):
-        raise NotImplementedError
+def _replace_eps_not_in_place(tensor: Tensor, eps: float) -> Tensor:
+    tensor_new = eps * torch.ones_like(tensor)
+    tensor_new[tensor > eps] = tensor[tensor > eps]
+    return tensor_new
 
 
 def tobit_adjustment(mean: Tensor,
                      cov: Tensor,
                      lower: Optional[Tensor] = None,
                      upper: Optional[Tensor] = None,
-                     diag_offset: float = .001) -> Tuple[Tensor, Tensor]:
+                     offset: float = .001) -> Tuple[Tensor, Tensor]:
+    assert offset < 1.0
+
     if lower is None and upper is None:
         return mean, cov
     else:
@@ -186,7 +184,7 @@ def tobit_adjustment(mean: Tensor,
     lamb = (dens_up - dens_lo) / prob_obs
 
     # adjust-mean:
-    mean_uncens_adj = mean - std * lamb
+    mean_uncens_adj = prob_obs * (mean - std * lamb)
     mean_adj = mean_uncens_adj + upper_adj + lower_adj
 
     # adjust-cov:
@@ -195,20 +193,21 @@ def tobit_adjustment(mean: Tensor,
     part2a = torch.zeros_like(part1)
     part2a[is_cens_lo] = std[is_cens_lo] * lower[is_cens_lo] * dens_lo[is_cens_lo]
     part2b = torch.zeros_like(part1)
-    part2b[is_cens_up] = upper[is_cens_up] * dens_up[is_cens_up]  # no std in front
+    # part2b[is_cens_up] = std[is_cens_up] * upper[is_cens_up] * dens_up[is_cens_up]
+    part2b[is_cens_up] = upper[is_cens_up] * dens_up[is_cens_up]
     part2 = (part2a - part2b) / prob_obs
 
     part3 = (mean - std * lamb) ** 2
 
-    diag_adj = part1 + part2 - part3
-    cov_adj = _matrix_diag(diag_adj)
-
+    diag_adj = std.clone()
+    is_cens = (is_cens_lo | is_cens_up)
+    diag_adj[is_cens] = part1[is_cens] + part2[is_cens] - part3[is_cens]
+    #
     if (diag_adj < 0).any():
-        # raise ValueError("`tobit_adjustment` covariance < 0")
-        warn(f"`tobit_adjustment` covariance < 0; will set to {diag_offset}")
-        diag_adj_new = diag_offset * torch.ones_like(diag_adj)
-        diag_adj_new[diag_adj > diag_offset] = diag_adj[diag_adj > diag_offset]
-        cov_adj = _matrix_diag(diag_adj_new)
+        raise Exception(f"`tobit_adjustment` covariance < 0")  # ; will set to {offset}")
+        cov_adj = _matrix_diag(_replace_eps_not_in_place(diag_adj, offset))
+    else:
+        cov_adj = _matrix_diag(diag_adj)
 
     return mean_adj, cov_adj
 
@@ -216,7 +215,12 @@ def tobit_adjustment(mean: Tensor,
 def tobit_probs(mean: Tensor,
                 cov: Tensor,
                 lower: Optional[Tensor] = None,
-                upper: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
+                upper: Optional[Tensor] = None,
+                clamp: Optional[Callable] = None) -> Tuple[Tensor, Tensor]:
+    if clamp is None:
+        # CDF not well behaved at tails, truncate
+        clamp = lambda z: torch.clamp(z, -5., 5.)
+
     if upper is None:
         upper = torch.empty_like(mean)
         upper[:] = float('inf')
@@ -227,11 +231,13 @@ def tobit_probs(mean: Tensor,
     std = torch.diagonal(cov, dim1=-2, dim2=-1)
     probs_up = torch.zeros_like(mean)
     is_cens_up = torch.isfinite(upper)
-    probs_up[is_cens_up] = 1. - std_normal.cdf((upper[is_cens_up] - mean[is_cens_up]) / std[is_cens_up])
+    upper_z = (upper[is_cens_up] - mean[is_cens_up]) / std[is_cens_up]
+    probs_up[is_cens_up] = 1. - std_normal.cdf(clamp(upper_z))
 
     probs_lo = torch.zeros_like(mean)
     is_cens_lo = torch.isfinite(lower)
-    probs_lo[is_cens_lo] = std_normal.cdf((lower[is_cens_lo] - mean[is_cens_lo]) / std[is_cens_lo])
+    lower_z = (lower[is_cens_lo] - mean[is_cens_lo]) / std[is_cens_lo]
+    probs_lo[is_cens_lo] = std_normal.cdf(clamp(lower_z))
 
     return probs_lo, probs_up
 
@@ -247,7 +253,7 @@ def _matrix_diag(diagonal: Tensor) -> Tensor:
     return result
 
 
-class CensoredGaussianOverTime(StateBeliefOverTime):
+class CensoredGaussianOverTime(GaussianOverTime):
     def __init__(self,
                  state_beliefs: Sequence['CensoredGaussian'],
                  design: Design):
@@ -256,8 +262,10 @@ class CensoredGaussianOverTime(StateBeliefOverTime):
     def log_prob(self,
                  obs: Tensor,
                  lower: Optional[Tensor] = None,
-                 upper: Optional[Tensor] = None) -> Tensor:
-        return super().log_prob(obs=obs, lower=lower, upper=upper)
+                 upper: Optional[Tensor] = None,
+                 method: str = 'independent'
+                 ) -> Tensor:
+        return super().log_prob(obs=obs, lower=lower, upper=upper, method=method)
 
     @staticmethod
     def _subset_obs_and_bounds(obs: Tensor,
@@ -271,7 +279,7 @@ class CensoredGaussianOverTime(StateBeliefOverTime):
             lower = torch.empty_like(obs)
             lower[:] = float('-inf')
         else:
-            assert not lower.isnan().any(), "nans in 'lower'"
+            assert not torch.isnan(lower).any(), "nans in 'lower'"
             lower = lower[idx_3d]
             assert (obs >= lower).all(), "Not all obs are >= lower censoring limit"
 
@@ -279,7 +287,7 @@ class CensoredGaussianOverTime(StateBeliefOverTime):
             upper = torch.empty_like(obs)
             upper[:] = float('inf')
         else:
-            assert not upper.isnan().any(), "nans in 'upper'"
+            assert not torch.isnan(upper).any(), "nans in 'upper'"
             upper = upper[idx_3d]
             assert (obs <= upper).all(), "Not all obs are <= upper censoring limit"
 
@@ -290,40 +298,77 @@ class CensoredGaussianOverTime(StateBeliefOverTime):
                                   group_idx: Selector,
                                   time_idx: Selector,
                                   measure_idx: Selector,
+                                  method: str = 'independent',
                                   lower: Optional[Tensor] = None,
                                   upper: Optional[Tensor] = None) -> Tensor:
         self._check_lp_sub_input(group_idx, time_idx)
 
+        idx_no_measure = bmat_idx(group_idx, time_idx)
         idx_3d = bmat_idx(group_idx, time_idx, measure_idx)
         idx_4d = bmat_idx(group_idx, time_idx, measure_idx, measure_idx)
 
         # subset obs, lower, upper:
         group_obs, group_lower, group_upper = self._subset_obs_and_bounds(obs, lower, upper, idx_3d)
 
-        #
-        group_means = self.means[group_idx, time_idx]
-        group_covs = self.covs[group_idx, time_idx]
-        group_H = self.H[idx_3d]
-        group_R = self.R[idx_4d]
-        group_measured_means = group_H.matmul(group_means.unsqueeze(3)).squeeze(3)
+        if method.lower() == 'update':
+            group_means = self.means[idx_no_measure]
+            group_covs = self.covs[idx_no_measure]
+            group_H = self.H[idx_3d]
+            group_R = self.R[idx_4d]
+            group_measured_means = group_H.matmul(group_means.unsqueeze(3)).squeeze(3)
 
-        # calculate adjusted measure mean and cov:
-        mm_adj, R_adj = tobit_adjustment(mean=group_measured_means,
-                                         cov=group_R,
-                                         lower=group_lower,
-                                         upper=group_upper)
+            # calculate adjusted measure mean and cov:
+            mm_adj, R_adj = tobit_adjustment(mean=group_measured_means,
+                                             cov=group_R,
+                                             lower=group_lower,
+                                             upper=group_upper)
 
-        # calculate prob-obs:
-        prob_lo, prob_up = tobit_probs(group_measured_means, group_R, lower=group_lower, upper=group_upper)
-        prob_obs = _matrix_diag(1 - prob_up - prob_lo)
+            # calculate prob-obs:
+            prob_lo, prob_up = tobit_probs(group_measured_means, group_R, lower=group_lower, upper=group_upper)
+            prob_obs = _matrix_diag(1 - prob_up - prob_lo)
 
-        # system uncertainty:
-        Ht = group_H.permute(0, 1, 3, 2)
-        system_uncertainty = prob_obs.matmul(group_H).matmul(group_covs).matmul(Ht).matmul(prob_obs) + R_adj
+            # system uncertainty:
+            Ht = group_H.permute(0, 1, 3, 2)
+            system_uncertainty = prob_obs.matmul(group_H).matmul(group_covs).matmul(Ht).matmul(prob_obs) + R_adj
 
-        # log prob:
-        dist = torch.distributions.MultivariateNormal(mm_adj, system_uncertainty)
-        return dist.log_prob(group_obs)
+            # log prob:
+            dist = torch.distributions.MultivariateNormal(mm_adj, system_uncertainty)
+            return dist.log_prob(group_obs)
+        elif method.lower() == 'independent':
+            #
+            pred_mean = self.predictions[idx_3d]
+            pred_cov = self.prediction_uncertainty[idx_4d]
+
+            #
+            cens_up = (group_obs == group_upper)
+            cens_lo = (group_obs == group_lower)
+
+            #
+            prob_uncens = torch.zeros_like(group_obs)
+            prob_cens_up = torch.zeros_like(group_obs)
+            prob_cens_lo = torch.zeros_like(group_obs)
+            for m in range(pred_mean.shape[-1]):
+                std = pred_cov[..., m, m].sqrt()
+                z = (pred_mean[..., m] - group_obs[..., m]) / std
+
+                # pdf is well behaved at tails:
+                prob_uncens[..., m] = std_normal.pdf(z) / std
+
+                # but cdf is not, truncate:
+                z = torch.clamp(z, -5., 5.)
+                prob_cens_up[..., m] = std_normal.cdf(z)
+                prob_cens_lo[..., m] = 1. - std_normal.cdf(z)
+
+            prob_cens = torch.zeros_like(group_obs)
+            prob_cens[cens_up] = prob_cens_up[cens_up]
+            prob_cens[cens_lo] = prob_cens_lo[cens_lo]
+
+            log_prob = (prob_cens + prob_uncens).log()
+
+            # take the product of the dimension probs (i.e., assume independence)
+            return torch.sum(log_prob, -1)
+        else:
+            raise RuntimeError("Expected method to be one of: {}.".format({'update', 'independent'}))
 
     def sample_measurements(self,
                             lower: Optional[Tensor] = None,
