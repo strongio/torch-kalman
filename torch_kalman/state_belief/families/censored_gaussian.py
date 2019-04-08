@@ -149,8 +149,7 @@ def _replace_eps_not_in_place(tensor: Tensor, eps: float) -> Tensor:
 def _low_only(mean: Tensor,
               cov: Tensor,
               lower: Optional[Tensor] = None,
-              upper: Optional[Tensor] = None,
-              debug: Union[bool, int] = False):
+              upper: Optional[Tensor] = None):
     if (upper is not None) and torch.isfinite(upper).any():
         raise NotImplementedError("No upper")
     is_cens_lo = torch.isfinite(lower)
@@ -180,10 +179,6 @@ def _low_only(mean: Tensor,
         m_diag_adj = cov[..., m, m].clone()
         m_is_cens_lo = is_cens_lo[..., m]
         curly_d = m_imr[m_is_cens_lo] * (m_imr[m_is_cens_lo] - m_z_low[m_is_cens_lo])
-        if debug is not False:
-            print("imr", m_imr[debug])
-            print("z_low", m_z_low[debug])
-            print("curly_d", curly_d[debug])
         m_diag_adj[m_is_cens_lo] = m_diag_adj[m_is_cens_lo] * (1. - curly_d)
         diag_adj.append(m_diag_adj)
     diag_adj = torch.stack(diag_adj, -1)
@@ -243,9 +238,9 @@ def erfcx(x: Tensor) -> Tensor:
     return result
 
 
-def _F1F2(x: Tensor, y: Tensor) -> Tuple[Tensor, Tensor]:
-    if torch.isinf(x).any() or torch.isinf(y).any():
-        raise NotImplementedError
+def _F1F2_no_inf(x: Tensor, y: Tensor) -> Tuple[Tensor, Tensor]:
+    if (x.abs() > 3).any() or (y.abs() > 3).any():
+        raise RuntimeError("_F1F2_no_inf not stable for inputs with abs(value) > 3")
 
     numer_1 = torch.exp(-x ** 2) - torch.exp(-y ** 2)
     numer_2 = x * torch.exp(-x ** 2) - y * torch.exp(-y ** 2)
@@ -256,35 +251,71 @@ def _F1F2(x: Tensor, y: Tensor) -> Tuple[Tensor, Tensor]:
     return F1, F2
 
 
+def _F1F2(mean: Tensor,
+          cov: Tensor,
+          lower: Tensor,
+          upper: Tensor) -> Tuple[Tensor, Tensor]:
+    is_cens_up = torch.isfinite(upper)
+    is_cens_lo = torch.isfinite(lower)
+
+    std = torch.diagonal(cov, dim1=-2, dim2=-1).sqrt()
+
+    # mask out the infs before any gradients are being tracked:
+    alpha = torch.zeros_like(mean)
+    alpha[is_cens_lo] = (lower[is_cens_lo] - mean[is_cens_lo]) / std[is_cens_lo]
+    beta = torch.zeros_like(mean)
+    beta[is_cens_up] = (upper[is_cens_up] - mean[is_cens_up]) / std[is_cens_up]
+    
+    # _F1F2_no_inf unstable for large z-scores, so use the lim(+/-inf) version for those as well
+    is_cens_up = is_cens_up & (beta.data < 4.)
+    is_cens_lo = is_cens_lo & (alpha.data > -4.)
+    is_cens_both = is_cens_up & is_cens_lo
+
+    #
+    sqrt_2 = 2. ** .5
+    x = alpha / sqrt_2
+    y = beta / sqrt_2
+
+    # censored both:
+    F1, F2 = torch.zeros_like(mean), torch.zeros_like(mean)
+    F1[is_cens_both], F2[is_cens_both] = _F1F2_no_inf(x[is_cens_both], y[is_cens_both])
+
+    # censored lower, uncensored upper:
+    F1[is_cens_lo & ~is_cens_up] = 1. / erfcx(x[is_cens_lo & ~is_cens_up])
+    F2[is_cens_lo & ~is_cens_up] = x[is_cens_lo & ~is_cens_up] / erfcx(x[is_cens_lo & ~is_cens_up])
+
+    # uncensored lower, censored upper:
+    F1[~is_cens_lo & is_cens_up] = -1. / erfcx(-y[~is_cens_lo & is_cens_up])
+    F2[~is_cens_lo & is_cens_up] = -y[~is_cens_lo & is_cens_up] / erfcx(-y[~is_cens_lo & is_cens_up])
+
+    # uncensored
+    F1[~is_cens_lo & ~is_cens_up] = 0.
+    F2[~is_cens_lo & ~is_cens_up] = 0.
+
+    return F1, F2
+
+
 def tobit_adjustment(mean: Tensor,
                      cov: Tensor,
                      lower: Optional[Tensor] = None,
                      upper: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
-    if lower is None and upper is None:
-        return mean, cov
-    else:
-        if upper is None:
-            upper = torch.empty_like(mean)
-            upper[:] = float('inf')
-        if lower is None:
-            lower = torch.empty_like(mean)
-            lower[:] = float('-inf')
+    if upper is None:
+        upper = torch.empty_like(mean)
+        upper[:] = float('inf')
+    if lower is None:
+        lower = torch.empty_like(mean)
+        lower[:] = float('-inf')
 
-
-    std = torch.diagonal(cov, dim1=-2, dim2=-1).sqrt()
     is_cens_up = torch.isfinite(upper)
     is_cens_lo = torch.isfinite(lower)
 
-    sqrt_2 = 2. ** .5
+    if not is_cens_up.any() and not is_cens_lo.any():
+        return mean, cov
+
+    F1, F2 = _F1F2(mean, cov, lower, upper)
+
+    std = torch.diagonal(cov, dim1=-2, dim2=-1).sqrt()
     sqrt_pi = pi ** .5
-
-    # TODO: subset out infinite alphas and betas; handle behavior of _F1F2
-    alpha = -5. * torch.ones_like(mean)
-    alpha[is_cens_lo] = (lower[is_cens_lo] - mean[is_cens_lo]) / std[is_cens_lo]
-    beta = 5. * torch.ones_like(mean)
-    beta[is_cens_up] = (upper[is_cens_up] - mean[is_cens_up]) / std[is_cens_up]
-
-    F1, F2 = _F1F2(alpha / sqrt_2, beta / sqrt_2)
 
     # adjust mean:
     prob_lo, prob_up = tobit_probs(mean, cov, lower, upper)
