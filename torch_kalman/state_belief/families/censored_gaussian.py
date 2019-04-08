@@ -1,3 +1,4 @@
+from math import pi, sqrt
 from typing import Optional, Sequence, Tuple, Union, Callable
 from warnings import warn
 
@@ -145,13 +146,120 @@ def _replace_eps_not_in_place(tensor: Tensor, eps: float) -> Tensor:
     return tensor_new
 
 
+def _low_only(mean: Tensor,
+              cov: Tensor,
+              lower: Optional[Tensor] = None,
+              upper: Optional[Tensor] = None,
+              debug: Union[bool, int] = False):
+    if (upper is not None) and torch.isfinite(upper).any():
+        raise NotImplementedError("No upper")
+    is_cens_lo = torch.isfinite(lower)
+
+    std = torch.diagonal(cov, dim1=-2, dim2=-1).sqrt()
+
+    z_low = torch.zeros_like(mean)
+    z_low[is_cens_lo] = (lower[is_cens_lo] - mean[is_cens_lo]) / std[is_cens_lo]
+    z_low = torch.clamp(z_low, -5., 5.)
+
+    prob_lo = torch.zeros_like(mean)
+    prob_lo[is_cens_lo] = std_normal.cdf(z_low[is_cens_lo])
+
+    expected_cens_lo = torch.zeros_like(mean)
+    expected_cens_lo[is_cens_lo] = prob_lo[is_cens_lo] * lower[is_cens_lo]
+
+    imr = torch.zeros_like(mean)
+    imr[is_cens_lo] = std_normal.imr(z_low[is_cens_lo])
+    expected_uncens = (1 - prob_lo) * (mean + std * imr)
+
+    mean_adj = expected_uncens + expected_cens_lo
+
+    diag_adj = []
+    for m in range(mean.shape[-1]):
+        m_z_low = z_low[..., m]
+        m_imr = imr[..., m]
+        m_diag_adj = cov[..., m, m].clone()
+        m_is_cens_lo = is_cens_lo[..., m]
+        curly_d = m_imr[m_is_cens_lo] * (m_imr[m_is_cens_lo] - m_z_low[m_is_cens_lo])
+        if debug is not False:
+            print("imr", m_imr[debug])
+            print("z_low", m_z_low[debug])
+            print("curly_d", curly_d[debug])
+        m_diag_adj[m_is_cens_lo] = m_diag_adj[m_is_cens_lo] * (1. - curly_d)
+        diag_adj.append(m_diag_adj)
+    diag_adj = torch.stack(diag_adj, -1)
+
+    cov_adj = _matrix_diag(diag_adj)
+
+    return mean_adj, cov_adj
+
+
+def erfcx(x: Tensor) -> Tensor:
+    """M. M. Shepherd and J. G. Laframboise,
+       MATHEMATICS OF COMPUTATION 36, 249 (1981)
+    """
+    if torch.isinf(x).any():
+        from pdb import Pdb
+        Pdb().set_trace()
+
+    K = 3.75
+    y = (torch.abs(x) - K) / (torch.abs(x) + K)
+    y2 = 2.0 * y
+    (d, dd) = (-0.4e-20, 0.0)
+    (d, dd) = (y2 * d - dd + 0.3e-20, d)
+    (d, dd) = (y2 * d - dd + 0.97e-19, d)
+    (d, dd) = (y2 * d - dd + 0.27e-19, d)
+    (d, dd) = (y2 * d - dd + -0.2187e-17, d)
+    (d, dd) = (y2 * d - dd + -0.2237e-17, d)
+    (d, dd) = (y2 * d - dd + 0.50681e-16, d)
+    (d, dd) = (y2 * d - dd + 0.74182e-16, d)
+    (d, dd) = (y2 * d - dd + -0.1250795e-14, d)
+    (d, dd) = (y2 * d - dd + -0.1864563e-14, d)
+    (d, dd) = (y2 * d - dd + 0.33478119e-13, d)
+    (d, dd) = (y2 * d - dd + 0.32525481e-13, d)
+    (d, dd) = (y2 * d - dd + -0.965469675e-12, d)
+    (d, dd) = (y2 * d - dd + 0.194558685e-12, d)
+    (d, dd) = (y2 * d - dd + 0.28687950109e-10, d)
+    (d, dd) = (y2 * d - dd + -0.63180883409e-10, d)
+    (d, dd) = (y2 * d - dd + -0.775440020883e-09, d)
+    (d, dd) = (y2 * d - dd + 0.4521959811218e-08, d)
+    (d, dd) = (y2 * d - dd + 0.10764999465671e-07, d)
+    (d, dd) = (y2 * d - dd + -0.218864010492344e-06, d)
+    (d, dd) = (y2 * d - dd + 0.774038306619849e-06, d)
+    (d, dd) = (y2 * d - dd + 0.4139027986073010e-05, d)
+    (d, dd) = (y2 * d - dd + -0.69169733025012064e-04, d)
+    (d, dd) = (y2 * d - dd + 0.490775836525808632e-03, d)
+    (d, dd) = (y2 * d - dd + -0.2413163540417608191e-02, d)
+    (d, dd) = (y2 * d - dd + 0.9074997670705265094e-02, d)
+    (d, dd) = (y2 * d - dd + -0.26658668435305752277e-01, d)
+    (d, dd) = (y2 * d - dd + 0.59209939998191890498e-01, d)
+    (d, dd) = (y2 * d - dd + -0.84249133366517915584e-01, d)
+    (d, dd) = (y2 * d - dd + -0.4590054580646477331e-02, d)
+    d = y * d - dd + 0.1177578934567401754080e+01
+
+    result = d / (1.0 + 2.0 * torch.abs(x))
+    x_neg = (x < 0)
+    result[x_neg] = 2.0 * torch.exp(x[x_neg] ** 2) - result[x_neg]
+
+    return result
+
+
+def _F1F2(x: Tensor, y: Tensor) -> Tuple[Tensor, Tensor]:
+    if torch.isinf(x).any() or torch.isinf(y).any():
+        raise NotImplementedError
+
+    numer_1 = torch.exp(-x ** 2) - torch.exp(-y ** 2)
+    numer_2 = x * torch.exp(-x ** 2) - y * torch.exp(-y ** 2)
+    denom = torch.erf(y) - torch.erf(x)
+
+    F1 = numer_1 / denom
+    F2 = numer_2 / denom
+    return F1, F2
+
+
 def tobit_adjustment(mean: Tensor,
                      cov: Tensor,
                      lower: Optional[Tensor] = None,
-                     upper: Optional[Tensor] = None,
-                     offset: float = .001) -> Tuple[Tensor, Tensor]:
-    assert offset < 1.0
-
+                     upper: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
     if lower is None and upper is None:
         return mean, cov
     else:
@@ -162,52 +270,38 @@ def tobit_adjustment(mean: Tensor,
             lower = torch.empty_like(mean)
             lower[:] = float('-inf')
 
-    prob_lo, prob_up = tobit_probs(mean=mean, cov=cov, lower=lower, upper=upper)
+
     std = torch.diagonal(cov, dim1=-2, dim2=-1).sqrt()
-
-    # upper:
     is_cens_up = torch.isfinite(upper)
-    dens_up = torch.zeros_like(mean)
-    dens_up[is_cens_up] = std_normal.pdf((upper[is_cens_up] - mean[is_cens_up]) / std[is_cens_up])
-    upper_adj = torch.zeros_like(mean)
-    upper_adj[is_cens_up] = prob_up[is_cens_up] * upper[is_cens_up]
-
-    # lower:
     is_cens_lo = torch.isfinite(lower)
-    dens_lo = torch.zeros_like(mean)
-    dens_lo[is_cens_lo] = std_normal.pdf((lower[is_cens_lo] - mean[is_cens_lo]) / std[is_cens_lo])
+
+    sqrt_2 = 2. ** .5
+    sqrt_pi = pi ** .5
+
+    # TODO: subset out infinite alphas and betas; handle behavior of _F1F2
+    alpha = -5. * torch.ones_like(mean)
+    alpha[is_cens_lo] = (lower[is_cens_lo] - mean[is_cens_lo]) / std[is_cens_lo]
+    beta = 5. * torch.ones_like(mean)
+    beta[is_cens_up] = (upper[is_cens_up] - mean[is_cens_up]) / std[is_cens_up]
+
+    F1, F2 = _F1F2(alpha / sqrt_2, beta / sqrt_2)
+
+    # adjust mean:
+    prob_lo, prob_up = tobit_probs(mean, cov, lower, upper)
     lower_adj = torch.zeros_like(mean)
     lower_adj[is_cens_lo] = prob_lo[is_cens_lo] * lower[is_cens_lo]
-
-    #
-    prob_obs = (1. - prob_up - prob_lo)
-    lamb = (dens_up - dens_lo) / prob_obs
-
-    # adjust-mean:
-    mean_uncens_adj = prob_obs * (mean - std * lamb)
+    upper_adj = torch.zeros_like(mean)
+    upper_adj[is_cens_up] = prob_up[is_cens_up] * upper[is_cens_up]
+    mean_if_uncens = mean + (sqrt(2. / pi) * F1) * std
+    mean_uncens_adj = (1. - prob_up - prob_lo) * mean_if_uncens
     mean_adj = mean_uncens_adj + upper_adj + lower_adj
 
-    # adjust-cov:
-    part1 = (mean ** 2) + (std ** 2) - std * mean * lamb
+    # adjust cov:
+    diag_adj = torch.zeros_like(mean)
+    for m in range(mean.shape[-1]):
+        diag_adj[..., m] = (1. + 2. / sqrt_pi * F2[..., m] - 2. / pi * (F1[..., m] ** 2)) * cov[..., m, m]
 
-    part2a = torch.zeros_like(part1)
-    part2a[is_cens_lo] = std[is_cens_lo] * lower[is_cens_lo] * dens_lo[is_cens_lo]
-    part2b = torch.zeros_like(part1)
-    # part2b[is_cens_up] = std[is_cens_up] * upper[is_cens_up] * dens_up[is_cens_up]
-    part2b[is_cens_up] = upper[is_cens_up] * dens_up[is_cens_up]
-    part2 = (part2a - part2b) / prob_obs
-
-    part3 = (mean - std * lamb) ** 2
-
-    diag_adj = std.clone() ** 2.
-    is_cens = (is_cens_lo | is_cens_up)
-    diag_adj[is_cens] = part1[is_cens] + part2[is_cens] - part3[is_cens]
-    #
-    if (diag_adj < 0).any():
-        raise Exception(f"`tobit_adjustment` covariance < 0")  # ; will set to {offset}")
-        cov_adj = _matrix_diag(_replace_eps_not_in_place(diag_adj, offset))
-    else:
-        cov_adj = _matrix_diag(diag_adj)
+    cov_adj = _matrix_diag(diag_adj)
 
     return mean_adj, cov_adj
 
