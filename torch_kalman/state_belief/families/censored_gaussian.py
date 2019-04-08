@@ -199,7 +199,7 @@ def tobit_adjustment(mean: Tensor,
 
     part3 = (mean - std * lamb) ** 2
 
-    diag_adj = std.clone()
+    diag_adj = std.clone() ** 2.
     is_cens = (is_cens_lo | is_cens_up)
     diag_adj[is_cens] = part1[is_cens] + part2[is_cens] - part3[is_cens]
     #
