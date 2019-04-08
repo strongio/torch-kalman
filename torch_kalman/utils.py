@@ -1,9 +1,21 @@
 from typing import Dict, Union, Any, Optional
 
+import torch
 from pandas import Series
 
 import numpy as np
 from torch import Tensor
+
+
+def matrix_diag(diagonal: Tensor) -> Tensor:
+    N = diagonal.shape[-1]
+    shape = diagonal.shape[:-1] + (N, N)
+    device, dtype = diagonal.device, diagonal.dtype
+    result = torch.zeros(shape, dtype=dtype, device=device)
+    indices = torch.arange(result.numel(), device=device).reshape(shape)
+    indices = indices.diagonal(dim1=-2, dim2=-1)
+    result.view(-1)[indices] = diagonal
+    return result
 
 
 def fourier_model_mat(dt: Union[np.ndarray, Series],
@@ -73,13 +85,3 @@ def split_flat(tens: Tensor, dim: int, clone: bool = False):
 
 def identity(x: Any) -> Any:
     return x
-
-
-def _add(*args):
-    """
-    Add multiple values, applying the broadcasting rules used for `__add__`, avoiding in-place gradient issues for tensor.
-    """
-    out = args[0]
-    for arg in args[1:]:
-        out = out + arg
-    return out
