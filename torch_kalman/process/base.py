@@ -25,6 +25,9 @@ class Process:
 
         self._device: torch.device = None
 
+    def param_dict(self) -> torch.nn.ParameterDict:
+        raise NotImplementedError
+
     # measures ---
     def add_measure(self, measure: str):
         """
@@ -88,10 +91,6 @@ class Process:
         """
         raise NotImplementedError
 
-    # other -----
-    def parameters(self) -> Generator[torch.nn.Parameter, None, None]:
-        raise NotImplementedError
-
     @staticmethod
     def _check_design_mat_assignment(value: DesignMatAssignment) -> Union[Tensor, Callable]:
         if isinstance(value, float):
@@ -113,11 +112,11 @@ class Process:
 
     def set_device(self, device: torch.device) -> None:
         self._device = device
-        for param in self.parameters():
+        for param in self.param_dict().values():
             param.data = param.data.to(device)
 
     def requires_grad_(self, requires_grad: bool):
-        for param in self.parameters():
+        for param in self.param_dict().values():
             param.requires_grad_(requires_grad=requires_grad)
 
     def initial_state_means_for_batch(self,

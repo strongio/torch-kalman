@@ -1,7 +1,7 @@
 from typing import Generator, Tuple, Optional, Union, Sequence, Dict, List
 
 from torch import Tensor
-from torch.nn import Parameter
+from torch.nn import Parameter, ParameterDict
 
 from torch_kalman.process import Process
 
@@ -56,9 +56,11 @@ class FourierSeason(Process):
 
         return state_elements, transitions
 
-    def parameters(self) -> Generator[Parameter, None, None]:
+    def param_dict(self) -> ParameterDict:
+        p = ParameterDict()
         if self.decay is not None:
-            yield self.decay.parameter
+            p['decay'] = self.decay.parameter
+        return p
 
     @property
     def dynamic_state_elements(self) -> Sequence[str]:

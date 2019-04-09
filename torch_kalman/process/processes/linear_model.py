@@ -1,4 +1,4 @@
-from typing import Generator, Sequence, Optional, Union, Callable
+from typing import Sequence, Optional, Union, Callable
 
 import torch
 
@@ -30,8 +30,8 @@ class LinearModel(Process):
     def dynamic_state_elements(self) -> Sequence[str]:
         return self._dynamic_state_elements
 
-    def parameters(self) -> Generator[torch.nn.Parameter, None, None]:
-        yield from ()  # no parameters
+    def param_dict(self) -> torch.nn.ParameterDict:
+        return torch.nn.ParameterDict()  # no parameters
 
     def add_measure(self, measure: str):
         for cov in self.state_elements:

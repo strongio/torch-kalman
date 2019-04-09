@@ -1,4 +1,4 @@
-from typing import Union, Tuple, Generator, Sequence, Optional
+from typing import Union, Tuple, Sequence, Optional
 
 import torch
 
@@ -28,9 +28,11 @@ class LocalLevel(Process):
     def add_measure(self, measure: str):
         self._set_measure(measure=measure, state_element='position', value=1.0)
 
-    def parameters(self) -> Generator[torch.nn.Parameter, None, None]:
+    def param_dict(self) -> torch.nn.ParameterDict:
+        p = torch.nn.ParameterDict()
         if self.decay is not None:
-            yield self.decay.parameter
+            p['decay'] = self.decay.parameter
+        return p
 
     @property
     def dynamic_state_elements(self) -> Sequence[str]:

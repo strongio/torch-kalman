@@ -1,6 +1,6 @@
 from typing import Generator, Tuple, Union, Callable, Sequence
 
-from torch.nn import Parameter
+from torch.nn import Parameter, ParameterDict
 
 from torch_kalman.process import Process
 from torch_kalman.process.utils.bounded import Bounded
@@ -40,9 +40,10 @@ class LocalTrend(Process):
         else:
             self._set_transition(from_element='velocity', to_element='velocity', value=1.0)
 
-    def parameters(self) -> Generator[Parameter, None, None]:
-        for transition in itervalues_sorted_keys(self.decayed_transitions):
-            yield transition.parameter
+    def param_dict(self) -> ParameterDict:
+        p = ParameterDict()
+        p.update({name: transition.parameter for name, transition in self.decayed_transitions.items()})
+        return p
 
     def add_measure(self, measure: str):
         self._set_measure(measure=measure, state_element='position', value=1.0)

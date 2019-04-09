@@ -2,7 +2,7 @@ from typing import TypeVar, Optional, Callable, List, Union, Tuple, Sequence, An
 
 import torch
 from torch import Tensor
-from torch.nn import ParameterList
+
 from tqdm import tqdm
 
 from torch_kalman.design import Design
@@ -27,9 +27,7 @@ class KalmanFilter(torch.nn.Module):
         self._init_design(measures=measures, processes=processes, device=device, **kwargs)
 
         # parameters from design:
-        self.design_parameters = ParameterList()
-        for param in self.design.parameters():
-            self.design_parameters.append(param)
+        self.design_parameters = self.design.param_dict()
 
         # the StateBelief family, implemented by property (default gaussian)
         self._family = None

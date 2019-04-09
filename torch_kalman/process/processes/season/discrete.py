@@ -1,10 +1,10 @@
-from typing import Optional, Union, Generator, Tuple, Sequence, Dict
+from typing import Optional, Union, Tuple, Sequence
 
 import numpy as np
 import torch
 
 from torch import Tensor
-from torch.nn import Parameter
+from torch.nn import Parameter, ParameterDict
 
 from torch_kalman.process import Process
 from torch_kalman.process.for_batch import ProcessForBatch
@@ -67,9 +67,11 @@ class Season(Process):
     def add_measure(self, measure: str):
         self._set_measure(measure=measure, state_element='measured', value=1.0)
 
-    def parameters(self) -> Generator[Parameter, None, None]:
+    def param_dict(self) -> ParameterDict:
+        p = ParameterDict()
         if self.decay is not None:
-            yield self.decay.parameter
+            p['decay'] = self.decay.parameter
+        return p
 
     @property
     def dynamic_state_elements(self) -> Sequence[str]:

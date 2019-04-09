@@ -4,7 +4,7 @@ from typing import Generator, Tuple, Optional, Dict, Sequence
 import torch
 
 from torch import Tensor
-from torch.nn import Parameter
+from torch.nn import Parameter, ModuleDict, ParameterDict
 
 from torch_kalman.covariance import Covariance
 from torch_kalman.design.for_batch import DesignForBatch
@@ -103,32 +103,25 @@ class Design:
                 yield process_name, state_element
 
     def requires_grad_(self, requires_grad: bool):
-        for param in self.parameters():
+        for param in self.param_dict().values():
             param.requires_grad_(requires_grad=requires_grad)
 
-    def parameters(self) -> Generator[Parameter, None, None]:
-        yield from self.named_parameters().values()
-
-    def named_parameters(self) -> OrderedDict:
-        named_params = OrderedDict()
-
+    def param_dict(self) -> ModuleDict:
+        p = ModuleDict()
         for process_name, process in self.processes.items():
-            params = list(process.parameters())
-            names = getattr(process, 'parameter_names', range(len(params)))
-            for nm, param in zip(names, params):
-                named_params[(process_name, nm)] = param
+            p[f"process.{process_name}"] = process.param_dict()
 
-        named_params['measure_cholesky_log_diag'] = self.measure_cholesky_log_diag
-        named_params['measure_cholesky_off_diag'] = self.measure_cholesky_off_diag
+        p['measure_cov'] = ParameterDict([('cholesky_log_diag', self.measure_cholesky_log_diag),
+                                          ('cholesky_off_diag', self.measure_cholesky_off_diag)])
 
-        named_params['init_state_mean_params'] = self.init_state_mean_params
-        named_params['init_cholesky_log_diag'] = self.init_cholesky_log_diag
-        named_params['init_cholesky_off_diag'] = self.init_cholesky_off_diag
+        p['init_state'] = ParameterDict([('mean', self.init_state_mean_params),
+                                         ('cholesky_log_diag', self.init_cholesky_log_diag),
+                                         ('cholesky_off_diag', self.init_cholesky_off_diag)])
 
-        named_params['process_cholesky_log_diag'] = self.process_cholesky_log_diag
-        named_params['process_cholesky_off_diag'] = self.process_cholesky_off_diag
+        p['process_cov'] = ParameterDict([('cholesky_log_diag', self.process_cholesky_log_diag),
+                                          ('cholesky_off_diag', self.process_cholesky_off_diag)])
 
-        return named_params
+        return p
 
     def for_batch(self,
                   num_groups: int,

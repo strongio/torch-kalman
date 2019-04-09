@@ -3,7 +3,7 @@ from typing import Generator, Tuple, Optional, Callable, Dict
 import torch
 
 from torch import Tensor
-from torch.nn import Parameter
+from torch.nn import Parameter, ParameterDict
 
 from torch_kalman.covariance import Covariance
 from torch_kalman.process import Process
@@ -51,6 +51,12 @@ class NN(Process):
     def parameters(self) -> Generator[Parameter, None, None]:
         if self.add_module_params_to_process:
             yield from self.nn_module.parameters()
+
+    def param_dict(self) -> ParameterDict:
+        p = ParameterDict()
+        if self.add_module_params_to_process:
+            p.update(self.nn_module.named_parameters())
+        return p
 
     # noinspection PyMethodOverriding
     def for_batch(self, num_groups: int, num_timesteps: int, nn_input: Tensor):
