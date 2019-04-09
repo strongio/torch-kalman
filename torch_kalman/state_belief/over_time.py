@@ -1,5 +1,6 @@
 from collections import defaultdict
-from typing import Sequence, Dict, Tuple, TypeVar
+from typing import Sequence, Dict, Tuple, Union, Optional
+from warnings import warn
 
 import torch
 
@@ -8,7 +9,7 @@ from torch import Tensor
 from torch_kalman.design import Design
 from torch_kalman.state_belief import StateBelief
 
-from torch_kalman.state_belief.distributions.base import KalmanFilterDistributionMixin
+Selector = Union[Sequence[int], slice]
 
 
 class StateBeliefOverTime:
@@ -30,20 +31,18 @@ class StateBeliefOverTime:
             self.last_predict_idx[state_belief.last_measured == 1] = t
             self.last_update_idx[state_belief.last_measured == 0] = t
 
-        self._state_distribution = None
-        self._measurement_distribution = None
         self._means = None
         self._covs = None
         self._last_measured = None
         self._H = None
         self._R = None
-        self._prediction_uncertainty = None
         self._predictions = None
+        self._prediction_uncertainty = None
 
     def _means_covs(self) -> None:
         means, covs = zip(*[(state_belief.means, state_belief.covs) for state_belief in self.state_beliefs])
-        self._means = torch.stack(means).permute(1, 0, 2)
-        self._covs = torch.stack(covs).permute(1, 0, 2, 3)
+        self._means = torch.stack(means, 1)
+        self._covs = torch.stack(covs, 1)
 
     @property
     def means(self) -> Tensor:
@@ -56,35 +55,6 @@ class StateBeliefOverTime:
         if self._covs is None:
             self._means_covs()
         return self._covs
-
-    def log_prob(self, obs: Tensor) -> Tensor:
-        return self.measurement_distribution.log_prob_with_missings(obs)
-
-    def partial_measurements(self, exclude: Sequence[Tuple[str, str]]) -> Tuple[Tensor, Tensor]:
-        remaining = set(exclude)
-        exclude_idx = []
-        for i, ps in enumerate(self.design.all_state_elements()):
-            if ps in exclude:
-                exclude_idx.append(i)
-                remaining.remove(ps)
-        if remaining:
-            raise ValueError(f"The following were in `exclude` but weren't found in design:\n{remaining}.")
-
-        measurements = []
-        covariances = []
-        for state_belief in self.state_beliefs:
-            # only some states contribute:
-            H_partial = state_belief.H.clone()
-            H_partial[:, :, exclude_idx] = 0.
-
-            # mean:
-            measurements.append(torch.bmm(H_partial, state_belief.means[:, :, None]).squeeze(2))
-
-            # cov:
-            Ht_partial = H_partial.permute(0, 2, 1)
-            covariances.append(torch.bmm(torch.bmm(H_partial, state_belief.covs), Ht_partial) + state_belief.R)
-
-        return torch.stack(measurements).permute(1, 0, 2), torch.stack(covariances).permute(1, 0, 2, 3)
 
     def components(self) -> Dict[Tuple[str, str, str], Tuple[Tensor, Tensor]]:
         states_per_measure = defaultdict(list)
@@ -122,33 +92,98 @@ class StateBeliefOverTime:
         means, covs = zip(*means_covs)
         return self.family(means=torch.stack(means), covs=torch.stack(covs))
 
-    def get_state_belief(self, times: Sequence[int]) -> StateBelief:
+    def state_belief_for_time(self, times: Sequence[int]) -> StateBelief:
         means_covs = ((self.means[g, t, :], self.covs[g, t, :, :]) for g, t in enumerate(times))
         means, covs = zip(*means_covs)
         return self.family(means=torch.stack(means), covs=torch.stack(covs))
 
-    @property
-    def measurements(self) -> Tensor:
-        return self.measurement_distribution.mean
+    def _which_valid_key(self, is_nan: Tensor) -> Tuple[int]:
+        num_multi_dims = sum(x > 1 for x in is_nan.shape)
+        if num_multi_dims > 1:
+            raise ValueError("Expected `tensor` to be 1D (or have only one non-singleton dimension.")
+        is_valid = ~is_nan
+        return tuple(is_valid.nonzero().squeeze(-1).tolist())
 
-    @property
-    def state_distribution(self) -> KalmanFilterDistributionMixin:
-        if self._state_distribution is None:
-            self._state_distribution = self.distribution(self.means, self.covs)
-        return self._state_distribution
+    def log_prob(self, obs: Tensor, **kwargs) -> Tensor:
+        if obs.grad_fn is not None:
+            warn("`obs` has a grad_fn, nans may propagate to gradient")
 
-    @property
-    def measurement_distribution(self) -> KalmanFilterDistributionMixin:
-        if self._measurement_distribution is None:
-            means, covs = zip(*[state_belief.measurement for state_belief in self.state_beliefs])
-            means = torch.stack(means).permute(1, 0, 2)
-            covs = torch.stack(covs).permute(1, 0, 2, 3)
-            self._measurement_distribution = self.distribution(means, covs)
-        return self._measurement_distribution
+        num_groups, num_times, num_dist_dims = obs.shape
 
-    @property
-    def distribution(self) -> TypeVar('KalmanFilterDistributionMixin'):
-        return self.family.distribution
+        # group into chunks for log-prob evaluation. the way indexing works makes this tricky, and slow if we just create a
+        # separate group X measure index for each separate time-slice. two shortcuts are used to mitigate this:
+        # (1) the first N time-slices that are nan-free will all be evaluated as a chunk
+        # (2) subsequent nan-free slices use `slice` notation instead of having to iterate through each group, checking
+        #     which measures were nan
+        # For all other time-points, we need a separate (group-indices, time-index, measure-indices) tuple.
+
+        times_without_nan = list()
+        last_nonan_t = -1
+        lp_groups = defaultdict(list)
+        for t in range(num_times):
+            if torch.isnan(obs[:, t]).all():
+                # no log-prob needed
+                continue
+
+            if not torch.isnan(obs[:, t]).any():
+                # will be updated as block:
+                if last_nonan_t == (t - 1):
+                    last_nonan_t += 1
+                else:
+                    times_without_nan.append(t)
+                continue
+
+            for g in range(num_groups):
+                is_nan = torch.isnan(obs[g, t])
+                if is_nan.all():
+                    # no log-prob needed
+                    continue
+                measure_idx = self._which_valid_key(is_nan)
+                lp_groups[(t, measure_idx)].append(g)
+
+        lp_groups = [(gidx, t, midx) for (t, midx), gidx in lp_groups.items()]
+
+        # shortcuts:
+        if last_nonan_t >= 0:
+            gtm = slice(None), slice(last_nonan_t + 1), slice(None)
+            lp_groups.append(gtm)
+        if len(times_without_nan):
+            gtm = slice(None), times_without_nan, slice(None)
+            lp_groups.append(gtm)
+
+        # compute log-probs by dims available:
+        out = torch.zeros((num_groups, num_times))
+        for group_idx, time_idx, measure_idx in lp_groups:
+            if isinstance(time_idx, int):
+                # assignment is dimensionless in time; needed b/c group isn't a slice
+                lp = self._log_prob_with_subsetting(obs, group_idx=group_idx, time_idx=(time_idx,), measure_idx=measure_idx,
+                                                    **kwargs)
+                out[group_idx, time_idx] = lp.squeeze(-1)
+            else:
+                # time has dimension, but group is a slice so it's OK
+                out[group_idx, time_idx] = \
+                    self._log_prob_with_subsetting(obs, group_idx=group_idx, time_idx=time_idx, measure_idx=measure_idx,
+                                                   **kwargs)
+
+        return out
+
+    def _log_prob_with_subsetting(self,
+                                  obs: Tensor,
+                                  group_idx: Selector,
+                                  time_idx: Selector,
+                                  measure_idx: Selector,
+                                  **kwargs) -> Tensor:
+        raise NotImplementedError
+
+    @staticmethod
+    def _check_lp_sub_input(group_idx: Selector, time_idx: Selector):
+        if isinstance(group_idx, Sequence) and isinstance(time_idx, Sequence):
+            if len(group_idx) > 1 and len(time_idx) > 1:
+                warn("Both `group_idx` and `time_idx` are indices (i.e. neither is an int or a slice). This is rarely the "
+                     "expected input.")
+
+    def sample_measurements(self, eps: Optional[Tensor] = None):
+        raise NotImplementedError
 
     @property
     def H(self) -> Tensor:
@@ -167,8 +202,7 @@ class StateBeliefOverTime:
         if self._predictions is None:
             self._predictions = self.H.matmul(self.means.unsqueeze(3)).squeeze(3)
         return self._predictions
-
-    @property
+        
     def prediction_uncertainty(self) -> Tensor:
         if self._prediction_uncertainty is None:
             Ht = self.H.permute(0, 1, 3, 2)
