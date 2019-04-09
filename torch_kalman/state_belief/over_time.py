@@ -202,7 +202,8 @@ class StateBeliefOverTime:
         if self._predictions is None:
             self._predictions = self.H.matmul(self.means.unsqueeze(3)).squeeze(3)
         return self._predictions
-        
+
+    @property
     def prediction_uncertainty(self) -> Tensor:
         if self._prediction_uncertainty is None:
             Ht = self.H.permute(0, 1, 3, 2)
