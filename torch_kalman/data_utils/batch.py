@@ -2,42 +2,53 @@ from typing import Sequence, Any, Optional, Union, Tuple
 from warnings import warn
 
 import torch
-import pandas as pd
 
 from torch import Tensor
 import numpy as np
+
+try:
+    from pandas import DataFrame
+except ImportError:
+    DataFrame = None
+
+# assumed by `day_of_week_num`:
+assert np.zeros(1).astype('datetime64[D]') == np.datetime64('1970-01-01', 'D')
+
+
+def day_of_week_num(dts):
+    return (dts.astype('datetime64[D]').view('int64') - 4) % 7
 
 
 class TimeSeriesBatch:
     """
     TimeSeriesBatch includes additional information about each of the Tensor's dimensions: the name for each group in the
-    first dimension, the start datetime and datetime-unit for the second dimension, and the name of the measures for the
-    third dimension.
+    first dimension, the start (date)time (and optionally datetime-unit) for the second dimension, and the name of the
+    measures for the third dimension.
     """
     supported_dt_units = {'Y', 'D', 'h', 'm', 's'}
 
     def __init__(self,
                  tensor: Tensor,
                  group_names: Sequence[Any],
-                 start_datetimes: Sequence[np.datetime64],
+                 start_times: np.ndarray,
                  measures: Sequence[str],
-                 dt_unit: str):
+                 dt_unit: Optional[str]):
 
         if not isinstance(group_names, np.ndarray):
             group_names = np.array(group_names)
 
-        if not isinstance(start_datetimes, np.ndarray):
-            start_datetimes = np.array(start_datetimes)
-
         self.dt_unit = dt_unit
         if dt_unit in self.supported_dt_units:
-            start_datetimes = start_datetimes.astype(f"datetime64[{dt_unit}]")
+            start_times = start_times.astype(f"datetime64[{dt_unit}]")
         elif dt_unit == 'W':
-            weekdays = pd.Series(start_datetimes).dt.day_name().value_counts()
+            weekdays = set(day_of_week_num(start_times))
             if len(weekdays) > 1:
-                raise ValueError(f"For weekly data, all start_datetimes must be same day-of-week. Got:\n{weekdays}")
-            # need to keep daily due to bug: https://github.com/numpy/numpy/issues/12404
-            start_datetimes = start_datetimes.astype('datetime64[D]')
+                raise ValueError(f"For weekly data, all start_times must be same day-of-week. Got:\n{weekdays}")
+            # need to keep daily due how numpy does rounding: https://github.com/numpy/numpy/issues/12404
+            start_times = start_times.astype('datetime64[D]')
+        elif dt_unit is None:
+            if not start_times.dtype == np.int64:
+                raise ValueError("If `dt_unit` is None, expect start_times to be an array w/dtype of int64.")
         else:
             raise ValueError(f"Time-unit of {dt_unit} not currently supported; please report to package maintainer.")
 
@@ -46,7 +57,7 @@ class TimeSeriesBatch:
 
         self.tensor = tensor
         self.group_names = group_names
-        self.start_datetimes = start_datetimes
+        self.start_times = start_times
         self.measures = measures
 
     def subset(self, ind: Union[int, Sequence, slice]) -> 'TimeSeriesBatch':
@@ -54,7 +65,7 @@ class TimeSeriesBatch:
             ind = [ind]
         return self.__class__(self.tensor[ind],
                               self.group_names[ind],
-                              self.start_datetimes[ind],
+                              self.start_times[ind],
                               self.measures,
                               dt_unit=self.dt_unit)
 
@@ -74,16 +85,23 @@ class TimeSeriesBatch:
         assert tensor.shape[0] == len(self.group_names)
         return self.__class__(tensor,
                               group_names=self.group_names,
-                              start_datetimes=self.start_datetimes,
+                              start_times=self.start_times,
                               measures=self.measures,
                               dt_unit=self.dt_unit)
 
-    def datetimes(self) -> np.ndarray:
+    def times(self) -> np.ndarray:
         offset = np.arange(0, self.tensor.shape[1])
         if self.dt_unit == 'W':
             # special-case handling due to https://github.com/numpy/numpy/issues/12404
             offset *= 7
-        return self.start_datetimes[:, None] + offset
+        return self.start_times[:, None] + offset
+
+    def datetimes(self) -> np.ndarray:
+        return self.times()
+
+    @property
+    def start_datetimes(self) -> np.ndarray:
+        return self.start_times
 
     def split(self, split_frac: float) -> Tuple['TimeSeriesBatch', 'TimeSeriesBatch']:
         """
@@ -97,7 +115,7 @@ class TimeSeriesBatch:
             train_batch = self.with_new_tensor(self.tensor[:, :idx, :])
             val_batch = self.__class__(self.tensor[:, idx:, :],
                                        self.group_names,
-                                       self.datetimes()[:, idx],
+                                       self.times()[:, idx],
                                        self.measures,
                                        dt_unit=self.dt_unit)
         else:
@@ -107,25 +125,30 @@ class TimeSeriesBatch:
     def to_dataframe(self,
                      tensor: Optional[Union[Tensor, np.ndarray]] = None,
                      group_colname: str = 'group',
-                     datetime_colname: str = 'datetime'
-                     ) -> pd.DataFrame:
+                     time_colname: str = 'time'
+                     ) -> 'DataFrame':
         if tensor is None:
             tensor = self.tensor
         else:
             assert tensor.shape == self.tensor.shape, f"The `tensor` has wrong shape, expected `{self.tensor.shape}`."
 
-        return self.tensor_to_dataframe(tensor=tensor, datetimes=self.datetimes(), group_names=self.group_names,
-                                        group_colname=group_colname, datetime_colname=datetime_colname,
+        return self.tensor_to_dataframe(tensor=tensor, times=self.times(), group_names=self.group_names,
+                                        group_colname=group_colname, time_colname=time_colname,
                                         measures=self.measures)
 
     @classmethod
     def tensor_to_dataframe(cls,
                             tensor: Tensor,
-                            datetimes: np.ndarray,
+                            times: np.ndarray,
                             group_names: Sequence,
                             group_colname: str,
-                            datetime_colname: str,
-                            measures: Sequence[str]) -> pd.DataFrame:
+                            time_colname: str,
+                            measures: Sequence[str]) -> 'DataFrame':
+        try:
+            import pandas as pd
+        except ImportError:
+            raise RuntimeError("Must install `pandas` for `tensor_to_dataframe` to work.")
+
         dfs = []
         for g, group_name in enumerate(group_names):
             # get values, don't store trailing nans:
@@ -138,38 +161,38 @@ class TimeSeriesBatch:
             # convert to dataframe:
             df = pd.DataFrame(data=values[:end_idx, :], columns=measures)
             df[group_colname] = group_name
-            df[datetime_colname] = datetimes[g, 0:len(df.index)]
+            df[time_colname] = times[g, 0:len(df.index)]
             dfs.append(df)
 
         return pd.concat(dfs)
 
     @classmethod
     def from_dataframe(cls,
-                       dataframe: pd.DataFrame,
+                       dataframe: 'DataFrame',
                        group_colname: str,
-                       datetime_colname: str,
+                       time_colname: str,
                        measure_colnames: Sequence[str],
                        dt_unit: str,
                        missing: Optional[float] = None) -> 'TimeSeriesBatch':
         assert isinstance(group_colname, str)
-        assert isinstance(datetime_colname, str)
+        assert isinstance(time_colname, str)
         assert isinstance(measure_colnames, (list, tuple))
         assert len(measure_colnames) == len(set(measure_colnames))
 
-        # sort by datetime:
-        dataframe = dataframe.sort_values(datetime_colname)
+        # sort by time:
+        dataframe = dataframe.sort_values(time_colname)
 
         # first pass for info:
-        arrays, time_idxs, group_names, start_datetimes = [], [], [], []
+        arrays, time_idxs, group_names, start_times = [], [], [], []
         for g, df in dataframe.groupby(group_colname):
             # group-names:
             group_names.append(g)
 
             # times:
-            times = df[datetime_colname].values
+            times = df[time_colname].values
             assert len(times) == len(set(times)), f"Group {g} has duplicate times"
             min_time = times[0]
-            start_datetimes.append(min_time)
+            start_times.append(min_time)
             time_idx = (times - min_time).astype(f'timedelta64[{dt_unit}]').view('int64')
             time_idxs.append(time_idx)
 
@@ -188,7 +211,7 @@ class TimeSeriesBatch:
 
         return cls(tensor=tens,
                    group_names=group_names,
-                   start_datetimes=start_datetimes,
+                   start_times=start_times,
                    measures=measure_colnames,
                    dt_unit=dt_unit)
 
@@ -197,6 +220,9 @@ class TimeSeriesBatch:
         Upsample or downsample this batch, so that it's mapped onto a new time-unit (e.g., from 'D' to 'h' by taking the mean
         , or 'h' to 'D' by repeating).
         """
+        if self.dt_unit is None:
+            raise ValueError("This batch doesn't have a dt-unit, so can't up/downsample.")
+
         num_groups, num_timesteps, num_measures = self.tensor.shape
 
         if new_dt_unit not in self.supported_dt_units:
@@ -208,7 +234,7 @@ class TimeSeriesBatch:
             warn("New time-unit is same as old")
             new_tens = self.tensor.clone()
         elif new_over_old > 1:
-            ids_all = self.datetimes().astype(f'datetime64[{new_dt_unit}]').astype('int64')
+            ids_all = self.times().astype(f'datetime64[{new_dt_unit}]').astype('int64')
             ids_all = torch.from_numpy(ids_all - np.min(ids_all, 1, keepdims=True))
 
             new_tens_items = []
@@ -235,10 +261,10 @@ class TimeSeriesBatch:
                 raise ValueError("If old time-unit > new time-unit, then ratio must be an integer.")
             new_tens = self.tensor[:, np.repeat(np.arange(0, num_timesteps), int(old_over_new)), :].clone()
 
-        new_start_datetimes = self.start_datetimes.astype(f'datetime64[{new_dt_unit}]')
+        new_start_times = self.start_times.astype(f'datetime64[{new_dt_unit}]')
 
         return self.__class__(tensor=new_tens,
                               group_names=self.group_names,
-                              start_datetimes=new_start_datetimes,
+                              start_times=new_start_times,
                               measures=self.measures,
                               dt_unit=new_dt_unit)
