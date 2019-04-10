@@ -10,6 +10,6 @@ setup(name='torch_kalman',
       license='MIT',
       packages=[p for p in find_packages() if 'torch_kalman' in p],
       zip_safe=False,
-      install_requires=['torch>=1.0.0', 'numpy>=1.14.2', 'tqdm'],
+      install_requires=['torch>=1.0', 'numpy>=1.4', 'tqdm>=4.0'],
       test_suite='nose.collector',
       tests_require=['nose'])
