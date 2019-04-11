@@ -1,3 +1,4 @@
+import datetime
 from typing import Sequence, Any, Optional, Union, Tuple
 from warnings import warn
 
@@ -30,12 +31,20 @@ class TimeSeriesBatch:
     def __init__(self,
                  tensor: Tensor,
                  group_names: Sequence[Any],
-                 start_times: np.ndarray,
+                 start_times: Union[np.ndarray, Sequence],
                  measures: Sequence[str],
                  dt_unit: Optional[str]):
 
         if not isinstance(group_names, np.ndarray):
             group_names = np.array(group_names)
+
+        if not isinstance(start_times, np.ndarray):
+            if isinstance(start_times[0], int):
+                start_times = np.array(start_times, dtype=np.int64)
+            elif isinstance(start_times[0], datetime.datetime):
+                start_times = np.array(start_times, dtype='datetime64')
+            else:
+                raise ValueError("Tried to coerce `start_times` to an array; but first element is neither datetime nor int.")
 
         self.dt_unit = dt_unit
         if dt_unit in self.supported_dt_units:
@@ -105,7 +114,7 @@ class TimeSeriesBatch:
 
     def split(self, split_frac: float) -> Tuple['TimeSeriesBatch', 'TimeSeriesBatch']:
         """
-        Split data along a pre-post train/validation.
+        Split data along a pre-post (typically: train/validation).
         """
         assert 0. < split_frac < 1.
 
