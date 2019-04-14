@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Tuple, Sequence, Optional, TypeVar, Dict
+from typing import Tuple, Sequence, Optional
 
 import torch
 
@@ -9,10 +9,7 @@ from tqdm import tqdm
 
 from torch_kalman.design import Design
 from torch_kalman.design.for_batch import DesignForBatch
-from torch_kalman.state_belief.utils import bmat_idx
 
-if False:
-    from torch_kalman.state_belief.over_time import StateBeliefOverTime
 from torch_kalman.utils import identity
 
 
