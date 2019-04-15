@@ -34,7 +34,3 @@ class LocalLevel(Process):
         if self.decay is not None:
             p['decay'] = self.decay.parameter
         return p
-
-    @property
-    def dynamic_state_elements(self) -> Sequence[str]:
-        return self.state_elements

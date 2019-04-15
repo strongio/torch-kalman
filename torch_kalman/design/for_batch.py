@@ -5,9 +5,6 @@ from torch import Tensor
 
 from torch_kalman.covariance import Covariance
 
-if False:
-    from torch_kalman.design import Design  # for type-hinting w/o circular ref
-
 from torch_kalman.process.for_batch import SeqOfTensors, ProcessForBatch
 
 
@@ -27,34 +24,26 @@ class DesignForBatch:
         self.process_idx = design.process_idx
         self.process_start_idx = {process_id: idx.start for process_id, idx in self.process_idx.items()}
 
-        # initial mean/cov:
-        self.initial_mean = torch.zeros(num_groups, design.state_size, device=self.device)
-        init_cov = Covariance.from_log_cholesky(log_diag=design.init_cholesky_log_diag,
-                                                off_diag=design.init_cholesky_off_diag,
-                                                device=self.device)
-        self.initial_covariance = init_cov.expand(num_groups, -1, -1).clone()
-
         # create processes for batch:
         assert set(process_kwargs.keys()).issubset(design.processes.keys())
         assert isinstance(design.processes, OrderedDict)  # below assumes key ordering
         self.processes: Dict[str, ProcessForBatch] = OrderedDict()
+        self.process_kwargs = {}
         for process_name, process in design.processes.items():
-            this_proc_kwargs = process_kwargs.get(process_name, {})
+            self.process_kwargs[process_name] = process_kwargs.get(process_name, {})
 
             # assign process:
             try:
                 self.processes[process_name] = process.for_batch(num_groups=num_groups,
                                                                  num_timesteps=num_timesteps,
-                                                                 **this_proc_kwargs)
+                                                                 **self.process_kwargs[process_name])
             except TypeError as e:
                 # if missing kwargs, useful to know which process in the traceback
-                raise TypeError("`{pn}.for_batch` raised the following error:\n{e}".format(pn=process_name, e=e))
+                raise TypeError(f"Failed to create `{process}.for_batch`") from e
 
-            # assign initial mean:
-            pslice = self.process_idx[process_name]
-            self.initial_mean[:, pslice] = process.initial_state_means_for_batch(design.init_state_mean_params[pslice],
-                                                                                 num_groups=num_groups,
-                                                                                 **this_proc_kwargs)
+        # initial mean/cov:
+        self.initial_mean = self._build_init_mean()
+        self.initial_covariance = self._build_init_covariance()
 
         # measures:
         self.measure_idx = {measure_id: i for i, measure_id in enumerate(design.measures)}
@@ -148,20 +137,7 @@ class DesignForBatch:
 
     # process covariance ----
     def _Q_init(self) -> None:
-        partial_proc_cov = Covariance.from_log_cholesky(self.design.process_cholesky_log_diag,
-                                                        self.design.process_cholesky_off_diag,
-                                                        device=self.device)
-
-        partial_mat_dimnames = list(self.design.all_dynamic_state_elements())
-        full_mat_dimnames = list(self.design.all_state_elements())
-
-        # move from partial cov to full w/block-diag:
-        Q = torch.zeros(size=(self.num_groups, self.state_size, self.state_size), device=self.device)
-        for r in range(len(partial_mat_dimnames)):
-            for c in range(len(partial_mat_dimnames)):
-                to_r = full_mat_dimnames.index(partial_mat_dimnames[r])
-                to_c = full_mat_dimnames.index(partial_mat_dimnames[c])
-                Q[:, to_r, to_c] = partial_proc_cov[r, c]
+        Q = self.design.process_covariance.create(leading_dims=(self.num_groups,))
 
         # process variances are scaled by the variances of the measurements they are associated with:
         measure_log_stds = self.design.measure_scaling().diag().sqrt().log()
@@ -222,3 +198,17 @@ class DesignForBatch:
 
     def R(self, t: int) -> Tensor:
         return self._R_dynamic(base=self._R_base, t=t, clone=None)
+
+    # initial state belief ---
+    def _build_init_mean(self) -> Tensor:
+        init_mean = torch.zeros(self.num_groups, self.state_size, device=self.device)
+        for process_name, process in self.design.processes:
+            # assign initial mean:
+            pslice = self.process_idx[process_name]
+            init_mean[:, pslice] = process.initial_state_means_for_batch(self.design.init_state_mean_params[pslice],
+                                                                         num_groups=self.num_groups,
+                                                                         **self.process_kwargs[process_name])
+        return init_mean
+
+    def _build_init_covariance(self) -> Tensor:
+        return self.design.init_covariance.create(leading_dims=(self.num_groups,))

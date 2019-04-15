@@ -22,6 +22,7 @@ class NN(Process):
                  state_dim: int,
                  nn_module: torch.nn.Module,
                  process_variance: bool = False,
+                 init_variance: bool = True,
                  add_module_params_to_process: bool = True,
                  inv_link: Optional[Callable] = None):
 
@@ -32,6 +33,10 @@ class NN(Process):
         self.nn_module = nn_module
 
         #
+        self._has_process_variance = process_variance
+        self._has_init_variance = init_variance
+
+        #
         pad_n = len(str(state_dim))
         super().__init__(id=id,
                          state_elements=[str(i).rjust(pad_n, "0") for i in range(state_dim)])
@@ -39,14 +44,13 @@ class NN(Process):
         for se in self.state_elements:
             self._set_transition(from_element=se, to_element=se, value=1.0)
 
-        # process covariance:
-        self._dynamic_state_elements = []
-        if process_variance:
-            self._dynamic_state_elements = self.state_elements
-
     @property
     def dynamic_state_elements(self):
-        return self._dynamic_state_elements
+        return self.state_elements if self._has_process_variance else []
+
+    @property
+    def fixed_state_elements(self):
+        return [] if self._has_init_variance else self.state_elements
 
     def parameters(self) -> Generator[Parameter, None, None]:
         if self.add_module_params_to_process:

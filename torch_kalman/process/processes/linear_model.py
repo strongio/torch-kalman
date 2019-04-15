@@ -17,14 +17,14 @@ class LinearModel(Process):
 
         self.inv_link = inv_link
 
-        super().__init__(id=id, state_elements=covariates)
-        for cov in covariates:
-            self._set_transition(from_element=cov, to_element=cov, value=1.0)
-
         # process covariance:
         self._dynamic_state_elements = []
         if process_variance:
             self._dynamic_state_elements = covariates if isinstance(process_variance, bool) else process_variance
+
+        super().__init__(id=id, state_elements=covariates)
+        for cov in covariates:
+            self._set_transition(from_element=cov, to_element=cov, value=1.0)
 
     @property
     def dynamic_state_elements(self) -> Sequence[str]:

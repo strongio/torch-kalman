@@ -1,7 +1,7 @@
-from typing import Generator, Tuple, Optional, Union, Sequence, Dict, List
+from typing import Tuple, Optional, Union, Sequence, Dict, List
 
 from torch import Tensor
-from torch.nn import Parameter, ParameterDict
+from torch.nn import ParameterDict
 
 from torch_kalman.process import Process
 
