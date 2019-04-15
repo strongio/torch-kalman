@@ -85,7 +85,7 @@ class Design:
         self.init_covariance = PartialCovariance(full_dim_names=self.all_state_elements(),
                                                  partial_dim_names=self.all_unfixed_state_elements(),
                                                  cov_kwargs={'log_diag': self.init_cholesky_log_diag,
-                                                             'off_diag': self.process_cholesky_off_diag,
+                                                             'off_diag': self.init_cholesky_off_diag,
                                                              'device': self.device})
 
         # process cov:
