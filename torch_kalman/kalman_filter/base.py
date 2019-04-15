@@ -1,4 +1,4 @@
-from typing import TypeVar, Optional, Callable, List, Union, Tuple, Sequence, Any
+from typing import Type, Optional, Callable, List, Union, Tuple, Sequence, Any
 
 import torch
 from torch import Tensor
@@ -14,7 +14,7 @@ from torch_kalman.utils import identity
 
 
 class KalmanFilter(torch.nn.Module):
-    family: TypeVar(StateBelief) = Gaussian
+    family: Type[StateBelief] = Gaussian
 
     def __init__(self,
                  measures: Sequence[str],
