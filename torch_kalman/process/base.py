@@ -134,3 +134,6 @@ class Process:
         return ProcessForBatch(process=self,
                                num_groups=num_groups,
                                num_timesteps=num_timesteps)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(id={self.id.__repr__()})"
