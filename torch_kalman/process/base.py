@@ -52,6 +52,9 @@ class Process:
 
         assert state_element in self.state_elements
 
+        if (inv_link is not None) and (not callable(inv_link)):
+            raise ValueError("`inv_link` must be callable (or None).")
+
         value = self._check_design_mat_assignment(value)
 
         key = (measure, state_element)
@@ -77,6 +80,9 @@ class Process:
        """
         assert from_element in self.state_elements
         assert to_element in self.state_elements
+
+        if (inv_link is not None) and (not callable(inv_link)):
+            raise ValueError("`inv_link` must be callable (or None).")
 
         value = self._check_design_mat_assignment(value)
 
