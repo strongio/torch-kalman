@@ -95,5 +95,7 @@ class NN(Process):
 def _module_to_param_dict(module: torch.nn.Module) -> ParameterDict:
     out = torch.nn.ParameterDict(module._parameters)
     if len(module._modules) == 0:
-        return out.update(module.named_parameters())
-    return out.update({nm: _module_to_param_dict(sub_module) for nm, sub_module in module._modules.items()})
+        out.update(module.named_parameters())
+        return out
+    out.update({nm: _module_to_param_dict(sub_module) for nm, sub_module in module._modules.items()})
+    return out
