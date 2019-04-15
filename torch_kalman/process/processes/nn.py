@@ -52,7 +52,10 @@ class NN(Process):
     def param_dict(self) -> ParameterDict:
         p = ParameterDict()
         if self.add_module_params_to_process:
-            p['module'] = _module_to_param_dict(self.nn_module)
+            for nm, param in self.nn_module.named_parameters():
+                nm: str = nm
+                nm = 'module_' + nm.replace('.', '_')
+                p[nm] = param
         return p
 
     # noinspection PyMethodOverriding
@@ -90,12 +93,3 @@ class NN(Process):
         for se in self.state_elements:
             self._set_measure(measure=measure, state_element=se, value=0., inv_link=self.inv_link)
         return self
-
-
-def _module_to_param_dict(module: torch.nn.Module) -> ParameterDict:
-    out = torch.nn.ParameterDict(module._parameters)
-    if len(module._modules) == 0:
-        out.update(module.named_parameters())
-        return out
-    out.update({nm: _module_to_param_dict(sub_module) for nm, sub_module in module._modules.items()})
-    return out
