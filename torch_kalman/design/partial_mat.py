@@ -26,13 +26,16 @@ class PartialCovariance:
     def create(self, leading_dims: Sequence[int]) -> torch.Tensor:
         rank = len(self.full_dim_names)
         partial_rank = len(self.partial_dim_names)
+        cov = torch.zeros(size=tuple(leading_dims) + (rank, rank), device=self.cov_kwargs.get('device', None))
+
+        if partial_rank == 0:
+            return cov
 
         partial_init_cov = self._create_partial_cov()
         if partial_init_cov.shape[-1] != partial_rank:
             raise RuntimeError(f"The cov_kwargs passed to {self.__class__.__name__} created a matrix with shape "
                                f"{partial_init_cov.shape}, but len(partial_dim_names) == {partial_rank}.")
 
-        cov = torch.zeros(size=tuple(leading_dims) + (rank, rank), device=self.cov_kwargs.get('device', None))
         for r in range(partial_rank):
             for c in range(partial_rank):
                 to_r = self.full_dim_names.index(self.partial_dim_names[r])

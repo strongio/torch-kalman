@@ -1,9 +1,9 @@
+import inspect
+import re
 from collections import OrderedDict
-from typing import Sequence, Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List, Dict, Union
 import torch
 from torch import Tensor
-
-from torch_kalman.covariance import Covariance
 
 from torch_kalman.process.for_batch import SeqOfTensors, ProcessForBatch
 
@@ -30,29 +30,32 @@ class DesignForBatch:
         self.state_size = design.state_size
         self.measure_size = design.measure_size
 
+        # measures:
+        self.measure_idx = {measure_id: i for i, measure_id in enumerate(design.measures)}
+
         # create processes for batch:
         assert set(process_kwargs.keys()).issubset(design.processes.keys())
         assert isinstance(design.processes, OrderedDict)  # below assumes key ordering
         self.processes: Dict[str, ProcessForBatch] = OrderedDict()
         self.process_kwargs = {}
         for process_name, process in design.processes.items():
-            self.process_kwargs[process_name] = process_kwargs.get(process_name, {})
-
-            # assign process:
             try:
+                self.process_kwargs[process_name] = self._prepare_process_kwargs(process,
+                                                                                 process_kwargs.get(process_name, {}))
                 self.processes[process_name] = process.for_batch(num_groups=num_groups,
                                                                  num_timesteps=num_timesteps,
                                                                  **self.process_kwargs[process_name])
-            except TypeError as e:
-                # if missing kwargs, useful to know which process in the traceback
-                raise TypeError(f"Failed to create `{process}.for_batch`") from e
+            except (TypeError, ValueError) as e:
+                msg = f"Failed to create `{process}.for_batch` (see traceback above)."
+                if ('missing' in e.args[0]) and (process_name not in process_kwargs.keys()):
+                    raise TypeError(f"{msg} Must pass `process_kwargs`, with the keys being process-names and the values "
+                                    f"being the kwargs.") from e
+                else:
+                    raise RuntimeError(msg) from e
 
         # initial mean/cov:
         self.initial_mean = self._build_init_mean()
         self.initial_covariance = self._build_init_covariance()
-
-        # measures:
-        self.measure_idx = {measure_id: i for i, measure_id in enumerate(design.measures)}
 
         # transitions:
         self._F_base: Tensor = None
@@ -212,3 +215,18 @@ class DesignForBatch:
 
     def _build_init_covariance(self) -> Tensor:
         return self.design.init_covariance.create(leading_dims=(self.num_groups,))
+
+    @staticmethod
+    def _prepare_process_kwargs(process, kwargs: Union[Dict, object]) -> Dict:
+        if isinstance(kwargs, dict):
+            return kwargs
+        params = [param for pname, param in inspect.signature(process.for_batch).parameters.items()
+                  if pname not in ('num_groups', 'num_timesteps')]
+        if len(params) == 1:
+            if (params[0].annotation == inspect.Parameter.empty) or isinstance(kwargs, params[0].annotation):
+                return {params[0].name: kwargs}
+            else:
+                raise ValueError(f"`{kwargs}` not of expected type for `{process}.for_batch`. "
+                                 f"Expected `{params[0].annotation}`.")
+        else:
+            raise ValueError(f"{process}.for_batch takes multiple kwargs, but got {kwargs}.")

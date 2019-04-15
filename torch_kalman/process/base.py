@@ -1,4 +1,4 @@
-from typing import Generator, Sequence, Union, Set, Callable, Optional, Dict, Tuple, List
+from typing import Sequence, Union, Set, Callable, Dict, Tuple
 
 import torch
 from torch import Tensor
@@ -24,6 +24,11 @@ class Process:
         self.transitions_ilinks: Dict[Tuple[str, str], Union[Callable, None]] = {}
 
         self._device: torch.device = None
+
+        if not set(self.dynamic_state_elements).isdisjoint(self.fixed_state_elements):
+            raise ValueError("Class has been misconfigured -- some fixed state-elements are also dynamic-state-elements.")
+
+        self._allow_single_kwarg = False
 
     def param_dict(self) -> torch.nn.ParameterDict:
         raise NotImplementedError
@@ -89,19 +94,27 @@ class Process:
         """
         state elements with process-variance
         """
-        raise NotImplementedError
+        return self.state_elements
+
+    @property
+    def fixed_state_elements(self) -> Sequence[str]:
+        """
+        state elements with neither process-variance nor initial-variance -- i.e., they are fixed at their initial mean
+        """
+        return []
 
     @staticmethod
     def _check_design_mat_assignment(value: DesignMatAssignment) -> Union[Tensor, Callable]:
         if isinstance(value, float):
             value = torch.Tensor([value])
         elif isinstance(value, Tensor):
-            assert value.numel() == 1
+            if value.numel() != 1:
+                raise ValueError("Design-mat assignment should have only one-element.")
             if value.grad_fn:
                 raise ValueError("If `value` is the result of computations that require_grad, need to wrap those "
                                  "computations in a function and pass that for `value` instead.")
-        else:
-            assert callable(value), "`value` must be float, tensor, or a function that produces a tensor"
+        elif not callable(value):
+            raise ValueError("`value` must be float, tensor, or a function that produces a tensor")
         return value
 
     @property

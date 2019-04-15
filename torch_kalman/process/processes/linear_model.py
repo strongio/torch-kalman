@@ -13,7 +13,10 @@ class LinearModel(Process):
                  id: str,
                  covariates: Sequence[str],
                  process_variance: Union[bool, Sequence[str]] = False,
+                 init_variance: Union[bool, Sequence[str]] = True,
                  inv_link: Optional[Callable] = None):
+        if isinstance(covariates, str):
+            raise ValueError("`covariates` should be sequence of strings, not single string")
 
         self.inv_link = inv_link
 
@@ -22,7 +25,13 @@ class LinearModel(Process):
         if process_variance:
             self._dynamic_state_elements = covariates if isinstance(process_variance, bool) else process_variance
 
+        # initial covariance:
+        self._fixed_state_elements = []
+        if init_variance:
+            self._fixed_state_elements = covariates if isinstance(init_variance, bool) else init_variance
+
         super().__init__(id=id, state_elements=covariates)
+
         for cov in covariates:
             self._set_transition(from_element=cov, to_element=cov, value=1.0)
 
@@ -38,7 +47,6 @@ class LinearModel(Process):
             self._set_measure(measure=measure, state_element=cov, value=0., inv_link=self.inv_link)
         return self
 
-    # noinspection PyMethodOverriding
     def for_batch(self, num_groups: int, num_timesteps: int, lm_input: Tensor) -> ProcessForBatch:
         for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
 
@@ -49,11 +57,16 @@ class LinearModel(Process):
         elif torch.isnan(lm_input).any():
             raise ValueError(f"Process {self.id} received 'lm_input' that has nans.")
 
-        num_states = len(self.state_elements)
+        if lm_input.ndimension() != 3:
+            raise ValueError(f"`lm_input` should have three dimensions, but got {lm_input.shape}.")
+
         mm_num_groups, mm_num_ts, mm_num_covs = lm_input.shape
-        assert mm_num_groups == num_groups, f"Batch-size is {num_groups}, but lm_input.shape[0] is {mm_num_groups}."
-        assert mm_num_ts == num_timesteps, f"Batch num. timesteps is {num_timesteps}, but lm_input.shape[1] is {mm_num_ts}."
-        assert mm_num_covs == num_states, f"Expected {num_states} covariates, but lm_input.shape[2] = {mm_num_covs}."
+        if mm_num_groups != num_groups:
+            raise ValueError(f"Batch-size is {num_groups}, but lm_input.shape[0] is {mm_num_groups}.")
+        if mm_num_ts != num_timesteps:
+            raise ValueError(f"Batch num. timesteps is {num_timesteps}, but lm_input.shape[1] is {mm_num_ts}.")
+        if mm_num_covs != len(self.state_elements):
+            raise ValueError(f"Expected {len(self.state_elements)} covariates, but lm_input.shape[2] = {mm_num_covs}.")
 
         for measure in self.measures:
             for i, cov in enumerate(self.state_elements):

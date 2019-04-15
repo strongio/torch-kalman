@@ -6,9 +6,6 @@ from torch import Tensor
 
 from torch_kalman.utils import split_flat
 
-if False:
-    from torch_kalman.process import Process  # for type-hinting w/o circular ref
-
 """
 Each timepoint has a separate design-mat. To assign to the design-mat, you can either pass:
 - a scalar tensor, that will be broadcasted to the number of groups

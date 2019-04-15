@@ -1,14 +1,11 @@
-from typing import Generator, Tuple, Optional, Callable, Dict
+from typing import Generator, Optional, Callable
 
 import torch
 
 from torch import Tensor
 from torch.nn import Parameter, ParameterDict
 
-from torch_kalman.covariance import Covariance
 from torch_kalman.process import Process
-from torch_kalman.process.for_batch import ProcessForBatch
-from torch_kalman.utils import itervalues_sorted_keys
 
 
 class NN(Process):
@@ -62,7 +59,6 @@ class NN(Process):
             p.update(self.nn_module.named_parameters())
         return p
 
-    # noinspection PyMethodOverriding
     def for_batch(self, num_groups: int, num_timesteps: int, nn_input: Tensor):
         for_batch = super().for_batch(num_groups, num_timesteps)
 
