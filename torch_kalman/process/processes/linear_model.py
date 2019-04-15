@@ -33,9 +33,10 @@ class LinearModel(Process):
     def param_dict(self) -> torch.nn.ParameterDict:
         return torch.nn.ParameterDict()  # no parameters
 
-    def add_measure(self, measure: str):
+    def add_measure(self, measure: str) -> 'LinearModel':
         for cov in self.state_elements:
             self._set_measure(measure=measure, state_element=cov, value=0., inv_link=self.inv_link)
+        return self
 
     # noinspection PyMethodOverriding
     def for_batch(self, num_groups: int, num_timesteps: int, lm_input: Tensor) -> ProcessForBatch:

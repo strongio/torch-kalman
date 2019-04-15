@@ -64,8 +64,9 @@ class Season(Process):
         else:
             self.decay = None
 
-    def add_measure(self, measure: str):
+    def add_measure(self, measure: str) -> 'Season':
         self._set_measure(measure=measure, state_element='measured', value=1.0)
+        return self
 
     def param_dict(self) -> ParameterDict:
         p = ParameterDict()

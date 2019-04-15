@@ -25,8 +25,9 @@ class LocalLevel(Process):
         else:
             self._set_transition(from_element='position', to_element='position', value=1.)
 
-    def add_measure(self, measure: str):
+    def add_measure(self, measure: str) -> 'LocalLevel':
         self._set_measure(measure=measure, state_element='position', value=1.0)
+        return self
 
     def param_dict(self) -> torch.nn.ParameterDict:
         p = torch.nn.ParameterDict()

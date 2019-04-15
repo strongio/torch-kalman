@@ -89,6 +89,7 @@ class NN(Process):
 
         return for_batch
 
-    def add_measure(self, measure: str):
+    def add_measure(self, measure: str) -> 'NN':
         for se in self.state_elements:
             self._set_measure(measure=measure, state_element=se, value=0., inv_link=self.inv_link)
+        return self

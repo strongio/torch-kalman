@@ -66,7 +66,7 @@ class FourierSeason(Process):
     def dynamic_state_elements(self) -> Sequence[str]:
         raise NotImplementedError
 
-    def add_measure(self, measure: str):
+    def add_measure(self, measure: str) -> 'FourierSeason':
         raise NotImplementedError
 
 
@@ -112,8 +112,9 @@ class FourierSeasonDynamic(FourierSeason):
     def dynamic_state_elements(self) -> Sequence[str]:
         return self.state_elements[:-1]
 
-    def add_measure(self, measure: str):
+    def add_measure(self, measure: str) -> 'FourierSeasonDynamic':
         self._set_measure(measure=measure, state_element='position', value=1.0)
+        return self
 
 
 class FourierSeasonFixed(FourierSeason):
@@ -145,9 +146,10 @@ class FourierSeasonFixed(FourierSeason):
         return []
 
     # noinspection PyMethodOverriding
-    def add_measure(self, measure: str) -> None:
+    def add_measure(self, measure: str) -> 'FourierSeasonFixed':
         for state_element in self.state_elements:
             self._set_measure(measure=measure, state_element=state_element, value=0.)
+        return self
 
 
 # noinspection SpellCheckingInspection
@@ -194,9 +196,10 @@ class TBATS(FourierSeason):
         return 2. * np.pi * j / self.seasonal_period
 
     # noinspection PyMethodOverriding
-    def add_measure(self, measure: str):
+    def add_measure(self, measure: str) -> 'TBATS':
         for se in self.measured_state_elements:
             self._set_measure(measure=measure, state_element=se, value=1.0)
+        return self
 
     @property
     def dynamic_state_elements(self) -> Sequence[str]:

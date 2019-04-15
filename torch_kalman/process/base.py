@@ -29,7 +29,7 @@ class Process:
         raise NotImplementedError
 
     # measures ---
-    def add_measure(self, measure: str):
+    def add_measure(self, measure: str) -> 'Process':
         """
         Calls 'set_measure' with default state_element, value
         """

@@ -45,8 +45,9 @@ class LocalTrend(Process):
         p.update({name: transition.parameter for name, transition in self.decayed_transitions.items()})
         return p
 
-    def add_measure(self, measure: str):
+    def add_measure(self, measure: str) -> 'LocalTrend':
         self._set_measure(measure=measure, state_element='position', value=1.0)
+        return self
 
     @property
     def dynamic_state_elements(self) -> Sequence[str]:
