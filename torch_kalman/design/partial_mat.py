@@ -10,13 +10,14 @@ class PartialCovariance:
                  full_dim_names: Iterable,
                  partial_dim_names: Iterable,
                  cov_kwargs: Dict):
-        names_in_partial_but_not_full = set(partial_dim_names) - set(full_dim_names)
+        self.full_dim_names = list(full_dim_names)
+        self.partial_dim_names = list(partial_dim_names)
+
+        names_in_partial_but_not_full = set(self.partial_dim_names) - set(self.full_dim_names)
         if len(names_in_partial_but_not_full):
             raise ValueError(f"The following are present in `partial_dim_names` but not `full_dim_names`:"
                              f"\n{names_in_partial_but_not_full}")
 
-        self.full_dim_names = list(full_dim_names)
-        self.partial_dim_names = list(partial_dim_names)
         self.cov_kwargs = cov_kwargs
 
     def _create_partial_cov(self) -> torch.Tensor:
@@ -28,8 +29,8 @@ class PartialCovariance:
 
         partial_init_cov = self._create_partial_cov()
         if partial_init_cov.shape[-1] != partial_rank:
-            raise RuntimeError(f"The cov_kwargs passed to {self.__class__.__name__} do not create a matrix whos last "
-                               f"dim == len(partial_dim_names).")
+            raise RuntimeError(f"The cov_kwargs passed to {self.__class__.__name__} created a matrix with shape "
+                               f"{partial_init_cov.shape}, but len(partial_dim_names) == {partial_rank}.")
 
         cov = torch.zeros(size=tuple(leading_dims) + (rank, rank), device=self.cov_kwargs.get('device', None))
         for r in range(partial_rank):

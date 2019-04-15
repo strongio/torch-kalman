@@ -24,6 +24,12 @@ class DesignForBatch:
         self.process_idx = design.process_idx
         self.process_start_idx = {process_id: idx.start for process_id, idx in self.process_idx.items()}
 
+        # size:
+        self.num_groups = num_groups
+        self.num_timesteps = num_timesteps
+        self.state_size = design.state_size
+        self.measure_size = design.measure_size
+
         # create processes for batch:
         assert set(process_kwargs.keys()).issubset(design.processes.keys())
         assert isinstance(design.processes, OrderedDict)  # below assumes key ordering
@@ -47,12 +53,6 @@ class DesignForBatch:
 
         # measures:
         self.measure_idx = {measure_id: i for i, measure_id in enumerate(design.measures)}
-
-        # size:
-        self.num_groups = num_groups
-        self.num_timesteps = num_timesteps
-        self.state_size = design.state_size
-        self.measure_size = design.measure_size
 
         # transitions:
         self._F_base: Tensor = None
@@ -202,7 +202,7 @@ class DesignForBatch:
     # initial state belief ---
     def _build_init_mean(self) -> Tensor:
         init_mean = torch.zeros(self.num_groups, self.state_size, device=self.device)
-        for process_name, process in self.design.processes:
+        for process_name, process in self.design.processes.items():
             # assign initial mean:
             pslice = self.process_idx[process_name]
             init_mean[:, pslice] = process.initial_state_means_for_batch(self.design.init_state_mean_params[pslice],

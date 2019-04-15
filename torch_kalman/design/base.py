@@ -85,7 +85,8 @@ class Design:
         self.init_covariance = PartialCovariance(full_dim_names=self.all_state_elements(),
                                                  partial_dim_names=self.all_unfixed_state_elements(),
                                                  cov_kwargs={'log_diag': self.init_cholesky_log_diag,
-                                                             'off_diag': self.init_cholesky_log_diag})
+                                                             'off_diag': self.init_cholesky_log_diag,
+                                                             'device': self.device})
 
         # process cov:
         num_dyn_states = len(list(self.all_dynamic_state_elements()))
@@ -93,9 +94,10 @@ class Design:
         self.process_cholesky_log_diag = Parameter(torch.zeros(num_dyn_states, device=self.device))
         self.process_cholesky_off_diag = Parameter(torch.zeros(ds_upper_tri, device=self.device))
         self.process_covariance = PartialCovariance(full_dim_names=self.all_state_elements(),
-                                                    partial_dim_names=self.all_unfixed_state_elements(),
+                                                    partial_dim_names=self.all_dynamic_state_elements(),
                                                     cov_kwargs={'log_diag': self.process_cholesky_log_diag,
-                                                                'off_diag': self.process_cholesky_off_diag})
+                                                                'off_diag': self.process_cholesky_off_diag,
+                                                                'device': self.device})
 
     def measure_scaling(self) -> Tensor:
         return Covariance.from_log_cholesky(self.measure_cholesky_log_diag,
