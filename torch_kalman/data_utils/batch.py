@@ -39,12 +39,13 @@ class TimeSeriesBatch:
             group_names = np.array(group_names)
 
         if not isinstance(start_times, np.ndarray):
-            if isinstance(start_times[0], int):
+            if isinstance(start_times[0], (int, np.integer)):
                 start_times = np.array(start_times, dtype=np.int64)
             elif isinstance(start_times[0], datetime.datetime):
                 start_times = np.array(start_times, dtype='datetime64')
             else:
-                raise ValueError("Tried to coerce `start_times` to an array; but first element is neither datetime nor int.")
+                raise ValueError(f"Tried to coerce `start_times` to an array; but first element ({start_times[0]}) is "
+                                 f"neither datetime nor int.")
 
         self.dt_unit = dt_unit
         if dt_unit in self.supported_dt_units:
@@ -183,7 +184,7 @@ class TimeSeriesBatch:
                        group_colname: str,
                        time_colname: str,
                        measure_colnames: Sequence[str],
-                       dt_unit: str,
+                       dt_unit: Optional[str],
                        missing: Optional[float] = None) -> 'TimeSeriesBatch':
         assert isinstance(group_colname, str)
         assert isinstance(time_colname, str)
@@ -192,6 +193,10 @@ class TimeSeriesBatch:
 
         # sort by time:
         dataframe = dataframe.sort_values(time_colname)
+
+        for measure_colname in measure_colnames:
+            if measure_colname not in dataframe.columns:
+                raise ValueError(f"'{measure_colname}' not in dataframe.columns:\n{dataframe.columns}'")
 
         # first pass for info:
         arrays, time_idxs, group_names, start_times = [], [], [], []
@@ -204,7 +209,10 @@ class TimeSeriesBatch:
             assert len(times) == len(set(times)), f"Group {g} has duplicate times"
             min_time = times[0]
             start_times.append(min_time)
-            time_idx = (times - min_time).astype(f'timedelta64[{dt_unit}]').view('int64')
+            if dt_unit is None:
+                time_idx = (times - min_time).astype('int64')
+            else:
+                time_idx = (times - min_time).astype(f'timedelta64[{dt_unit}]').view('int64')
             time_idxs.append(time_idx)
 
             # values:

@@ -1,4 +1,4 @@
-from typing import Sequence, Optional, Union, Callable
+from typing import Sequence, Optional, Union, Callable, Collection
 
 import torch
 
@@ -12,8 +12,8 @@ class LinearModel(Process):
     def __init__(self,
                  id: str,
                  covariates: Sequence[str],
-                 process_variance: Union[bool, Sequence[str]] = False,
-                 init_variance: Union[bool, Sequence[str]] = True,
+                 process_variance: Union[bool, Collection[str]] = False,
+                 init_variance: Union[bool, Collection[str]] = True,
                  inv_link: Optional[Callable] = None):
         if isinstance(covariates, str):
             raise ValueError("`covariates` should be sequence of strings, not single string")
