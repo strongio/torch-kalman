@@ -24,11 +24,19 @@ class LinearModel(Process):
         self._dynamic_state_elements = []
         if process_variance:
             self._dynamic_state_elements = covariates if isinstance(process_variance, bool) else process_variance
+            extras = set(self._dynamic_state_elements) - set(covariates)
+            if len(extras):
+                raise ValueError(f"`process_variance` includes items not in `covariates`:{extras}")
 
         # initial covariance:
         self._fixed_state_elements = []
-        if init_variance:
-            self._fixed_state_elements = covariates if isinstance(init_variance, bool) else init_variance
+        if init_variance is False:
+            init_variance = []
+        if init_variance is not True:
+            extras = set(init_variance) - set(covariates)
+            if len(extras):
+                raise ValueError(f"`init_variance` includes items not in `covariates`:{extras}")
+            self._fixed_state_elements = [cov for cov in covariates if cov not in init_variance]
 
         super().__init__(id=id, state_elements=covariates)
 
@@ -38,6 +46,10 @@ class LinearModel(Process):
     @property
     def dynamic_state_elements(self) -> Sequence[str]:
         return self._dynamic_state_elements
+
+    @property
+    def fixed_state_elements(self):
+        return self._fixed_state_elements
 
     def param_dict(self) -> torch.nn.ParameterDict:
         return torch.nn.ParameterDict()  # no parameters

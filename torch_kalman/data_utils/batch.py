@@ -64,6 +64,8 @@ class TimeSeriesBatch:
         if not isinstance(measures, np.ndarray):
             measures = np.array(measures)
 
+        assert len(group_names) == len(start_times)
+
         self.tensor = tensor
         self.group_names = group_names
         self.start_times = start_times
