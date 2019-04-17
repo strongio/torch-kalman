@@ -128,7 +128,7 @@ class Design:
     def param_dict(self) -> ModuleDict:
         p = ModuleDict()
         for process_name, process in self.processes.items():
-            p[f"process_{process_name}"] = process.param_dict()
+            p[f"process:{process_name}"] = process.param_dict()
 
         p['measure_cov'] = ParameterDict([('cholesky_log_diag', self.measure_cholesky_log_diag),
                                           ('cholesky_off_diag', self.measure_cholesky_off_diag)])
