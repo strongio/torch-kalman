@@ -200,7 +200,7 @@ class TimeSeriesBatch:
 
         # first pass for info:
         arrays, time_idxs, group_names, start_times = [], [], [], []
-        for g, df in dataframe.groupby(group_colname):
+        for g, df in dataframe.groupby(group_colname, sort=True):
             # group-names:
             group_names.append(g)
 
