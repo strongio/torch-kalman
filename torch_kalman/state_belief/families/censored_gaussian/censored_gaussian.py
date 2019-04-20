@@ -156,16 +156,16 @@ class CensoredGaussianOverTime(GaussianOverTime):
             lower = torch.empty_like(obs)
             lower[:] = float('-inf')
         else:
-            assert not torch.isnan(lower).any(), "nans in 'lower'"
             lower = lower[idx_3d]
+            assert not torch.isnan(lower).any(), "nans in 'lower'"
             assert (obs >= lower).all(), "Not all obs are >= lower censoring limit"
 
         if upper is None:
             upper = torch.empty_like(obs)
             upper[:] = float('inf')
         else:
-            assert not torch.isnan(upper).any(), "nans in 'upper'"
             upper = upper[idx_3d]
+            assert not torch.isnan(upper).any(), "nans in 'upper'"
             assert (obs <= upper).all(), "Not all obs are <= upper censoring limit"
 
         return obs, lower, upper
