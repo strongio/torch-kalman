@@ -56,7 +56,9 @@ class CensoredGaussian(Gaussian):
         idx_3d = bmat_idx(group_idx, which_valid, which_valid)
 
         # observed values, censoring limits
-        vals = obs[idx_2d]
+        obs = obs[idx_2d]
+        lower = lower[idx_2d]
+        upper = upper[idx_2d]
 
         # subset belief / design-mats:
         means = self.means[group_idx]
@@ -78,7 +80,7 @@ class CensoredGaussian(Gaussian):
         K = self.kalman_gain(covariance=covs, H=H, R_adjusted=R_adj, prob_obs=prob_obs)
 
         # update
-        means_new = self.mean_update(mean=means, K=K, residuals=vals - mm_adj)
+        means_new = self.mean_update(mean=means, K=K, residuals=obs - mm_adj)
 
         covs_new = self.covariance_update(covariance=covs, K=K, H=H, prob_obs=prob_obs)
         return means_new, covs_new
