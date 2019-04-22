@@ -21,7 +21,7 @@ class LocalLevel(Process):
             self._set_transition(from_element='position',
                                  to_element='position',
                                  value=self.decay.get_value,
-                                 inv_link=False)
+                                 inv_link=None)
         else:
             self._set_transition(from_element='position', to_element='position', value=1.)
 

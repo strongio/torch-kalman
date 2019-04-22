@@ -25,7 +25,7 @@ class LocalTrend(Process):
             self._set_transition(from_element='position',
                                  to_element='position',
                                  value=self.decayed_transitions['position'].get_value,
-                                 inv_link=False)
+                                 inv_link=None)
         else:
             self._set_transition(from_element='position', to_element='position', value=1.0)
 
@@ -36,7 +36,7 @@ class LocalTrend(Process):
             self._set_transition(from_element='velocity',
                                  to_element='velocity',
                                  value=self.decayed_transitions['velocity'].get_value,
-                                 inv_link=False)
+                                 inv_link=None)
         else:
             self._set_transition(from_element='velocity', to_element='velocity', value=1.0)
 
