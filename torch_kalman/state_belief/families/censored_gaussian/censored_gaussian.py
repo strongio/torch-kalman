@@ -8,7 +8,6 @@ from torch_kalman.state_belief import StateBelief
 from torch_kalman.state_belief.families.censored_gaussian.utils import tobit_adjustment, tobit_probs, std_normal
 from torch_kalman.state_belief.families.gaussian import Gaussian, GaussianOverTime
 from torch_kalman.state_belief.utils import bmat_idx
-from torch_kalman.utils import matrix_diag
 
 Selector = Union[Sequence[int], slice]
 
@@ -69,7 +68,7 @@ class CensoredGaussian(Gaussian):
 
         # calculate censoring fx:
         prob_lo, prob_up = tobit_probs(measured_means, R, lower=lower, upper=upper)
-        prob_obs = matrix_diag(1 - prob_up - prob_lo)
+        prob_obs = torch.diag_embed(1 - prob_up - prob_lo)
 
         mm_adj, R_adj = tobit_adjustment(mean=measured_means,
                                          cov=R,
@@ -202,7 +201,7 @@ class CensoredGaussianOverTime(GaussianOverTime):
 
             # calculate prob-obs:
             prob_lo, prob_up = tobit_probs(group_measured_means, group_R, lower=group_lower, upper=group_upper)
-            prob_obs = matrix_diag(1 - prob_up - prob_lo)
+            prob_obs = torch.diag_embed(1 - prob_up - prob_lo)
 
             # system uncertainty:
             Ht = group_H.permute(0, 1, 3, 2)

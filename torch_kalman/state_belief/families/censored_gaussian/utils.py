@@ -4,8 +4,6 @@ from typing import Tuple, Optional
 import torch
 from torch import Tensor
 
-from torch_kalman.utils import matrix_diag
-
 std_normal = torch.distributions.Normal(0, 1)
 
 
@@ -46,7 +44,7 @@ def tobit_adjustment(mean: Tensor,
     for m in range(mean.shape[-1]):
         diag_adj[..., m] = (1. + 2. / sqrt_pi * F2[..., m] - 2. / pi * (F1[..., m] ** 2)) * cov[..., m, m]
 
-    cov_adj = matrix_diag(diag_adj)
+    cov_adj = torch.diag_embed(diag_adj)
 
     return mean_adj, cov_adj
 

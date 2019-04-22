@@ -7,17 +7,6 @@ import numpy as np
 from torch import Tensor
 
 
-def matrix_diag(diagonal: Tensor) -> Tensor:
-    N = diagonal.shape[-1]
-    shape = diagonal.shape[:-1] + (N, N)
-    device, dtype = diagonal.device, diagonal.dtype
-    result = torch.zeros(shape, dtype=dtype, device=device)
-    indices = torch.arange(result.numel(), device=device).reshape(shape)
-    indices = indices.diagonal(dim1=-2, dim2=-1)
-    result.view(-1)[indices] = diagonal
-    return result
-
-
 def fourier_model_mat(dt: Union[np.ndarray, Series],
                       K: int,
                       period: Union[np.timedelta64, str],
