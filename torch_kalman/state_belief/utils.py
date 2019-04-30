@@ -1,7 +1,5 @@
 from typing import Tuple, Optional
 
-import torch
-
 from torch import Tensor
 from torch.distributions import MultivariateNormal
 
@@ -34,18 +32,10 @@ def bmat_idx(*args) -> Tuple:
 
 
 def deterministic_sample_mvnorm(distribution: MultivariateNormal, eps: Optional[Tensor] = None) -> Tensor:
-    expected_shape = distribution._batch_shape + distribution._event_shape
-    univariate = len(distribution.event_shape) == 1 and distribution.event_shape[0] == 1
-    if univariate:
-        if eps is None:
-            eps = distribution.loc.new(*expected_shape).normal_()
-        else:
-            assert eps.size() == expected_shape, f"expected-shape:{expected_shape}, actual:{eps.size()}"
-        std = torch.sqrt(torch.squeeze(distribution.covariance_matrix, -1))
-        return std * eps + distribution.loc
+    if eps is None:
+        shape = distribution.batch_shape + distribution.event_shape
+        eps = _standard_normal(shape, dtype=distribution.loc.dtype, device=distribution.loc.device)
     else:
-        if eps is None:
-            eps = _standard_normal(expected_shape, dtype=distribution.loc.dtype, device=distribution.loc.device)
-        else:
-            assert eps.size() == expected_shape, f"expected-shape:{expected_shape}, actual:{eps.size()}"
-        return distribution.loc + _batch_mv(distribution._unbroadcasted_scale_tril, eps)
+        if eps.shape[-len(distribution.event_shape):] != distribution.event_shape:
+            raise RuntimeError(f"Expected shape ending in {distribution.event_shape}, got {eps.shape}.")
+    return distribution.loc + _batch_mv(distribution._unbroadcasted_scale_tril, eps)
