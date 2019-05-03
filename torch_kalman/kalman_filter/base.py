@@ -126,6 +126,23 @@ class KalmanFilter(torch.nn.Module):
                  white_noise: Optional[Tuple[Tensor, Tensor]] = None,
                  ntry_diag_incr: int = 1000,
                  **kwargs) -> List[Tensor]:
+        """
+
+        :param states: Either the output of the forward pass (a StateBeliefOverTime), or a particular StateBelief.
+        :param horizon: The number of timesteps forward to simulate.
+        :param num_iter: The number of sim-iterations.
+        :param progress: Should progress bar be printed?
+        :param from_times: If states is a StateBeliefOverTime, can indicate which times to extract the StateBelief from.
+        :param state_to_measured: Optional. A function that takes the StateBeliefOverTime generated from the simulation, and
+        converts it into a Tensor of simulated measurements.
+        :param white_noise: An optional tuple of tensors, so that the direction of noise can be controlled as a constant
+        across sims. Each must have shape (num_groups * num_sims, num_times, ...).
+        :param ntry_diag_incr: When simulating from some kalman-filters with low-process variance, the state-belief
+        covariance may not be cholesky-decomposible. In this case, we retry the decomposition after adding a small
+        value (.000000001) to the diagonal. `ntry_diag_incr` is the number of retries.
+        :param kwargs: Further keyword arguments passed to design_for_batch.
+        :return: A list of Tensors. Each element of the list is a different sim-iteration.
+        """
 
         assert horizon > 0
 
