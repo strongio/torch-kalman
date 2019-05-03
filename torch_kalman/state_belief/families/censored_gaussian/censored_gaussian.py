@@ -15,49 +15,67 @@ Selector = Union[Sequence[int], slice]
 class CensoredGaussian(Gaussian):
 
     @classmethod
-    def get_input_dim(cls, input: Union[Tensor, Tuple[Tensor, Tensor, Tensor]]) -> Tuple[int, int, int]:
+    def get_input_dim(cls, input: Union[Tensor, Tuple[Tensor, ...]]) -> Tuple[int, int, int]:
         if isinstance(input, Tensor):
             return input.shape
-        elif isinstance(input, Sequence):
-            if input[1] is not None:
-                assert input[0].shape == input[1].shape
-            if input[2] is not None:
-                assert input[0].shape == input[2].shape
+        elif isinstance(input, tuple):
+            shapes = set(x.shape for x in input if x is not None)
+            if len(shapes) != 1:
+                raise RuntimeError(f"If input is sequence of tensors, all shapes must be the same. Got:{shapes}")
             return input[0].shape
         else:
             raise RuntimeError("Expected `input` to be either tuple of tensors or tensor.")
 
-    def update_from_input(self, input: Union[Tensor, Tuple[Tensor, Tensor, Tensor]], time: int):
+    def update_from_input(self, input: Union[Tensor, Tuple[Tensor, ...]], time: int):
         if isinstance(input, Tensor):
-            obs = input[:, time, :]
-            upper = None
-            lower = None
+            args = (input[:, time, :],)
         elif isinstance(input, Sequence):
-            obs, lower, upper = (x[:, time, :] if x is not None else None for x in input)
+            args = (x if isinstance(x, bool) else x[:, time, :] for x in input)
         else:
-            raise RuntimeError("Expected `input` to be either tuple of tensors or tensor.")
-        return self.update(obs=obs, lower=lower, upper=upper)
+            raise RuntimeError("Expected `input` to be either a tuple or a tensor.")
+        return self.update(*args)
 
     def update(self,
                obs: Tensor,
                lower: Optional[Tensor] = None,
-               upper: Optional[Tensor] = None) -> 'StateBelief':
-        return super().update(obs, lower=lower, upper=upper)
+               upper: Optional[Tensor] = None,
+               lower_is_trunc: Optional[Tensor] = None,
+               upper_is_trunc: Optional[Tensor] = None) -> 'StateBelief':
+        return super().update(obs, lower=lower, upper=upper, lower_is_trunc=lower_is_trunc, upper_is_trunc=upper_is_trunc)
 
     def _update_group(self,
                       obs: Tensor,
                       group_idx: Union[slice, Sequence[int]],
                       which_valid: Union[slice, Sequence[int]],
                       lower: Optional[Tensor] = None,
-                      upper: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
+                      upper: Optional[Tensor] = None,
+                      lower_is_trunc: Optional[Tensor] = None,
+                      upper_is_trunc: Optional[Tensor] = None
+                      ) -> Tuple[Tensor, Tensor]:
         # indices:
         idx_2d = bmat_idx(group_idx, which_valid)
         idx_3d = bmat_idx(group_idx, which_valid, which_valid)
 
         # observed values, censoring limits
         obs = obs[idx_2d]
-        lower = lower[idx_2d]
-        upper = upper[idx_2d]
+        if lower is not None:
+            lower = lower[idx_2d]
+        if upper is not None:
+            upper = upper[idx_2d]
+
+        if lower_is_trunc is None:
+            lower_is_trunc = False
+        elif not isinstance(lower_is_trunc, bool):
+            lower_is_trunc = lower_is_trunc[idx_2d].to(torch.uint8)
+        if lower_is_trunc is not False:
+            raise NotImplementedError("Truncation not currently implemented.")
+
+        if upper_is_trunc is None:
+            upper_is_trunc = False
+        elif not isinstance(upper_is_trunc, bool):
+            upper_is_trunc = upper_is_trunc[idx_2d].to(torch.uint8)
+        if upper_is_trunc is not False:
+            raise NotImplementedError("Truncation not currently implemented.")
 
         # subset belief / design-mats:
         means = self.means[group_idx]
@@ -67,20 +85,23 @@ class CensoredGaussian(Gaussian):
         measured_means = H.matmul(means.unsqueeze(2)).squeeze(2)
 
         # calculate censoring fx:
-        prob_lo, prob_up = tobit_probs(measured_means, R, lower=lower, upper=upper)
+        prob_lo, prob_up = tobit_probs(mean=measured_means,
+                                       cov=R,
+                                       lower=lower,
+                                       upper=upper)
         prob_obs = torch.diag_embed(1 - prob_up - prob_lo)
 
         mm_adj, R_adj = tobit_adjustment(mean=measured_means,
                                          cov=R,
                                          lower=lower,
-                                         upper=upper)
+                                         upper=upper,
+                                         probs=(prob_lo, prob_up))
 
         # kalman gain:
         K = self.kalman_gain(covariance=covs, H=H, R_adjusted=R_adj, prob_obs=prob_obs)
 
         # update
         means_new = self.mean_update(mean=means, K=K, residuals=obs - mm_adj)
-
         covs_new = self.covariance_update(covariance=covs, K=K, H=H, prob_obs=prob_obs)
         return means_new, covs_new
 
@@ -139,110 +160,116 @@ class CensoredGaussianOverTime(GaussianOverTime):
                  obs: Tensor,
                  lower: Optional[Tensor] = None,
                  upper: Optional[Tensor] = None,
-                 method: str = 'independent'
-                 ) -> Tensor:
-        return super().log_prob(obs=obs, lower=lower, upper=upper, method=method)
-
-    @staticmethod
-    def _subset_obs_and_bounds(obs: Tensor,
-                               lower: Optional[Tensor],
-                               upper: Optional[Tensor],
-                               idx_3d: Tuple) -> Tuple[Tensor, Tensor, Tensor]:
-
-        obs = obs[idx_3d]
-
-        if lower is None:
-            lower = torch.empty_like(obs)
-            lower[:] = float('-inf')
-        else:
-            lower = lower[idx_3d]
-            assert not torch.isnan(lower).any(), "nans in 'lower'"
-            assert (obs >= lower).all(), "Not all obs are >= lower censoring limit"
-
-        if upper is None:
-            upper = torch.empty_like(obs)
-            upper[:] = float('inf')
-        else:
-            upper = upper[idx_3d]
-            assert not torch.isnan(upper).any(), "nans in 'upper'"
-            assert (obs <= upper).all(), "Not all obs are <= upper censoring limit"
-
-        return obs, lower, upper
+                 lower_is_trunc: Optional[Tensor] = None,
+                 upper_is_trunc: Optional[Tensor] = None):
+        return super().log_prob(obs=obs,
+                                lower=lower,
+                                upper=upper,
+                                lower_is_trunc=lower_is_trunc,
+                                upper_is_trunc=upper_is_trunc)
 
     def _log_prob_with_subsetting(self,
-                                  obs: Tensor,
+                                  obs: Union[Tensor, Cens],
                                   group_idx: Selector,
                                   time_idx: Selector,
                                   measure_idx: Selector,
                                   method: str = 'independent',
                                   lower: Optional[Tensor] = None,
-                                  upper: Optional[Tensor] = None) -> Tensor:
+                                  upper: Optional[Tensor] = None,
+                                  lower_is_trunc: Optional[Tensor] = None,
+                                  upper_is_trunc: Optional[Tensor] = None) -> Tensor:
         self._check_lp_sub_input(group_idx, time_idx)
 
         idx_no_measure = bmat_idx(group_idx, time_idx)
         idx_3d = bmat_idx(group_idx, time_idx, measure_idx)
         idx_4d = bmat_idx(group_idx, time_idx, measure_idx, measure_idx)
 
+        if lower_is_trunc is None:
+            lower_is_trunc = False
+        elif not isinstance(lower_is_trunc, bool):
+            lower_is_trunc = lower_is_trunc.to(torch.uint8)
+        if lower_is_trunc is not False:
+            raise NotImplementedError("Truncation not currently implemented.")
+
+        if upper_is_trunc is None:
+            upper_is_trunc = False
+        elif not isinstance(upper_is_trunc, bool):
+            upper_is_trunc = upper_is_trunc.to(torch.uint8)
+        if upper_is_trunc is not False:
+            raise NotImplementedError("Truncation not currently implemented.")
+
         # subset obs, lower, upper:
-        group_obs, group_lower, group_upper = self._subset_obs_and_bounds(obs, lower, upper, idx_3d)
+        obs, lower, upper = obs[idx_3d], lower[idx_3d], upper[idx_3d]
 
         if method.lower() == 'update':
-            group_means = self.means[idx_no_measure]
-            group_covs = self.covs[idx_no_measure]
-            group_H = self.H[idx_3d]
-            group_R = self.R[idx_4d]
-            group_measured_means = group_H.matmul(group_means.unsqueeze(3)).squeeze(3)
-
-            # calculate adjusted measure mean and cov:
-            mm_adj, R_adj = tobit_adjustment(mean=group_measured_means,
-                                             cov=group_R,
-                                             lower=group_lower,
-                                             upper=group_upper)
+            means = self.means[idx_no_measure]
+            covs = self.covs[idx_no_measure]
+            H = self.H[idx_3d]
+            R = self.R[idx_4d]
+            measured_means = H.matmul(means.unsqueeze(3)).squeeze(3)
 
             # calculate prob-obs:
-            prob_lo, prob_up = tobit_probs(group_measured_means, group_R, lower=group_lower, upper=group_upper)
+            prob_lo, prob_up = tobit_probs(mean=measured_means,
+                                           cov=R,
+                                           lower=lower,
+                                           upper=upper)
             prob_obs = torch.diag_embed(1 - prob_up - prob_lo)
 
+            # calculate adjusted measure mean and cov:
+            mm_adj, R_adj = tobit_adjustment(mean=measured_means,
+                                             cov=R,
+                                             lower=lower,
+                                             upper=upper,
+                                             probs=(prob_lo, prob_up))
+
             # system uncertainty:
-            Ht = group_H.permute(0, 1, 3, 2)
-            system_uncertainty = prob_obs.matmul(group_H).matmul(group_covs).matmul(Ht).matmul(prob_obs) + R_adj
+            Ht = H.permute(0, 1, 3, 2)
+            system_uncertainty = prob_obs.matmul(H).matmul(covs).matmul(Ht).matmul(prob_obs) + R_adj
 
             # log prob:
             dist = torch.distributions.MultivariateNormal(mm_adj, system_uncertainty)
-            return dist.log_prob(group_obs)
+            return dist.log_prob(obs)
         elif method.lower() == 'independent':
             #
             pred_mean = self.predictions[idx_3d]
             pred_cov = self.prediction_uncertainty[idx_4d]
 
             #
-            cens_up = (group_obs == group_upper)
-            cens_lo = (group_obs == group_lower)
+            cens_up = (obs == upper) & (~upper_is_trunc)
+            cens_lo = (obs == lower) & (~lower_is_trunc)
 
             #
-            lik_uncens = torch.zeros_like(group_obs)
-            lik_cens_up = torch.zeros_like(group_obs)
-            lik_cens_lo = torch.zeros_like(group_obs)
+            lik_uncens = torch.zeros_like(obs)
+            lik_cens_up = torch.zeros_like(obs)
+            lik_cens_lo = torch.zeros_like(obs)
             for m in range(pred_mean.shape[-1]):
                 std = pred_cov[..., m, m].sqrt()
-                z = (pred_mean[..., m] - group_obs[..., m]) / std
+                z = (pred_mean[..., m] - obs[..., m]) / std
 
                 # pdf is well behaved at tails:
                 lik_uncens[..., m] = torch.exp(std_normal.log_prob(z) - std.log())
 
-                # but cdf is not, truncate:
+                # but cdf is not, clamp:
                 z = torch.clamp(z, -5., 5.)
                 lik_cens_up[..., m] = std_normal.cdf(z)
-                lik_cens_lo[..., m] = 1. - std_normal.cdf(z)
+                lik_cens_lo[..., m] = (1. - std_normal.cdf(z))
 
-            lik_cens = torch.zeros_like(group_obs)
+            lik_cens = torch.zeros_like(obs)
             lik_cens[cens_up] = lik_cens_up[cens_up]
             lik_cens[cens_lo] = lik_cens_lo[cens_lo]
 
-            log_prob = (lik_cens + lik_uncens).log()
+            # truncation adjustment:
+            trunc_adj_upper = torch.ones_like(upper)
+            trunc_adj_upper[upper_is_trunc] = std_normal.cdf(upper[upper_is_trunc])
+            trunc_adj_lower = torch.zeros_like(lower)
+            trunc_adj_lower[lower_is_trunc] = std_normal.cdf(lower[lower_is_trunc])
+            trunc_adj = trunc_adj_upper - trunc_adj_lower
+
+            # likelihood:
+            lik = (lik_cens + lik_uncens) / trunc_adj
 
             # take the product of the dimension probs (i.e., assume independence)
-            return torch.sum(log_prob, -1)
+            return torch.sum(lik.log(), -1)
         else:
             raise RuntimeError("Expected method to be one of: {}.".format({'update', 'independent'}))
 

@@ -1,22 +1,55 @@
+import importlib
+from collections import namedtuple
 from math import pi, sqrt
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Sequence, Dict
 
 import torch
+
 from torch import Tensor
+from torch_kalman.utils import with_replaced
+
+import numpy as np
 
 std_normal = torch.distributions.Normal(0, 1)
+
+
+class Cens(namedtuple('Cens', field_names=['obs', 'lower', 'upper'], defaults=[None, None])):
+    def to_array(self) -> np.ndarray:
+        obs = self._standardize_array(self.obs)
+
+        stack = getattr(importlib.import_module(type(obs).__module__), 'stack')
+        full_like = getattr(importlib.import_module(type(obs).__module__), 'full_like')
+
+        if len(obs.shape) != 1:
+            raise RuntimeError("Cannot convert to array unless len(self.obs.shape) is 1.")
+
+        lower = full_like(obs, -float('inf')) if self.lower is None else self._standardize_array(self.lower)
+        if obs.shape != lower.shape:
+            raise RuntimeError("obs.shape != lower.shape")
+
+        upper = full_like(obs, float('inf')) if self.upper is None else self._standardize_array(self.upper)
+        if obs.shape != upper.shape:
+            raise RuntimeError("obs.shape != upper.shape")
+
+        arr = stack([obs, lower, upper], 1)
+        return arr
+
+    @staticmethod
+    def _standardize_array(x):
+        if not isinstance(x, (torch.Tensor, np.ndarray)) and isinstance(getattr(x, 'values', None), np.ndarray):
+            return x.values
+        return x
 
 
 def tobit_adjustment(mean: Tensor,
                      cov: Tensor,
                      lower: Optional[Tensor] = None,
-                     upper: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
+                     upper: Optional[Tensor] = None,
+                     probs: Optional[Tuple[Tensor, Tensor]] = None) -> Tuple[Tensor, Tensor]:
     if upper is None:
-        upper = torch.empty_like(mean)
-        upper[:] = float('inf')
+        upper = torch.full_like(mean, float('inf'))
     if lower is None:
-        lower = torch.empty_like(mean)
-        lower[:] = float('-inf')
+        lower = torch.full_like(mean, -float('inf'))
 
     is_cens_up = torch.isfinite(upper)
     is_cens_lo = torch.isfinite(lower)
@@ -29,8 +62,16 @@ def tobit_adjustment(mean: Tensor,
     std = torch.diagonal(cov, dim1=-2, dim2=-1).sqrt()
     sqrt_pi = pi ** .5
 
+    # prob censoring:
+    if probs is None:
+        prob_lo, prob_up = tobit_probs(mean=mean,
+                                       cov=cov,
+                                       lower=lower,
+                                       upper=upper)
+    else:
+        prob_lo, prob_up = probs
+
     # adjust mean:
-    prob_lo, prob_up = tobit_probs(mean, cov, lower, upper)
     lower_adj = torch.zeros_like(mean)
     lower_adj[is_cens_lo] = prob_lo[is_cens_lo] * lower[is_cens_lo]
     upper_adj = torch.zeros_like(mean)

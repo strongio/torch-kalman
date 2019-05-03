@@ -135,7 +135,7 @@ class StateBelief:
 
     @classmethod
     def concatenate_over_time(cls, state_beliefs: Sequence['StateBelief'], design: Design) -> 'StateBeliefOverTime':
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def simulate_trajectories(self,
                               design_for_batch: DesignForBatch,
