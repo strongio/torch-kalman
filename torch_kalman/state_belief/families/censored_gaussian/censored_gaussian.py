@@ -169,7 +169,7 @@ class CensoredGaussianOverTime(GaussianOverTime):
                                 upper_is_trunc=upper_is_trunc)
 
     def _log_prob_with_subsetting(self,
-                                  obs: Union[Tensor, Cens],
+                                  obs: Tensor,
                                   group_idx: Selector,
                                   time_idx: Selector,
                                   measure_idx: Selector,
