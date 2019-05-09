@@ -109,8 +109,8 @@ class StateBelief:
             update_groups.append((slice(None), slice(None)))
 
         # updates:
-        means_new = self.means.data.clone()
-        covs_new = self.covs.data.clone()
+        means_new = self.means.clone()
+        covs_new = self.covs.clone()
         for which_valid, group_idx in update_groups:
             means_new[group_idx], covs_new[group_idx] = self._update_group(obs=obs,
                                                                            group_idx=group_idx,
