@@ -12,7 +12,7 @@ class Covariance(torch.Tensor):
                           log_diag: torch.Tensor,
                           off_diag: torch.Tensor,
                           device: Optional[torch.device] = None) -> 'Covariance':
-        # TODO: use torch.diag_embed
+
         assert log_diag.shape[:-1] == off_diag.shape[:-1]
         batch_dim = log_diag.shape[:-1]
 
@@ -44,3 +44,8 @@ class Covariance(torch.Tensor):
                 idx += 1
         log_diag = torch.log(torch.diagonal(L, dim1=-2, dim2=-1))
         return log_diag, off_diag
+
+
+def cov_to_corr(cov: torch.Tensor) -> torch.Tensor:
+    std = cov.diag().sqrt()
+    return cov / std.unsqueeze(-1).matmul(std.unsqueeze(-2))
