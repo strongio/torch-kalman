@@ -77,12 +77,15 @@ class CensoredGaussian(Gaussian):
         if upper_is_trunc is not False:
             raise NotImplementedError("Truncation not currently implemented.")
 
+        if (lower == upper).any():
+            raise RuntimeError("lower cannot == upper")
+
         # subset belief / design-mats:
         means = self.means[group_idx]
         covs = self.covs[group_idx]
         R = self.R[idx_3d]
         H = self.H[idx_2d]
-        measured_means = H.matmul(means.unsqueeze(2)).squeeze(2)
+        measured_means = H.matmul(means.unsqueeze(-1)).squeeze(-1)
 
         # calculate censoring fx:
         prob_lo, prob_up = tobit_probs(mean=measured_means,
@@ -115,7 +118,7 @@ class CensoredGaussian(Gaussian):
 
     @staticmethod
     def mean_update(mean: Tensor, K: Tensor, residuals: Tensor) -> Tensor:
-        return mean + K.matmul(residuals.unsqueeze(2)).squeeze(2)
+        return mean + K.matmul(residuals.unsqueeze(-1)).squeeze(-1)
 
     @staticmethod
     def covariance_update(covariance: Tensor, H: Tensor, K: Tensor, prob_obs: Tensor) -> Tensor:
@@ -133,7 +136,8 @@ class CensoredGaussian(Gaussian):
         Ht = H.permute(0, 2, 1)
         state_uncertainty = covariance.matmul(Ht).matmul(prob_obs)
         system_uncertainty = prob_obs.matmul(H).matmul(covariance).matmul(Ht).matmul(prob_obs) + R_adjusted
-        return state_uncertainty.matmul(torch.inverse(system_uncertainty))
+        system_uncertainty_inv = torch.inverse(system_uncertainty)
+        return state_uncertainty.matmul(system_uncertainty_inv)
 
     @classmethod
     def concatenate_over_time(cls,
@@ -206,7 +210,7 @@ class CensoredGaussianOverTime(GaussianOverTime):
             covs = self.covs[idx_no_measure]
             H = self.H[idx_3d]
             R = self.R[idx_4d]
-            measured_means = H.matmul(means.unsqueeze(3)).squeeze(3)
+            measured_means = H.matmul(means.unsqueeze(-1)).squeeze(-1)
 
             # calculate prob-obs:
             prob_lo, prob_up = tobit_probs(mean=measured_means,
@@ -235,8 +239,8 @@ class CensoredGaussianOverTime(GaussianOverTime):
             pred_cov = self.prediction_uncertainty[idx_4d]
 
             #
-            cens_up = (obs == upper) & (~upper_is_trunc)
-            cens_lo = (obs == lower) & (~lower_is_trunc)
+            cens_up = torch.isclose(obs, upper) & (~upper_is_trunc)
+            cens_lo = torch.isclose(obs, lower) & (~lower_is_trunc)
 
             #
             lik_uncens = torch.zeros_like(obs)
