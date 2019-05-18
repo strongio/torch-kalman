@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Generator, Tuple, Optional, Dict, Sequence
+from typing import Generator, Tuple, Optional, Dict, Sequence, Union
 
 import torch
 
@@ -16,14 +16,15 @@ class Design:
     def __init__(self,
                  processes: Sequence[Process],
                  measures: Sequence[str],
-                 device: Optional[torch.device] = None):
+                 cov_parameterization: Union[Dict, str] = 'log_cholesky',
+                 **kwargs):
 
         assert processes
         assert measures
 
-        if device is None:
-            device = torch.device('cpu')
-        self.device = device
+        if kwargs.get('device', 'cpu') != 'cpu' or kwargs.get('dtype', 'float') != 'float':
+            raise NotImplementedError("Only device='cpu' and dtype='float' are currently supported.")
+        self.device = torch.device('cpu')
 
         # measures:
         self.measures = tuple(measures)
@@ -71,17 +72,19 @@ class Design:
         self.all_state_elements_idx = {pse: i for i, pse in enumerate(self.all_state_elements())}
         self.measures_idx = {measure: i for i, measure in enumerate(self.measures)}
 
+        # TODO: accept parameterization; scale init by
+
         # measure-covariance:
         m_upper_tri = int(self.measure_size * (self.measure_size - 1) / 2)
-        self.measure_cholesky_log_diag = Parameter(data=torch.zeros(self.measure_size, device=self.device))
-        self.measure_cholesky_off_diag = Parameter(data=torch.zeros(m_upper_tri, device=self.device))
+        self.measure_cholesky_log_diag = Parameter(data=.01 * torch.randn(self.measure_size, device=self.device))
+        self.measure_cholesky_off_diag = Parameter(data=.01 * torch.randn(m_upper_tri, device=self.device))
 
         # initial state:
         self.init_state_mean_params = Parameter(torch.randn(self.state_size, device=self.device))
         num_var_states = len(list(self.all_unfixed_state_elements()))
         s_upper_tri = int(num_var_states * (num_var_states - 1) / 2)
-        self.init_cholesky_log_diag = Parameter(torch.zeros(num_var_states, device=self.device))
-        self.init_cholesky_off_diag = Parameter(torch.zeros(s_upper_tri, device=self.device))
+        self.init_cholesky_log_diag = Parameter(.01 * torch.randn(num_var_states, device=self.device))
+        self.init_cholesky_off_diag = Parameter(.01 * torch.randn(s_upper_tri, device=self.device))
         self.init_covariance = PartialCovariance(full_dim_names=self.all_state_elements(),
                                                  partial_dim_names=self.all_unfixed_state_elements(),
                                                  cov_kwargs={'log_diag': self.init_cholesky_log_diag,
@@ -91,8 +94,8 @@ class Design:
         # process cov:
         num_dyn_states = len(list(self.all_dynamic_state_elements()))
         ds_upper_tri = int(num_dyn_states * (num_dyn_states - 1) / 2)
-        self.process_cholesky_log_diag = Parameter(torch.zeros(num_dyn_states, device=self.device))
-        self.process_cholesky_off_diag = Parameter(torch.zeros(ds_upper_tri, device=self.device))
+        self.process_cholesky_log_diag = Parameter(.01 * torch.randn(num_dyn_states, device=self.device))
+        self.process_cholesky_off_diag = Parameter(.01 * torch.randn(ds_upper_tri, device=self.device))
         self.process_covariance = PartialCovariance(full_dim_names=self.all_state_elements(),
                                                     partial_dim_names=self.all_dynamic_state_elements(),
                                                     cov_kwargs={'log_diag': self.process_cholesky_log_diag,
