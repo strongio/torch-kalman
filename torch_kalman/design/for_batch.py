@@ -214,7 +214,21 @@ class DesignForBatch:
         return init_mean
 
     def _build_init_covariance(self) -> Tensor:
-        return self.design.init_covariance.create(leading_dims=(self.num_groups,))
+        init_cov = self.design.init_covariance.create(leading_dims=(self.num_groups,))
+
+        # init variances are scaled by the variances of the measurements they are associated with:
+        measure_log_stds = self.design.measure_scaling().diag().sqrt().log()
+        diag_flat = torch.ones(self.state_size, device=self.device)
+        for process_name, process in self.processes.items():
+            measure_idx = [self.measure_idx[m] for m in process.measures]
+            log_scaling = measure_log_stds[measure_idx].mean()
+            process_slice = self.process_idx[process_name]
+            diag_flat[process_slice] = log_scaling.exp()
+
+        diag_multi_measure = torch.diagflat(diag_flat).expand(self.num_groups, -1, -1)
+        init_cov = diag_multi_measure.matmul(init_cov).matmul(diag_multi_measure)
+
+        return init_cov
 
     @staticmethod
     def _prepare_process_kwargs(process, kwargs: Union[Dict, object]) -> Dict:
