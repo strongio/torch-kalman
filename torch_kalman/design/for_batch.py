@@ -1,5 +1,5 @@
 import inspect
-import re
+
 from collections import OrderedDict
 from typing import Optional, Tuple, List, Dict, Union
 import torch
@@ -151,11 +151,11 @@ class DesignForBatch:
             process_slice = self.process_idx[process_name]
             diag_flat[process_slice] = log_scaling.exp()
 
-        diag_multi = torch.diagflat(diag_flat).expand(self.num_groups, -1, -1)
-        Q = diag_multi.matmul(Q).matmul(diag_multi)
+        diag_multi_measure = torch.diagflat(diag_flat).expand(self.num_groups, -1, -1)
+        Q = diag_multi_measure.matmul(Q).matmul(diag_multi_measure)
 
         # adjustments from processes:
-        diag_multi = torch.eye(self.state_size, device=self.device).expand(self.num_groups, -1, -1).clone()
+        diag_multi_proc = torch.eye(self.state_size, device=self.device).expand(self.num_groups, -1, -1).clone()
         dynamic_assignments = []
         for process_id, process in self.processes.items():
             o = self.process_start_idx[process_id]
@@ -165,9 +165,9 @@ class DesignForBatch:
                     if type == 'dynamic':
                         dynamic_assignments.append(((i, i), values))
                     else:
-                        diag_multi[:, i, i] = values
+                        diag_multi_proc[:, i, i] = values
 
-        self._Q_base = diag_multi.matmul(Q).matmul(diag_multi)
+        self._Q_base = diag_multi_proc.matmul(Q).matmul(diag_multi_proc)
         self._Q_diag_multi_dynamic_assignments = dynamic_assignments
 
     def _Q_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None) -> Tensor:

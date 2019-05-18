@@ -6,7 +6,6 @@ from typing import Tuple, Optional, Sequence, Dict
 import torch
 
 from torch import Tensor
-from torch_kalman.utils import with_replaced
 
 import numpy as np
 
@@ -14,6 +13,9 @@ std_normal = torch.distributions.Normal(0, 1)
 
 
 class Cens(namedtuple('Cens', field_names=['obs', 'lower', 'upper'], defaults=[None, None])):
+    def _for_fill(self, x):
+        return x is None or isinstance(x, (int, float))
+
     def to_array(self) -> np.ndarray:
         obs = self._standardize_array(self.obs)
 
@@ -23,13 +25,22 @@ class Cens(namedtuple('Cens', field_names=['obs', 'lower', 'upper'], defaults=[N
         if len(obs.shape) != 1:
             raise RuntimeError("Cannot convert to array unless len(self.obs.shape) is 1.")
 
-        lower = full_like(obs, -float('inf')) if self.lower is None else self._standardize_array(self.lower)
+        if self._for_fill(self.lower):
+            lower = full_like(obs, -float('inf') if self.lower is None else self.lower)
+        else:
+            lower = self._standardize_array(self.lower)
         if obs.shape != lower.shape:
             raise RuntimeError("obs.shape != lower.shape")
 
-        upper = full_like(obs, float('inf')) if self.upper is None else self._standardize_array(self.upper)
+        if self._for_fill(self.upper):
+            upper = full_like(obs, float('inf') if self.upper is None else self.upper)
+        else:
+            upper = self._standardize_array(self.upper)
         if obs.shape != upper.shape:
             raise RuntimeError("obs.shape != upper.shape")
+
+        if (lower == upper).any():
+            raise RuntimeError("lower cannot == upper")
 
         arr = stack([obs, lower, upper], 1)
         return arr
@@ -122,9 +133,6 @@ def erfcx(x: Tensor) -> Tensor:
     """M. M. Shepherd and J. G. Laframboise,
        MATHEMATICS OF COMPUTATION 36, 249 (1981)
     """
-    if torch.isinf(x).any():
-        from pdb import Pdb
-        Pdb().set_trace()
 
     K = 3.75
     y = (torch.abs(x) - K) / (torch.abs(x) + K)

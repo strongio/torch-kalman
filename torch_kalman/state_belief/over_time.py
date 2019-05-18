@@ -200,7 +200,7 @@ class StateBeliefOverTime:
     @property
     def predictions(self) -> Tensor:
         if self._predictions is None:
-            self._predictions = self.H.matmul(self.means.unsqueeze(3)).squeeze(3)
+            self._predictions = self.H.matmul(self.means.unsqueeze(-1)).squeeze(-1)
         return self._predictions
 
     @property

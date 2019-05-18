@@ -163,14 +163,10 @@ class CensoredGaussianOverTime(GaussianOverTime):
     def log_prob(self,
                  obs: Tensor,
                  lower: Optional[Tensor] = None,
-                 upper: Optional[Tensor] = None,
-                 lower_is_trunc: Optional[Tensor] = None,
-                 upper_is_trunc: Optional[Tensor] = None):
+                 upper: Optional[Tensor] = None):
         return super().log_prob(obs=obs,
                                 lower=lower,
-                                upper=upper,
-                                lower_is_trunc=lower_is_trunc,
-                                upper_is_trunc=upper_is_trunc)
+                                upper=upper)
 
     def _log_prob_with_subsetting(self,
                                   obs: Tensor,
@@ -179,28 +175,12 @@ class CensoredGaussianOverTime(GaussianOverTime):
                                   measure_idx: Selector,
                                   method: str = 'independent',
                                   lower: Optional[Tensor] = None,
-                                  upper: Optional[Tensor] = None,
-                                  lower_is_trunc: Optional[Tensor] = None,
-                                  upper_is_trunc: Optional[Tensor] = None) -> Tensor:
+                                  upper: Optional[Tensor] = None) -> Tensor:
         self._check_lp_sub_input(group_idx, time_idx)
 
         idx_no_measure = bmat_idx(group_idx, time_idx)
         idx_3d = bmat_idx(group_idx, time_idx, measure_idx)
         idx_4d = bmat_idx(group_idx, time_idx, measure_idx, measure_idx)
-
-        if lower_is_trunc is None:
-            lower_is_trunc = False
-        elif not isinstance(lower_is_trunc, bool):
-            lower_is_trunc = lower_is_trunc.to(torch.uint8)
-        if lower_is_trunc is not False:
-            raise NotImplementedError("Truncation not currently implemented.")
-
-        if upper_is_trunc is None:
-            upper_is_trunc = False
-        elif not isinstance(upper_is_trunc, bool):
-            upper_is_trunc = upper_is_trunc.to(torch.uint8)
-        if upper_is_trunc is not False:
-            raise NotImplementedError("Truncation not currently implemented.")
 
         # subset obs, lower, upper:
         obs, lower, upper = obs[idx_3d], lower[idx_3d], upper[idx_3d]
@@ -236,44 +216,35 @@ class CensoredGaussianOverTime(GaussianOverTime):
         elif method.lower() == 'independent':
             #
             pred_mean = self.predictions[idx_3d]
-            pred_cov = self.prediction_uncertainty[idx_4d]
+            pred_cov = self.prediction_uncertainty[idx_4d]  # TODO: use R instead?
 
             #
-            cens_up = torch.isclose(obs, upper) & (~upper_is_trunc)
-            cens_lo = torch.isclose(obs, lower) & (~lower_is_trunc)
+            cens_up = torch.isclose(obs, upper)
+            cens_lo = torch.isclose(obs, lower)
 
             #
-            lik_uncens = torch.zeros_like(obs)
-            lik_cens_up = torch.zeros_like(obs)
-            lik_cens_lo = torch.zeros_like(obs)
+            loglik_uncens = torch.zeros_like(obs)
+            loglik_cens_up = torch.zeros_like(obs)
+            loglik_cens_lo = torch.zeros_like(obs)
             for m in range(pred_mean.shape[-1]):
                 std = pred_cov[..., m, m].sqrt()
                 z = (pred_mean[..., m] - obs[..., m]) / std
 
                 # pdf is well behaved at tails:
-                lik_uncens[..., m] = torch.exp(std_normal.log_prob(z) - std.log())
+                loglik_uncens[..., m] = std_normal.log_prob(z) - std.log()
 
                 # but cdf is not, clamp:
                 z = torch.clamp(z, -5., 5.)
-                lik_cens_up[..., m] = std_normal.cdf(z)
-                lik_cens_lo[..., m] = (1. - std_normal.cdf(z))
+                loglik_cens_up[..., m] = std_normal.cdf(z).log()
+                loglik_cens_lo[..., m] = (1. - std_normal.cdf(z)).log()
 
-            lik_cens = torch.zeros_like(obs)
-            lik_cens[cens_up] = lik_cens_up[cens_up]
-            lik_cens[cens_lo] = lik_cens_lo[cens_lo]
-
-            # truncation adjustment:
-            trunc_adj_upper = torch.ones_like(upper)
-            trunc_adj_upper[upper_is_trunc] = std_normal.cdf(upper[upper_is_trunc])
-            trunc_adj_lower = torch.zeros_like(lower)
-            trunc_adj_lower[lower_is_trunc] = std_normal.cdf(lower[lower_is_trunc])
-            trunc_adj = trunc_adj_upper - trunc_adj_lower
-
-            # likelihood:
-            lik = (lik_cens + lik_uncens) / trunc_adj
+            loglik = torch.zeros_like(obs)
+            loglik[cens_up] = loglik_cens_up[cens_up]
+            loglik[cens_lo] = loglik_cens_lo[cens_lo]
+            loglik[~(cens_up | cens_lo)] = loglik_uncens[~(cens_up | cens_lo)]
 
             # take the product of the dimension probs (i.e., assume independence)
-            return torch.sum(lik.log(), -1)
+            return torch.sum(loglik, -1)
         else:
             raise RuntimeError("Expected method to be one of: {}.".format({'update', 'independent'}))
 

@@ -83,6 +83,8 @@ class StateBelief:
         return self.__class__(means=means, covs=covs, last_measured=self.last_measured + 1)
 
     def update(self, obs: Tensor, **kwargs) -> 'StateBelief':
+        if torch.isinf(obs).any():
+            raise RuntimeError("Infs not allowed in `obs`")
         is_nan = torch.isnan(obs)
 
         # need to do a different update depending on which (if any) dimensions are missing:
@@ -141,7 +143,8 @@ class StateBelief:
                               design_for_batch: DesignForBatch,
                               progress: bool = False,
                               eps: Optional[Tensor] = None,
-                              ntry_diag_incr: int = 1000) -> 'StateBeliefOverTime':
+                              ntry_diag_incr: int = 1000,
+                              compute_measurements: bool = True) -> 'StateBeliefOverTime':
 
         progress = progress or identity
         if progress is True:
@@ -162,7 +165,8 @@ class StateBelief:
             state._realize(ntry=ntry_diag_incr, eps=t_eps)
 
             # measure the state:
-            state.compute_measurement(H=design_for_batch.H(t), R=design_for_batch.R(t))
+            if compute_measurements:
+                state.compute_measurement(H=design_for_batch.H(t), R=design_for_batch.R(t))
 
             states.append(state)
 
