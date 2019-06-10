@@ -134,7 +134,7 @@ class Design:
         p['measure_cov'] = self.measure_covariance.param_dict
 
         p['init_state'] = ParameterDict([('mean', self.init_state_mean_params)])
-        p['init_state'].update(self.init_covariance.param_dict)
+        p['init_state'].update(self.init_covariance.param_dict.items())
 
         p['process_cov'] = self.process_covariance.param_dict
 
