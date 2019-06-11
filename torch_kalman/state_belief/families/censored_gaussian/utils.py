@@ -1,7 +1,7 @@
 import importlib
 from collections import namedtuple
 from math import pi, sqrt
-from typing import Tuple, Optional, Sequence, Dict
+from typing import Tuple, Optional, Sequence, Dict, Any
 
 import torch
 
@@ -17,7 +17,7 @@ class Cens(namedtuple('Cens', field_names=['obs', 'lower', 'upper'], defaults=[N
         return x is None or isinstance(x, (int, float))
 
     def to_array(self) -> np.ndarray:
-        obs = self._standardize_array(self.obs)
+        obs = self._standardize_array(self.obs, self.lower, self.upper)
 
         stack = getattr(importlib.import_module(type(obs).__module__), 'stack')
         full_like = getattr(importlib.import_module(type(obs).__module__), 'full_like')
@@ -45,8 +45,17 @@ class Cens(namedtuple('Cens', field_names=['obs', 'lower', 'upper'], defaults=[N
         arr = stack([obs, lower, upper], 1)
         return arr
 
-    @staticmethod
-    def _standardize_array(x):
+    def _standardize_array(self, x: Any, lower: Any = None, upper: Any = None):
+        if isinstance(x, (float, int)):
+            if isinstance(lower, (torch.Tensor, np.ndarray)) or hasattr(lower, 'values'):
+                template = self._standardize_array(lower)
+            elif isinstance(upper, (torch.Tensor, np.ndarray)) or hasattr(upper, 'values'):
+                template = self._standardize_array(upper)
+            else:
+                raise ValueError(f"Could not interpret as array:{x}")
+            full_like = getattr(importlib.import_module(type(template).__module__), 'full_like')
+            return full_like(template, x)
+
         if not isinstance(x, (torch.Tensor, np.ndarray)) and isinstance(getattr(x, 'values', None), np.ndarray):
             return x.values
         return x
