@@ -75,7 +75,7 @@ class CovarianceFromLogCholesky(CovarianceParameterization):
 
     def create(self, leading_dims: Sequence[int] = ()) -> torch.Tensor:
         cov = Covariance.from_log_cholesky(**{k.replace('cholesky_', ''): v for k, v in self.param_dict.items()})
-        return cov.expand(tuple(leading_dims) + (-1, -1))
+        return cov.expand(tuple(leading_dims) + (-1, -1)).clone()
 
     @property
     def param_dict(self):
@@ -91,7 +91,7 @@ class CovarianceFromStdDevs(CovarianceParameterization):
     def create(self, leading_dims: Sequence[int] = ()) -> torch.Tensor:
         std_devs = torch.exp(self.param_dict['log_std_devs'])
         cov = torch.diag_embed(std_devs ** 2)
-        return cov.expand(tuple(leading_dims) + (-1, -1))
+        return cov.expand(tuple(leading_dims) + (-1, -1)).clone()
 
     @property
     def param_dict(self):
@@ -129,7 +129,7 @@ class PartialCovariance(CovarianceParameterization):
 
     def create(self, leading_dims: Sequence[int] = ()):
         cov = torch.eye(self.full_rank) * self.diag
-        cov = cov.expand(tuple(leading_dims) + (-1, -1))
+        cov = cov.expand(tuple(leading_dims) + (-1, -1)).clone()
 
         if self.partial_rank == 0:
             return cov
