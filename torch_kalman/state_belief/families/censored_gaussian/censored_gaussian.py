@@ -38,19 +38,15 @@ class CensoredGaussian(Gaussian):
     def update(self,
                obs: Tensor,
                lower: Optional[Tensor] = None,
-               upper: Optional[Tensor] = None,
-               lower_is_trunc: Optional[Tensor] = None,
-               upper_is_trunc: Optional[Tensor] = None) -> 'StateBelief':
-        return super().update(obs, lower=lower, upper=upper, lower_is_trunc=lower_is_trunc, upper_is_trunc=upper_is_trunc)
+               upper: Optional[Tensor] = None) -> 'StateBelief':
+        return super().update(obs, lower=lower, upper=upper)
 
     def _update_group(self,
                       obs: Tensor,
                       group_idx: Union[slice, Sequence[int]],
                       which_valid: Union[slice, Sequence[int]],
                       lower: Optional[Tensor] = None,
-                      upper: Optional[Tensor] = None,
-                      lower_is_trunc: Optional[Tensor] = None,
-                      upper_is_trunc: Optional[Tensor] = None
+                      upper: Optional[Tensor] = None
                       ) -> Tuple[Tensor, Tensor]:
         # indices:
         idx_2d = bmat_idx(group_idx, which_valid)
@@ -60,22 +56,12 @@ class CensoredGaussian(Gaussian):
         obs = obs[idx_2d]
         if lower is not None:
             lower = lower[idx_2d]
+        elif torch.isnan(lower).any():
+            raise ValueError("NaNs not allowed in `lower`")
         if upper is not None:
             upper = upper[idx_2d]
-
-        if lower_is_trunc is None:
-            lower_is_trunc = False
-        elif not isinstance(lower_is_trunc, bool):
-            lower_is_trunc = lower_is_trunc[idx_2d].to(torch.uint8)
-        if lower_is_trunc is not False:
-            raise NotImplementedError("Truncation not currently implemented.")
-
-        if upper_is_trunc is None:
-            upper_is_trunc = False
-        elif not isinstance(upper_is_trunc, bool):
-            upper_is_trunc = upper_is_trunc[idx_2d].to(torch.uint8)
-        if upper_is_trunc is not False:
-            raise NotImplementedError("Truncation not currently implemented.")
+        elif torch.isnan(upper).any():
+            raise ValueError("NaNs not allowed in `upper`")
 
         if (lower == upper).any():
             raise RuntimeError("lower cannot == upper")
