@@ -15,6 +15,7 @@ from torch_kalman.utils import identity
 
 class KalmanFilter(torch.nn.Module):
     family: Type[StateBelief] = Gaussian
+    design_cls = Design
 
     def __init__(self,
                  measures: Sequence[str],
@@ -22,8 +23,7 @@ class KalmanFilter(torch.nn.Module):
                  **kwargs):
 
         super().__init__()
-        self.design: Design = None
-        self._init_design(measures=measures, processes=processes, **kwargs)
+        self.design = self.design_cls(measures=measures, processes=processes, **kwargs)
 
         # parameters from design:
         self.design_parameters = self.design.param_dict()
@@ -32,9 +32,6 @@ class KalmanFilter(torch.nn.Module):
         self._family = None
 
         self.to(device=self.design.device)
-
-    def _init_design(self, *args, **kwargs) -> None:
-        self.design = Design(*args, **kwargs)
 
     @property
     def measure_size(self) -> int:

@@ -143,7 +143,7 @@ class DesignForBatch:
         Q = self.design.process_covariance.create(leading_dims=(self.num_groups,))
 
         # process variances are scaled by the variances of the measurements they are associated with:
-        measure_log_stds = self.design.measure_scaling().diag().sqrt().log()
+        measure_log_stds = self.design.measure_covariance.create().diag().sqrt().log()
         diag_flat = torch.ones(self.state_size, device=self.device)
         for process_name, process in self.processes.items():
             measure_idx = [self.measure_idx[m] for m in process.measures]
@@ -189,8 +189,7 @@ class DesignForBatch:
 
     # measurement covariance ---
     def _R_init(self) -> None:
-        R = self.design.measure_scaling()
-        self._R_base = R.expand(self.num_groups, -1, -1).clone()
+        self._R_base = self.design.measure_covariance.create(leading_dims=(self.num_groups,))
 
     def _R_dynamic(self, base: Tensor, t: int, clone: Optional[bool] = None):
         if clone:
@@ -217,7 +216,7 @@ class DesignForBatch:
         init_cov = self.design.init_covariance.create(leading_dims=(self.num_groups,))
 
         # init variances are scaled by the variances of the measurements they are associated with:
-        measure_log_stds = self.design.measure_scaling().diag().sqrt().log()
+        measure_log_stds = self.design.measure_covariance.create().diag().sqrt().log()
         diag_flat = torch.ones(self.state_size, device=self.device)
         for process_name, process in self.processes.items():
             measure_idx = [self.measure_idx[m] for m in process.measures]

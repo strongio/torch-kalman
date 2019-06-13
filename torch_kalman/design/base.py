@@ -1,14 +1,13 @@
 from collections import OrderedDict
-from typing import Generator, Tuple, Optional, Dict, Sequence, Union
+from typing import Generator, Tuple, Optional, Dict, Sequence
 
 import torch
 
-from torch import Tensor
 from torch.nn import Parameter, ModuleDict, ParameterDict
 
-from torch_kalman.covariance import Covariance
 from torch_kalman.design.for_batch import DesignForBatch
-from torch_kalman.design.partial_mat import PartialCovariance
+from torch_kalman.covariance import CovarianceFromLogCholesky, PartialCovarianceFromLogCholesky
+
 from torch_kalman.process import Process
 
 
@@ -16,7 +15,6 @@ class Design:
     def __init__(self,
                  processes: Sequence[Process],
                  measures: Sequence[str],
-                 cov_parameterization: Union[Dict, str] = 'log_cholesky',
                  **kwargs):
 
         assert processes
@@ -72,8 +70,6 @@ class Design:
         self.all_state_elements_idx = {pse: i for i, pse in enumerate(self.all_state_elements())}
         self.measures_idx = {measure: i for i, measure in enumerate(self.measures)}
 
-        # TODO: accept parameterization; scale init by
-
         # measure-covariance:
         m_upper_tri = int(self.measure_size * (self.measure_size - 1) / 2)
         self.measure_cholesky_log_diag = Parameter(data=.01 * torch.randn(self.measure_size, device=self.device))
@@ -81,31 +77,33 @@ class Design:
 
         # initial state:
         self.init_state_mean_params = Parameter(torch.randn(self.state_size, device=self.device))
-        num_var_states = len(list(self.all_unfixed_state_elements()))
-        s_upper_tri = int(num_var_states * (num_var_states - 1) / 2)
-        self.init_cholesky_log_diag = Parameter(.01 * torch.randn(num_var_states, device=self.device))
-        self.init_cholesky_off_diag = Parameter(.01 * torch.randn(s_upper_tri, device=self.device))
-        self.init_covariance = PartialCovariance(full_dim_names=self.all_state_elements(),
-                                                 partial_dim_names=self.all_unfixed_state_elements(),
-                                                 cov_kwargs={'log_diag': self.init_cholesky_log_diag,
-                                                             'off_diag': self.init_cholesky_off_diag,
-                                                             'device': self.device})
+        self._init_covariance = None
 
         # process cov:
-        num_dyn_states = len(list(self.all_dynamic_state_elements()))
-        ds_upper_tri = int(num_dyn_states * (num_dyn_states - 1) / 2)
-        self.process_cholesky_log_diag = Parameter(.01 * torch.randn(num_dyn_states, device=self.device))
-        self.process_cholesky_off_diag = Parameter(.01 * torch.randn(ds_upper_tri, device=self.device))
-        self.process_covariance = PartialCovariance(full_dim_names=self.all_state_elements(),
-                                                    partial_dim_names=self.all_dynamic_state_elements(),
-                                                    cov_kwargs={'log_diag': self.process_cholesky_log_diag,
-                                                                'off_diag': self.process_cholesky_off_diag,
-                                                                'device': self.device})
+        self._process_covariance = None
 
-    def measure_scaling(self) -> Tensor:
-        return Covariance.from_log_cholesky(self.measure_cholesky_log_diag,
-                                            self.measure_cholesky_off_diag,
-                                            device=self.device)
+        # measure covariance:
+        self._measure_covariance = None
+
+    @property
+    def init_covariance(self):
+        if self._init_covariance is None:
+            self._init_covariance = PartialCovarianceFromLogCholesky(full_dim_names=self.all_state_elements(),
+                                                                     partial_dim_names=self.all_unfixed_state_elements())
+        return self._init_covariance
+
+    @property
+    def process_covariance(self):
+        if self._process_covariance is None:
+            self._process_covariance = PartialCovarianceFromLogCholesky(full_dim_names=self.all_state_elements(),
+                                                                        partial_dim_names=self.all_dynamic_state_elements())
+        return self._process_covariance
+
+    @property
+    def measure_covariance(self):
+        if self._measure_covariance is None:
+            self._measure_covariance = CovarianceFromLogCholesky(rank=len(self.measures))
+        return self._measure_covariance
 
     def all_state_elements(self) -> Generator[Tuple[str, str], None, None]:
         for process_name, process in self.processes.items():
@@ -133,15 +131,12 @@ class Design:
         for process_name, process in self.processes.items():
             p[f"process:{process_name}"] = process.param_dict()
 
-        p['measure_cov'] = ParameterDict([('cholesky_log_diag', self.measure_cholesky_log_diag),
-                                          ('cholesky_off_diag', self.measure_cholesky_off_diag)])
+        p['measure_cov'] = self.measure_covariance.param_dict
 
-        p['init_state'] = ParameterDict([('mean', self.init_state_mean_params),
-                                         ('cholesky_log_diag', self.init_cholesky_log_diag),
-                                         ('cholesky_off_diag', self.init_cholesky_off_diag)])
+        p['init_state'] = ParameterDict([('mean', self.init_state_mean_params)])
+        p['init_state'].update(self.init_covariance.param_dict.items())
 
-        p['process_cov'] = ParameterDict([('cholesky_log_diag', self.process_cholesky_log_diag),
-                                          ('cholesky_off_diag', self.process_cholesky_off_diag)])
+        p['process_cov'] = self.process_covariance.param_dict
 
         return p
 
