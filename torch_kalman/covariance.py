@@ -13,7 +13,7 @@ class Covariance(torch.Tensor):
     def from_log_cholesky(cls,
                           log_diag: torch.Tensor,
                           off_diag: torch.Tensor,
-                          device: Optional[torch.device] = None) -> 'Covariance':
+                          **kwargs) -> 'Covariance':
 
         assert log_diag.shape[:-1] == off_diag.shape[:-1]
         batch_dim = log_diag.shape[:-1]
@@ -27,7 +27,9 @@ class Covariance(torch.Tensor):
                 L[..., i, j] = off_diag[..., idx]
                 idx += 1
 
-        out = Covariance(size=batch_dim + (rank, rank)).to(device)
+        out = cls(size=batch_dim + (rank, rank))
+        if kwargs:
+            out = out.to(**kwargs)
         perm_shape = tuple(range(len(batch_dim))) + (-1, -2)
         out[:] = L.matmul(L.permute(perm_shape))
         return out
