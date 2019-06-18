@@ -13,6 +13,10 @@ from torch_kalman.design.for_batch import DesignForBatch
 from torch_kalman.utils import identity
 
 
+class UnmeasuredError(RuntimeError):
+    pass
+
+
 class StateBelief:
     def __init__(self,
                  means: Tensor,
@@ -49,6 +53,14 @@ class StateBelief:
             assert last_measured.shape[0] == self.num_groups and last_measured.dim() == 1
             self.last_measured = last_measured
 
+    def copy(self) -> 'StateBelief':
+        sb = self.__class__(means=self.means.clone(), covs=self.covs.clone(), last_measured=self.last_measured.clone())
+        try:
+            sb.compute_measurement(H=self.H.clone(), R=self.R.clone())
+        except UnmeasuredError:
+            pass
+        return sb
+
     @classmethod
     def get_input_dim(cls, input: Tensor) -> Tuple[int, int, int]:
         return input.shape
@@ -65,13 +77,13 @@ class StateBelief:
     @property
     def H(self) -> Tensor:
         if self._H is None:
-            raise ValueError("Must call `compute_measurement` first.")
+            raise UnmeasuredError("Must call `compute_measurement` first.")
         return self._H
 
     @property
     def R(self) -> Tensor:
         if self._R is None:
-            raise ValueError("Must call `compute_measurement` first.")
+            raise UnmeasuredError("Must call `compute_measurement` first.")
         return self._R
 
     # noinspection PyPep8Naming
@@ -143,15 +155,14 @@ class StateBelief:
                               design_for_batch: DesignForBatch,
                               progress: bool = False,
                               eps: Optional[Tensor] = None,
-                              ntry_diag_incr: int = 1000,
-                              compute_measurements: bool = True) -> 'StateBeliefOverTime':
+                              ntry_diag_incr: int = 1000) -> 'StateBeliefOverTime':
 
         progress = progress or identity
         if progress is True:
             progress = tqdm
         iterator = progress(range(design_for_batch.num_timesteps))
 
-        state = self.__class__(means=self.means.clone(), covs=self.covs.clone())
+        state = self.copy()
         states = []
         for t in iterator:
             if t > 0:
@@ -165,8 +176,7 @@ class StateBelief:
             state._realize(ntry=ntry_diag_incr, eps=t_eps)
 
             # measure the state:
-            if compute_measurements:
-                state.compute_measurement(H=design_for_batch.H(t), R=design_for_batch.R(t))
+            state.compute_measurement(H=design_for_batch.H(t), R=design_for_batch.R(t))
 
             states.append(state)
 
@@ -178,7 +188,7 @@ class StateBelief:
         # covariance, so we add a small amount of variance
         assert ntry >= 1
 
-        n = self.covs.shape[1]
+        rank = self.covs.shape[1]
 
         # try decomposition -> sample; if numerical issues increase diag
         new_means = None
@@ -187,7 +197,7 @@ class StateBelief:
                 new_means = self.sample_transition(eps=eps)
             except RuntimeError as e:
                 lapack = e
-                self.covs[:, range(n), range(n)] += .000000001
+                self.covs[:, range(rank), range(rank)] += 1e-09
             if new_means is not None:
                 break
 

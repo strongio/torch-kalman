@@ -52,14 +52,14 @@ class KalmanFilter(torch.nn.Module):
     # noinspection PyShadowingBuiltins
     def forward(self,
                 input: Any,
-                initial_state: Optional[StateBelief] = None,
+                initial_prediction: Optional[StateBelief] = None,
                 progress: Union[tqdm, bool] = False,
                 **kwargs) -> StateBeliefOverTime:
         """
         :param input: The multivariate time-series to be fit by the kalman-filter. The exact structure depends on the kalman-
         filter `family`; for most, it is a tensor where the first dimension represents the groups, the second dimension
         represents the time-points, and the third dimension represents the measures.
-        :param initial_state: If a StateBelief, this is used as the prediction for time=0; if None then each process
+        :param initial_prediction: If a StateBelief, this is used as the prediction for time=0; if None then each process
         generates initial values.
         :param progress: Should progress-bar be generated?
         :param kwargs: Other kwargs that will be passed to the `design_for_batch` method.
@@ -76,10 +76,10 @@ class KalmanFilter(torch.nn.Module):
                                                  **kwargs)
 
         # initial state of the system:
-        if initial_state is None:
+        if initial_prediction is None:
             state_prediction = self.predict_initial_state(design_for_batch)
         else:
-            state_prediction = initial_state
+            state_prediction = initial_prediction.copy()
 
         progress = progress or identity
         if progress is True:
@@ -182,13 +182,28 @@ class KalmanFilter(torch.nn.Module):
                  from_times: Optional[Sequence[int]] = None,
                  progress: bool = False,
                  **kwargs) -> StateBeliefOverTime:
+        """
+
+        :param states: Typically this is the StateBeliefOverTime output from the forward-pass (i.e., we are forecasting
+        relative to our last batch of one-step-ahead predictions). This can also be a single StateBelief, which will serve
+        as the first prediction in the forecast.
+        :param horizon: The forecast horizon. For horizon=1, we return the initial prediction that was passed via `states`
+        (but with compute_measurement called based on this batch).
+        :param from_times: If `states` is the output of a forward-pass, then we may not wish to generate forecasts from
+        the final timestep for every member in the batch. For example, a batch whose members have uneven number of timesteps
+        will have its short members padded to be as long as the longest member; but we actually care about forecasting from
+        the last observation in the batch for each member.
+        :param progress: Should a progress-bar be generated?
+        :param kwargs: Further arguments passed to `design_for_batch`.
+        :return: A StateBeliefOverTime containing forecasts.
+        """
 
         assert horizon > 0
 
         # forecast-from time:
         if from_times is None:
             if isinstance(states, StateBelief):
-                state_prediction = states
+                state_prediction = states.copy()
             else:
                 # a StateBeliefOverTime was passed, but no from_times, so just pick the last one
                 state_prediction = states.last_prediction()

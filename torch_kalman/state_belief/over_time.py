@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Sequence, Dict, Tuple, Union, Optional
+from typing import Sequence, Dict, Tuple, Union, Optional, Iterable
 from warnings import warn
 
 import torch
@@ -8,6 +8,7 @@ from torch import Tensor
 
 from torch_kalman.design import Design
 from torch_kalman.state_belief import StateBelief
+from torch_kalman.state_belief.base import UnmeasuredError
 
 Selector = Union[Sequence[int], slice]
 
@@ -78,24 +79,33 @@ class StateBeliefOverTime:
     def last_update(self) -> StateBelief:
         no_updates = self.last_update_idx < 0
         if no_updates.any():
-            raise ValueError(f"The following groups have never been updated:\n{no_updates.nonzero().squeeze().tolist()}")
-        means_covs = ((self.means[g, t, :], self.covs[g, t, :, :]) for g, t in enumerate(self.last_update_idx))
-        means, covs = zip(*means_covs)
-        return self.family(means=torch.stack(means), covs=torch.stack(covs))
+            raise ValueError(f"The following groups have never been updated:"
+                             f"\n{no_updates.nonzero().squeeze().tolist()}")
+        return self._restore_sb(enumerate(self.last_update_idx.tolist()))
 
     def last_prediction(self) -> StateBelief:
         no_predicts = self.last_predict_idx < 0
         if no_predicts.any():
             raise ValueError(f"The following groups have never been predicted:"
                              f"\n{no_predicts.nonzero().squeeze().tolist()}")
-        means_covs = ((self.means[g, t, :], self.covs[g, t, :, :]) for g, t in enumerate(self.last_predict_idx))
-        means, covs = zip(*means_covs)
-        return self.family(means=torch.stack(means), covs=torch.stack(covs))
+        return self._restore_sb(enumerate(self.last_predict_idx.tolist()))
+
+    def _restore_sb(self, indices: Iterable[Tuple[int, int]]) -> StateBelief:
+        means, covs, H, R = [], [], [], []
+        for g, t in indices:
+            means.append(self.means[g, t])
+            covs.append(self.covs[g, t])
+            H.append(self.H[g, t])
+            R.append(self.R[g, t])
+        sb = self.family(torch.stack(means), torch.stack(covs))
+        try:
+            sb.compute_measurement(H=torch.stack(H), R=torch.stack(R))
+        except UnmeasuredError:
+            pass
+        return sb
 
     def state_belief_for_time(self, times: Sequence[int]) -> StateBelief:
-        means_covs = ((self.means[g, t, :], self.covs[g, t, :, :]) for g, t in enumerate(times))
-        means, covs = zip(*means_covs)
-        return self.family(means=torch.stack(means), covs=torch.stack(covs))
+        return self._restore_sb(enumerate(times))
 
     def _which_valid_key(self, is_nan: Tensor) -> Tuple[int]:
         num_multi_dims = sum(x > 1 for x in is_nan.shape)
