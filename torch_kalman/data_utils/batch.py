@@ -66,6 +66,7 @@ class TimeSeriesBatch:
             measures = np.array(measures)
 
         assert len(group_names) == len(start_times)
+        assert len(group_names) == len(tensor)
 
         self.tensor = tensor
         self.group_names = group_names
