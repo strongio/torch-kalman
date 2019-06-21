@@ -162,10 +162,12 @@ class TimeSeriesBatch:
         except ImportError:
             raise RuntimeError("Must install `pandas` for `tensor_to_dataframe` to work.")
 
+        tensor = tensor.data.numpy()
+
         dfs = []
         for g, group_name in enumerate(group_names):
             # get values, don't store trailing nans:
-            values = tensor[g, :, :].detach().numpy()
+            values = tensor[g]
             all_nan_per_row = np.min(np.isnan(values), axis=1)
             if all_nan_per_row.all():
                 warn(f"Group {group_name} has only missing values.")
