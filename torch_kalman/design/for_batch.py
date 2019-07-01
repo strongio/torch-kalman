@@ -1,7 +1,7 @@
 import inspect
 
 from collections import OrderedDict
-from typing import Optional, Tuple, List, Dict, Union
+from typing import Optional, Tuple, List, Dict, Union, Any
 import torch
 from torch import Tensor
 
@@ -38,7 +38,7 @@ class DesignForBatch:
         assert isinstance(design.processes, OrderedDict)  # below assumes key ordering
         self._processes = None
         self.process_kwargs = {
-            self._prepare_process_kwargs(process, process_kwargs.get(process_name, {}))
+            process_name: self._prepare_process_kwargs(process, process_kwargs.get(process_name, {}))
             for process_name, process in design.processes.items()
         }
 
@@ -231,7 +231,7 @@ class DesignForBatch:
         # init variances are scaled by the variances of the measurements they are associated with:
         measure_log_stds = self.design.measure_covariance.create().diag().sqrt().log()
         diag_flat = torch.ones(self.state_size, device=self.device)
-        for process_name, process in self.processes.items():
+        for process_name, process in self.design.processes.items():
             measure_idx = [self.measure_idx[m] for m in process.measures]
             log_scaling = measure_log_stds[measure_idx].mean()
             process_slice = self.process_idx[process_name]
@@ -243,7 +243,7 @@ class DesignForBatch:
         return init_cov
 
     @staticmethod
-    def _prepare_process_kwargs(process, kwargs: Union[Dict, object]) -> Dict:
+    def _prepare_process_kwargs(process: 'Process', kwargs: Union[Dict, Any]) -> Dict:
         if isinstance(kwargs, dict):
             return kwargs
         params = [param for pname, param in inspect.signature(process.for_batch).parameters.items()
