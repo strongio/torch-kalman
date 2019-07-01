@@ -35,7 +35,7 @@ class Covariance(torch.Tensor):
         return out
 
     def to_log_cholesky(self) -> Tuple[torch.Tensor, torch.Tensor]:
-        batch_dim = self.shape[:-1]
+        batch_dim = self.shape[:-2]
         rank = self.shape[-1]
         L = torch.cholesky(self)
 
