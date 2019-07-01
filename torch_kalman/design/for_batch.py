@@ -36,22 +36,11 @@ class DesignForBatch:
         # create processes for batch:
         assert set(process_kwargs.keys()).issubset(design.processes.keys())
         assert isinstance(design.processes, OrderedDict)  # below assumes key ordering
-        self.processes: Dict[str, ProcessForBatch] = OrderedDict()
-        self.process_kwargs = {}
-        for process_name, process in design.processes.items():
-            try:
-                self.process_kwargs[process_name] = self._prepare_process_kwargs(process,
-                                                                                 process_kwargs.get(process_name, {}))
-                self.processes[process_name] = process.for_batch(num_groups=num_groups,
-                                                                 num_timesteps=num_timesteps,
-                                                                 **self.process_kwargs[process_name])
-            except (TypeError, ValueError) as e:
-                msg = f"Failed to create `{process}.for_batch` (see traceback above)."
-                if ('missing' in e.args[0]) and (process_name not in process_kwargs.keys()):
-                    raise TypeError(f"{msg} Must pass `process_kwargs`, with the keys being process-names and the values "
-                                    f"being the kwargs.") from e
-                else:
-                    raise RuntimeError(msg) from e
+        self._processes = None
+        self.process_kwargs = {
+            self._prepare_process_kwargs(process, process_kwargs.get(process_name, {}))
+            for process_name, process in design.processes.items()
+        }
 
         # initial mean/cov:
         self.initial_mean = self._build_init_mean()
@@ -60,22 +49,38 @@ class DesignForBatch:
         # transitions:
         self._F_base: Tensor = None
         self._F_dynamic_assignments: List[Tuple[Tuple[int, int], SeqOfTensors]] = None
-        self._F_init()
 
         # measurements:
         self._H_base: Tensor = None
         self._H_dynamic_assignments: List[Tuple[Tuple[int, int], SeqOfTensors]] = None
-        self._H_init()
 
         # process-var:
         self._Q_base: Tensor = None
         self._Q_diag_multi_dynamic_assignments: List[Tuple[Tuple[int, int], SeqOfTensors]] = None
-        self._Q_init()
 
         # measure-var:
         self._R_base: Tensor = None
         # R_dynamic_assignments not implemented yet
-        self._R_init()
+
+    @property
+    def processes(self) -> OrderedDict:
+        if self._processes is None:
+            processes = OrderedDict()
+            for process_name, process in self.design.processes.items():
+                try:
+                    processes[process_name] = process.for_batch(num_groups=self.num_groups,
+                                                                num_timesteps=self.num_timesteps,
+                                                                **self.process_kwargs[process_name])
+                except (TypeError, ValueError) as e:
+                    msg = f"Failed to create `{process}.for_batch` (see traceback above)."
+                    if ('missing' in e.args[0]) and (process_name not in self.process_kwargs.keys()):
+                        raise TypeError(
+                            f"{msg} Must pass `process_kwargs`, with the keys being process-names and the values "
+                            f"being the kwargs.") from e
+                    else:
+                        raise RuntimeError(msg) from e
+            self._processes = processes
+        return self._processes
 
     # transitions ----
     def _F_init(self) -> None:
@@ -106,6 +111,8 @@ class DesignForBatch:
         return mat
 
     def F(self, t: int) -> Tensor:
+        if self._F_base is None:
+            self._F_init()
         return self._F_dynamic(base=self._F_base, t=t, clone=None)
 
     # measurements ----
@@ -136,6 +143,8 @@ class DesignForBatch:
         return mat
 
     def H(self, t: int) -> Tensor:
+        if self._H_base is None:
+            self._H_init()
         return self._H_dynamic(base=self._H_base, t=t, clone=None)
 
     # process covariance ----
@@ -185,6 +194,8 @@ class DesignForBatch:
             return mat
 
     def Q(self, t: int) -> Tensor:
+        if self._Q_base is None:
+            self._Q_init()
         return self._Q_dynamic(base=self._Q_base, t=t, clone=None)
 
     # measurement covariance ---
@@ -199,6 +210,8 @@ class DesignForBatch:
         return mat
 
     def R(self, t: int) -> Tensor:
+        if self._R_base is None:
+            self._R_init()
         return self._R_dynamic(base=self._R_base, t=t, clone=None)
 
     # initial state belief ---

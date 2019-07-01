@@ -84,13 +84,13 @@ class KalmanFilter(torch.nn.Module):
         progress = progress or identity
         if progress is True:
             progress = tqdm
-        iterator = progress(range(num_timesteps))
+        times = progress(range(num_timesteps))
 
         # generate one-step-ahead predictions:
         state_predictions = []
-        for t in iterator:
+        for t in times:
             if t > 0:
-                # take state-prediction of previous t (now t-1), correct it according to what was actually measured at at t-1
+                # take state-prediction of previous t (now t-1), correct it according to what was actually measured at t-1
                 state_belief = state_prediction.update_from_input(input, time=t - 1)
 
                 # predict the state for t, from information from t-1
