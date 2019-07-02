@@ -157,6 +157,8 @@ class TimeSeriesBatch:
                             group_colname: str,
                             time_colname: str,
                             measures: Sequence[str]) -> 'DataFrame':
+        # TODO: for speed, decide whether to iterate over times or iterate over groups based on which is longer?
+
         try:
             import pandas as pd
         except ImportError:

@@ -72,6 +72,7 @@ class Gaussian(StateBelief):
         return GaussianOverTime(state_beliefs=state_beliefs, design=design)
 
     def sample_transition(self, eps: Optional[Tensor] = None) -> Tensor:
+        # TODO: remove zero-var-dims, replace at the end
         distribution = torch.distributions.MultivariateNormal(loc=self.means, covariance_matrix=self.covs)
         return deterministic_sample_mvnorm(distribution, eps=eps)
 

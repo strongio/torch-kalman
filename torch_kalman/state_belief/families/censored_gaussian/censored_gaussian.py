@@ -150,9 +150,7 @@ class CensoredGaussianOverTime(GaussianOverTime):
                  obs: Tensor,
                  lower: Optional[Tensor] = None,
                  upper: Optional[Tensor] = None):
-        return super().log_prob(obs=obs,
-                                lower=lower,
-                                upper=upper)
+        return super().log_prob(obs=obs, lower=lower, upper=upper)
 
     def _log_prob_with_subsetting(self,
                                   obs: Tensor,
@@ -202,7 +200,7 @@ class CensoredGaussianOverTime(GaussianOverTime):
         elif method.lower() == 'independent':
             #
             pred_mean = self.predictions[idx_3d]
-            pred_cov = self.prediction_uncertainty[idx_4d]  # TODO: use R instead?
+            pred_cov = self.prediction_uncertainty[idx_4d]
 
             #
             cens_up = torch.isclose(obs, upper)

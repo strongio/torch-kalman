@@ -155,16 +155,17 @@ class StateBelief:
                               design_for_batch: DesignForBatch,
                               progress: bool = False,
                               eps: Optional[Tensor] = None,
-                              ntry_diag_incr: int = 1000) -> 'StateBeliefOverTime':
+                              ntry_diag_incr: int = 1000,
+                              compute_measurements: bool = True) -> 'StateBeliefOverTime':
 
         progress = progress or identity
         if progress is True:
             progress = tqdm
-        iterator = progress(range(design_for_batch.num_timesteps))
+        times = progress(range(design_for_batch.num_timesteps))
 
         state = self.copy()
         states = []
-        for t in iterator:
+        for t in times:
             if t > 0:
                 # move sim forward one step:
                 state = state.predict(F=design_for_batch.F(t - 1), Q=design_for_batch.Q(t - 1))
@@ -176,7 +177,8 @@ class StateBelief:
             state._realize(ntry=ntry_diag_incr, eps=t_eps)
 
             # measure the state:
-            state.compute_measurement(H=design_for_batch.H(t), R=design_for_batch.R(t))
+            if compute_measurements:
+                state.compute_measurement(H=design_for_batch.H(t), R=design_for_batch.R(t))
 
             states.append(state)
 
