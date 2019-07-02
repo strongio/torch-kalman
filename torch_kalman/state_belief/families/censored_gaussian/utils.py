@@ -11,8 +11,12 @@ import numpy as np
 
 std_normal = torch.distributions.Normal(0, 1)
 
+_base = namedtuple('Cens', field_names=['obs', 'lower', 'upper'])
+_base.__new__.__defaults__ = (None, None)
 
-class Cens(namedtuple('Cens', field_names=['obs', 'lower', 'upper'], defaults=[None, None])):
+
+class Cens(_base):
+
     def _for_fill(self, x):
         return x is None or isinstance(x, (int, float))
 
