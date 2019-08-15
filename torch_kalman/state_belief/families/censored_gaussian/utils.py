@@ -70,10 +70,14 @@ def tobit_adjustment(mean: Tensor,
                      lower: Optional[Tensor] = None,
                      upper: Optional[Tensor] = None,
                      probs: Optional[Tuple[Tensor, Tensor]] = None) -> Tuple[Tensor, Tensor]:
+    assert cov.shape[-1] == cov.shape[-2]  # symmetrical
+
     if upper is None:
         upper = torch.full_like(mean, float('inf'))
     if lower is None:
         lower = torch.full_like(mean, -float('inf'))
+
+    assert lower.shape == upper.shape == mean.shape
 
     is_cens_up = torch.isfinite(upper)
     is_cens_lo = torch.isfinite(lower)

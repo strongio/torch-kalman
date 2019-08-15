@@ -39,13 +39,13 @@ class TimeSeriesBatch:
             group_names = np.array(group_names)
 
         if not isinstance(start_times, np.ndarray):
-            if isinstance(start_times[0], datetime.datetime):
-                start_times = np.array(start_times, dtype='datetime64')
-            else:
+            if isinstance(start_times[0], np.number):
                 start_times_int = np.array(start_times, dtype=np.int64)
                 if not np.isclose(start_times_int - start_times, 0.).all():
                     raise ValueError("`start_times` should be a datetime64 array or an array of whole numbers")
                 start_times = start_times_int
+            else:
+                start_times = np.array(start_times, dtype='datetime64')
 
         self.dt_unit = dt_unit
         if dt_unit in self.supported_dt_units:

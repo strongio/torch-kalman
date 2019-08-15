@@ -68,6 +68,7 @@ class DesignForBatch:
             processes = OrderedDict()
             for process_name, process in self.design.processes.items():
                 try:
+                    # TODO: could do something like: `if process.takes_design: process.for_batch(design=self.design)`
                     processes[process_name] = process.for_batch(num_groups=self.num_groups,
                                                                 num_timesteps=self.num_timesteps,
                                                                 **self.process_kwargs[process_name])
@@ -79,6 +80,8 @@ class DesignForBatch:
                             f"being the kwargs.") from e
                     else:
                         raise RuntimeError(msg) from e
+                if processes[process_name] is None:
+                    raise RuntimeError(f"{process_name}'s `for_batch` call returned None.")
             self._processes = processes
         return self._processes
 
