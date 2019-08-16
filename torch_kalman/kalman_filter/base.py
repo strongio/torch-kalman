@@ -53,6 +53,7 @@ class KalmanFilter(torch.nn.Module):
     def forward(self,
                 input: Any,
                 initial_prediction: Optional[StateBelief] = None,
+                forecast_horizon: int = 0,
                 progress: Union[tqdm, bool] = False,
                 **kwargs) -> StateBeliefOverTime:
         """
@@ -61,15 +62,19 @@ class KalmanFilter(torch.nn.Module):
         represents the time-points, and the third dimension represents the measures.
         :param initial_prediction: If a StateBelief, this is used as the prediction for time=0; if None then each process
         generates initial values.
+        :param forecast_horizon: Number of timesteps past the end of the input to continue making predictions
         :param progress: Should progress-bar be generated?
         :param kwargs: Other kwargs that will be passed to the `design_for_batch` method.
         :return: A StateBeliefOverTime consisting of one-step-ahead predictions.
         """
 
-        num_groups, num_timesteps, num_measures, *_ = self.family.get_input_dim(input)
+        num_groups, num_timesteps_input, num_measures, *_ = self.family.get_input_dim(input)
         if num_measures != self.measure_size:
             raise ValueError(f"This KalmanFilter has {self.measure_size} measurement-dimensions; but the input shape is "
-                             f"{(num_groups, num_timesteps, num_measures)} (3rd dim should == measure-size).")
+                             f"{(num_groups, num_timesteps_input, num_measures)} (3rd dim should == measure-size).")
+
+        assert forecast_horizon >= 0
+        num_timesteps = num_timesteps_input + forecast_horizon
 
         design_for_batch = self.design_for_batch(num_groups=num_groups,
                                                  num_timesteps=num_timesteps,
@@ -111,130 +116,3 @@ class KalmanFilter(torch.nn.Module):
 
     def smooth(self, states: StateBeliefOverTime):
         raise NotImplementedError
-
-    def simulate(self,
-                 states: Union[StateBeliefOverTime, StateBelief],
-                 horizon: int,
-                 num_iter: int,
-                 progress: bool = False,
-                 from_times: Sequence[int] = None,
-                 state_to_measured: Optional[Callable] = None,
-                 white_noise: Optional[Tuple[Tensor, Tensor]] = None,
-                 ntry_diag_incr: int = 1000,
-                 **kwargs) -> List[Tensor]:
-        """
-
-        :param states: Either the output of the forward pass (a StateBeliefOverTime), or a particular StateBelief.
-        :param horizon: The number of timesteps forward to simulate.
-        :param num_iter: The number of sim-iterations.
-        :param progress: Should progress bar be printed?
-        :param from_times: If states is a StateBeliefOverTime, can indicate which times to extract the StateBelief from.
-        :param state_to_measured: Optional. A function that takes the StateBeliefOverTime generated from the simulation, and
-        converts it into a Tensor of simulated measurements.
-        :param white_noise: An optional tuple of tensors, so that the direction of noise can be controlled as a constant
-        across sims. Each must have shape (num_groups * num_sims, num_times, ...).
-        :param ntry_diag_incr: When simulating from some kalman-filters with low-process variance, the state-belief
-        covariance may not be cholesky-decomposible. In this case, we retry the decomposition after adding a small
-        value (.000000001) to the diagonal. `ntry_diag_incr` is the number of retries.
-        :param kwargs: Further keyword arguments passed to design_for_batch.
-        :return: A list of Tensors. Each element of the list is a different sim-iteration.
-        """
-
-        assert horizon > 0
-
-        # forecast-from time:
-        if from_times is None:
-            if isinstance(states, StateBelief):
-                initial_state = states
-            else:
-                # a StateBeliefOverTime was passed, but no from_times, so just pick the last one
-                initial_state = states.last_prediction()
-        else:
-            # from_times will be used to pick the slice
-            initial_state = states.state_belief_for_time(from_times)
-
-        initial_state = initial_state.__class__(means=initial_state.means.repeat((num_iter, 1)),
-                                                covs=initial_state.covs.repeat((num_iter, 1, 1)),
-                                                last_measured=initial_state.last_measured.repeat(num_iter))
-
-        design_for_batch = self.design_for_batch(num_groups=initial_state.num_groups,
-                                                 num_timesteps=horizon,
-                                                 **kwargs)
-
-        if white_noise is None:
-            process_wn, measure_wn = None, None
-        else:
-            process_wn, measure_wn = white_noise
-        trajectories = initial_state.simulate_trajectories(design_for_batch=design_for_batch,
-                                                           progress=progress,
-                                                           ntry_diag_incr=ntry_diag_incr,
-                                                           eps=process_wn)
-        if state_to_measured is None:
-            sim = trajectories.sample_measurements(eps=measure_wn)
-        else:
-            sim = state_to_measured(trajectories)
-
-        return torch.chunk(sim, num_iter)
-
-    def forecast(self,
-                 states: Union[StateBeliefOverTime, StateBelief],
-                 horizon: int,
-                 from_times: Optional[Sequence[int]] = None,
-                 progress: bool = False,
-                 **kwargs) -> StateBeliefOverTime:
-        """
-
-        :param states: Typically this is the StateBeliefOverTime output from the forward-pass (i.e., we are forecasting
-        relative to our last batch of one-step-ahead predictions). This can also be a single StateBelief, which will serve
-        as the first prediction in the forecast.
-        :param horizon: The forecast horizon. For horizon=1, we return the initial prediction that was passed via `states`
-        (but with compute_measurement called based on this batch).
-        :param from_times: If `states` is the output of a forward-pass, then we may not wish to generate forecasts from
-        the final timestep for every member in the batch. For example, a batch whose members have uneven number of timesteps
-        will have its short members padded to be as long as the longest member; but we actually care about forecasting from
-        the last observation in the batch for each member.
-        :param progress: Should a progress-bar be generated?
-        :param kwargs: Further arguments passed to `design_for_batch`.
-        :return: A StateBeliefOverTime containing forecasts.
-        """
-
-        assert horizon > 0
-
-        # forecast-from time:
-        if from_times is None:
-            if isinstance(states, StateBelief):
-                state_prediction = states.copy()
-            else:
-                # a StateBeliefOverTime was passed, but no from_times, so just pick the last one
-                state_prediction = states.last_prediction()
-        else:
-            # from_times will be used to pick the slice
-            state_prediction = states.state_belief_for_time(from_times)
-
-        design_for_batch = self.design_for_batch(num_groups=state_prediction.num_groups,
-                                                 num_timesteps=horizon,
-                                                 **kwargs)
-
-        progress = progress or identity
-        if progress is True:
-            progress = tqdm
-        iterator = progress(range(design_for_batch.num_timesteps))
-
-        forecasts = []
-        for t in iterator:
-            if t > 0:
-                # predict the state for t, from information from t-1
-                # F at t-1 is transition *from* t-1 *to* t
-                F = design_for_batch.F(t - 1)
-                Q = design_for_batch.Q(t - 1)
-                state_prediction = state_prediction.predict(F=F, Q=Q)
-
-            # compute how state-prediction at t translates into measurement-prediction at t
-            H = design_for_batch.H(t)
-            R = design_for_batch.R(t)
-            state_prediction.compute_measurement(H=H, R=R)
-
-            # append to output:
-            forecasts.append(state_prediction)
-
-        return self.family.concatenate_over_time(state_beliefs=forecasts, design=self.design)

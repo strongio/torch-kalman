@@ -66,7 +66,10 @@ class StateBelief:
         return input.shape
 
     def update_from_input(self, input: Tensor, time: int):
-        return self.update(obs=input[:, time, :])
+        if time >= input.shape[1]:
+            return self.copy()
+        else:
+            return self.update(obs=input[:, time, :])
 
     def compute_measurement(self, H: Tensor, R: Tensor) -> None:
         assert H.ndimension() == 3
