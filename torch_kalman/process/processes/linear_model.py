@@ -6,9 +6,12 @@ from torch import Tensor
 
 from torch_kalman.process import Process
 from torch_kalman.process.for_batch import ProcessForBatch
+from torch_kalman.process.mixins.has_predictors import HasPredictorsMixin
+from torch_kalman.process.utils.handle_for_batch_kwargs import handle_for_batch_kwargs
 
 
-class LinearModel(Process):
+class LinearModel(HasPredictorsMixin, Process):
+
     def __init__(self,
                  id: str,
                  covariates: Sequence[str],
@@ -59,29 +62,17 @@ class LinearModel(Process):
             self._set_measure(measure=measure, state_element=cov, value=0., inv_link=self.inv_link)
         return self
 
-    def for_batch(self, num_groups: int, num_timesteps: int, lm_input: Tensor) -> ProcessForBatch:
+    @handle_for_batch_kwargs
+    def for_batch(self, num_groups: int, num_timesteps: int, predictors: Tensor) -> ProcessForBatch:
         for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
 
-        if not isinstance(lm_input, Tensor):
-            raise ValueError(f"Process {self.id} received 'lm_input' that is not a Tensor.")
-        elif lm_input.requires_grad:
-            raise ValueError(f"Process {self.id} received 'lm_input' that requires_grad, which is not allowed.")
-        elif torch.isnan(lm_input).any():
-            raise ValueError(f"Process {self.id} received 'lm_input' that has nans.")
+        if predictors.shape[1] > num_timesteps:
+            predictors = predictors[:, 0:num_timesteps, :]
 
-        if lm_input.ndimension() != 3:
-            raise ValueError(f"`lm_input` should have three dimensions, but got {lm_input.shape}.")
-
-        mm_num_groups, mm_num_ts, mm_num_covs = lm_input.shape
-        if mm_num_groups != num_groups:
-            raise ValueError(f"Batch-size is {num_groups}, but lm_input.shape[0] is {mm_num_groups}.")
-        if mm_num_ts != num_timesteps:
-            raise ValueError(f"Batch num. timesteps is {num_timesteps}, but lm_input.shape[1] is {mm_num_ts}.")
-        if mm_num_covs != len(self.state_elements):
-            raise ValueError(f"Expected {len(self.state_elements)} covariates, but lm_input.shape[2] = {mm_num_covs}.")
+        self._check_predictor_tens(predictors, num_groups, num_timesteps, num_measures=len(self.state_elements))
 
         for measure in self.measures:
             for i, cov in enumerate(self.state_elements):
-                for_batch.adjust_measure(measure=measure, state_element=cov, adjustment=lm_input[:, :, i])
+                for_batch.adjust_measure(measure=measure, state_element=cov, adjustment=predictors[:, :, i])
 
         return for_batch

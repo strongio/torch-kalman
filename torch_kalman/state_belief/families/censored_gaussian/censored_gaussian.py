@@ -113,7 +113,6 @@ class CensoredGaussian(Gaussian):
         k = (I - K.matmul(prob_obs).matmul(H))
         return k.matmul(covariance)
 
-    # noinspection PyMethodOverriding
     @staticmethod
     def kalman_gain(covariance: Tensor,
                     H: Tensor,

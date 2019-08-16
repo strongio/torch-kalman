@@ -13,7 +13,6 @@ from torch_kalman.state_belief.over_time import StateBeliefOverTime, Selector
 from torch_kalman.state_belief.utils import bmat_idx, deterministic_sample_mvnorm
 
 
-# noinspection PyPep8Naming
 class Gaussian(StateBelief):
     def __init__(self, means: Tensor, covs: Tensor, last_measured: Optional[Tensor] = None):
         self._measured_means = None

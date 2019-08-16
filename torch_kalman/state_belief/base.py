@@ -89,12 +89,10 @@ class StateBelief:
             raise UnmeasuredError("Must call `compute_measurement` first.")
         return self._R
 
-    # noinspection PyPep8Naming
     def predict(self, F: Tensor, Q: Tensor) -> 'StateBelief':
         Ft = F.permute(0, 2, 1)
         means = F.matmul(self.means.unsqueeze(2)).squeeze(2)
         covs = F.matmul(self.covs).matmul(Ft) + Q
-        # noinspection PyTypeChecker
         return self.__class__(means=means, covs=covs, last_measured=self.last_measured + 1)
 
     def update(self, obs: Tensor, **kwargs) -> 'StateBelief':
@@ -207,7 +205,6 @@ class StateBelief:
                 break
 
         if new_means is None:
-            # noinspection PyUnboundLocalVariable
             raise lapack
 
         self.means = new_means

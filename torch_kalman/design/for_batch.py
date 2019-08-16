@@ -8,17 +8,18 @@ from torch import Tensor
 from torch_kalman.process.for_batch import SeqOfTensors, ProcessForBatch
 
 
-# noinspection PyPep8Naming
 class DesignForBatch:
     def __init__(self,
                  design: 'Design',
                  num_groups: int,
                  num_timesteps: int,
-                 process_kwargs: Optional[Dict[str, Dict]] = None):
-        process_kwargs = process_kwargs or {}
+                 **kwargs):
 
         self.design = design
         self.device = design.device
+
+        self._processes = None
+        self._kwargs = kwargs
 
         # process indices:
         self.process_idx = design.process_idx
@@ -32,15 +33,6 @@ class DesignForBatch:
 
         # measures:
         self.measure_idx = {measure_id: i for i, measure_id in enumerate(design.measures)}
-
-        # create processes for batch:
-        assert set(process_kwargs.keys()).issubset(design.processes.keys())
-        assert isinstance(design.processes, OrderedDict)  # below assumes key ordering
-        self._processes = None
-        self.process_kwargs = {
-            process_name: self._prepare_process_kwargs(process, process_kwargs.get(process_name, {}))
-            for process_name, process in design.processes.items()
-        }
 
         # initial mean/cov:
         self.initial_mean = self._build_init_mean()
@@ -68,18 +60,13 @@ class DesignForBatch:
             processes = OrderedDict()
             for process_name, process in self.design.processes.items():
                 try:
-                    # TODO: could do something like: `if process.takes_design: process.for_batch(design=self.design)`
                     processes[process_name] = process.for_batch(num_groups=self.num_groups,
                                                                 num_timesteps=self.num_timesteps,
-                                                                **self.process_kwargs[process_name])
+                                                                **self._kwargs)
                 except (TypeError, ValueError) as e:
-                    msg = f"Failed to create `{process}.for_batch` (see traceback above)."
-                    if ('missing' in e.args[0]) and (process_name not in self.process_kwargs.keys()):
-                        raise TypeError(
-                            f"{msg} Must pass `process_kwargs`, with the keys being process-names and the values "
-                            f"being the kwargs.") from e
-                    else:
-                        raise RuntimeError(msg) from e
+                    # add process-name to traceback
+                    raise RuntimeError(f"Failed to create `{process}.for_batch` (see traceback above).") from e
+
                 if processes[process_name] is None:
                     raise RuntimeError(f"{process_name}'s `for_batch` call returned None.")
             self._processes = processes
@@ -225,7 +212,7 @@ class DesignForBatch:
             pslice = self.process_idx[process_name]
             init_mean[:, pslice] = process.initial_state_means_for_batch(self.design.init_state_mean_params[pslice],
                                                                          num_groups=self.num_groups,
-                                                                         **self.process_kwargs[process_name])
+                                                                         **self._kwargs)
         return init_mean
 
     def _build_init_covariance(self) -> Tensor:

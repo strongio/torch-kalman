@@ -9,21 +9,34 @@ import numpy as np
 
 from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.utils.bounded import Bounded
-from torch_kalman.process.utils.dt_tracker import DTTracker
+from torch_kalman.process.mixins.datetime import DatetimeMixin
+from torch_kalman.process.utils.handle_for_batch_kwargs import handle_for_batch_kwargs
 from torch_kalman.process.utils.fourier import fourier_tensor
 
 
-class FourierSeason(Process):
+class FourierSeason(DatetimeMixin, Process):
     def __init__(self,
                  id: str,
                  seasonal_period: Union[int, float],
                  K: Union[int, float],
                  decay: Union[bool, Tuple[float, float]] = False,
-                 season_start: Union[str, None, bool] = None,
+                 season_start: Optional[str] = None,
                  dt_unit: Optional[str] = None):
-
-        # handle datetimes:
-        self.dt_tracker = DTTracker(season_start=season_start, dt_unit=dt_unit, process_id=id)
+        """
+        :param id: Unique name for this instance.
+        :param seasonal_period: The seasonal period (e.g. 24 for daily season in hourly data, 365.25 for yearly season in
+        daily data)
+        :param K: The "K" parameter of the fourier series, see `fourier_tensor`.
+        :param decay: Optional (float,float) boundaries for decay (between 0 and 1). Analogous to dampening a trend -- the
+        state will revert to zero as we get further from the last observation. This can be useful if two processes are
+        capturing the same seasonal pattern: one can be more flexible, but with decay have a tendency to revert to zero,
+        while the other is less variable but extrapolates into the future.
+        :param season_start:  A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
+        starts, which is useful to specify if season boundaries are meaningful. It is important to specify if different
+        groups in your dataset start on different dates; when calling the kalman-filter you'll pass an array of
+        `start_datetimes` for group in the input, and this will be used to align the seasons for each group.
+        :param dt_unit: Currently supports {'Y', 'D', 'h', 'm', 's'}. 'W' is experimentally supported.
+        """
 
         # season structure:
         self.seasonal_period = seasonal_period
@@ -38,7 +51,9 @@ class FourierSeason(Process):
             self.decay = Bounded(*decay)
 
         state_elements, list_of_trans_kwargs = self._setup(decay=decay)
-        super().__init__(id=id, state_elements=state_elements)
+
+        super().__init__(id=id, state_elements=state_elements, season_start=season_start, dt_unit=dt_unit)
+
         for trans_kwargs in list_of_trans_kwargs:
             self._set_transition(**trans_kwargs)
 
@@ -82,6 +97,7 @@ class FourierSeasonDynamic(FourierSeason):
         state_elements.append('position')
         return state_elements, transitions
 
+    @handle_for_batch_kwargs
     def for_batch(self,
                   num_groups: int,
                   num_timesteps: int,
@@ -90,7 +106,7 @@ class FourierSeasonDynamic(FourierSeason):
         for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
 
         # determine the delta (integer time accounting for different groups having different start datetimes)
-        delta = self.dt_tracker.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
+        delta = self._get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
 
         # determine season:
         season = delta % self.seasonal_period
@@ -118,6 +134,7 @@ class FourierSeasonDynamic(FourierSeason):
 
 
 class FourierSeasonFixed(FourierSeason):
+    @handle_for_batch_kwargs
     def for_batch(self,
                   num_groups: int,
                   num_timesteps: int,
@@ -126,7 +143,7 @@ class FourierSeasonFixed(FourierSeason):
         for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
 
         # determine the delta (integer time accounting for different groups having different start datetimes)
-        delta = self.dt_tracker.get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
+        delta = self._get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
 
         # determine season:
         season = delta % self.seasonal_period
@@ -145,14 +162,12 @@ class FourierSeasonFixed(FourierSeason):
     def dynamic_state_elements(self) -> Sequence[str]:
         return []
 
-    # noinspection PyMethodOverriding
     def add_measure(self, measure: str) -> 'FourierSeasonFixed':
         for state_element in self.state_elements:
             self._set_measure(measure=measure, state_element=state_element, value=0.)
         return self
 
 
-# noinspection SpellCheckingInspection
 class TBATS(FourierSeason):
     """
     This implementation is not complete: (1) does not allow decay, (2) does not offset seasons according to group start date.
@@ -163,14 +178,18 @@ class TBATS(FourierSeason):
                  seasonal_period: Union[int, float],
                  K: Union[int, float],
                  decay: Union[bool, Tuple[float, float]] = False,
-                 season_start: Union[str, None, bool] = None,
+                 season_start: Optional[str] = None,
                  dt_unit: Optional[str] = None):
+
+        if decay:
+            raise NotImplementedError(f"{self.__class__.__name__} does not yet support decay.")
+        if season_start or dt_unit:
+            raise NotImplementedError(f"{self.__class__.__name__} does not yet support datetimes.")
+
         super().__init__(id=id,
                          seasonal_period=seasonal_period,
                          K=K,
-                         decay=decay,
-                         season_start=season_start,
-                         dt_unit=dt_unit)
+                         decay=decay)
         self.measured_state_elements = [se for se in self.state_elements if '*' not in se]
 
     def _setup(self, decay: bool) -> Tuple[List[str], List[Dict]]:
@@ -195,7 +214,6 @@ class TBATS(FourierSeason):
     def lam(self, j: int):
         return 2. * np.pi * j / self.seasonal_period
 
-    # noinspection PyMethodOverriding
     def add_measure(self, measure: str) -> 'TBATS':
         for se in self.measured_state_elements:
             self._set_measure(measure=measure, state_element=se, value=1.0)

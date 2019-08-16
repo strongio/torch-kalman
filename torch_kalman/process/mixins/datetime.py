@@ -4,13 +4,11 @@ from warnings import warn
 import numpy as np
 
 
-class DTTracker:
+class DatetimeMixin:
+    for_batch_kwargs = ['start_datetimes']  # TODO: append, don't replace
     supported_dt_units = {'Y', 'D', 'h', 'm', 's'}
 
-    def __init__(self,
-                 process_id: str,
-                 season_start: Union[str, None, bool] = None,
-                 dt_unit: Optional[str] = None):
+    def __init__(self, *args, **kwargs):
         """
         :param process_id: For helpful error messages
         :param season_start: A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
@@ -19,8 +17,8 @@ class DTTracker:
         `start_datetimes` for group in the input, and this will be used to align the seasons for each group.
         :param dt_unit: Currently supports {'Y', 'D', 'h', 'm', 's'}. 'W' is experimentally supported.
         """
-
-        self.process_id = process_id
+        season_start = kwargs.pop('season_start', None)
+        dt_unit = kwargs.pop('dt_unit', None)
 
         # parse date information:
         self.dt_unit = dt_unit
@@ -38,10 +36,12 @@ class DTTracker:
                 raise ValueError(f"dt_unit {dt_unit} not currently supported")
             assert dt_unit is not None, "If passing `season_start` must also pass `dt_unit`."
 
-    def get_delta(self, num_groups: int, num_timesteps: int, start_datetimes: np.ndarray) -> np.ndarray:
+        super().__init__(*args, **kwargs)
+
+    def _get_delta(self, num_groups: int, num_timesteps: int, start_datetimes: np.ndarray) -> np.ndarray:
         if start_datetimes is None:
             if self.start_datetime:
-                raise ValueError(f"Must pass `start_datetimes` to process `{self.process_id}`.")
+                raise ValueError(f"Must pass `start_datetimes` to process `{self.id}`.")
             delta = np.broadcast_to(np.arange(0, num_timesteps), shape=(num_groups, num_timesteps))
         else:
 

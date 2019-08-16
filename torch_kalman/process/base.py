@@ -5,11 +5,14 @@ from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.process.for_batch import ProcessForBatch
+from torch_kalman.process.utils.handle_for_batch_kwargs import handle_for_batch_kwargs
 
 DesignMatAssignment = Union[float, Tensor, Callable]
 
 
 class Process:
+    for_batch_kwargs = []
+
     def __init__(self,
                  id: str,
                  state_elements: Sequence[str]):
@@ -23,12 +26,17 @@ class Process:
         self.transitions: Dict[Tuple[str, str], DesignMatAssignment] = {}
         self.transitions_ilinks: Dict[Tuple[str, str], Union[Callable, None]] = {}
 
-        self._device: torch.device = None
+        self._device = None
 
         if not set(self.dynamic_state_elements).isdisjoint(self.fixed_state_elements):
             raise ValueError("Class has been misconfigured -- some fixed state-elements are also dynamic-state-elements.")
 
         self._allow_single_kwarg = False
+
+        if not getattr(self.for_batch, 'decorated_pfb', False):
+            raise TypeError(f"`{self.__class__}.for_batch` was not decorated with `@handle_for_batch_kwargs`")
+        if not getattr(self.initial_state_means_for_batch, 'decorated_pfb', False):
+            raise TypeError(f"`{self.__class__}.initial_state_means_for_batch` not decorated w/`@handle_for_batch_kwargs`")
 
     def param_dict(self) -> torch.nn.ParameterDict:
         raise NotImplementedError
@@ -138,12 +146,14 @@ class Process:
         for param in self.param_dict().values():
             param.requires_grad_(requires_grad=requires_grad)
 
+    @handle_for_batch_kwargs
     def initial_state_means_for_batch(self,
                                       parameters: Parameter,
                                       num_groups: int,
                                       **kwargs) -> Tensor:
         return parameters.expand(num_groups, -1)
 
+    @handle_for_batch_kwargs
     def for_batch(self,
                   num_groups: int,
                   num_timesteps: int,
