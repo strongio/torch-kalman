@@ -16,7 +16,6 @@ class DesignForBatch:
                  **kwargs):
 
         self.design = design
-        self.device = design.device
 
         self._processes = None
         self._kwargs = kwargs
@@ -74,8 +73,7 @@ class DesignForBatch:
 
     # transitions ----
     def _F_init(self) -> None:
-        F_base = torch.zeros(size=(self.num_groups, self.state_size, self.state_size),
-                             device=self.device)
+        F_base = torch.zeros(size=(self.num_groups, self.state_size, self.state_size))
 
         dynamic_assignments = []
         for process_id, process in self.processes.items():
@@ -107,8 +105,7 @@ class DesignForBatch:
 
     # measurements ----
     def _H_init(self) -> None:
-        H_base = torch.zeros(size=(self.num_groups, self.measure_size, self.state_size),
-                             device=self.device)
+        H_base = torch.zeros(size=(self.num_groups, self.measure_size, self.state_size))
         dynamic_assignments = []
         for process_id, process in self.processes.items():
             o = self.process_start_idx[process_id]
@@ -143,7 +140,7 @@ class DesignForBatch:
 
         # process variances are scaled by the variances of the measurements they are associated with:
         measure_log_stds = self.design.measure_covariance.create().diag().sqrt().log()
-        diag_flat = torch.ones(self.state_size, device=self.device)
+        diag_flat = torch.ones(self.state_size)
         for process_name, process in self.processes.items():
             measure_idx = [self.measure_idx[m] for m in process.measures]
             log_scaling = measure_log_stds[measure_idx].mean()
@@ -154,7 +151,7 @@ class DesignForBatch:
         Q = diag_multi_measure.matmul(Q).matmul(diag_multi_measure)
 
         # adjustments from processes:
-        diag_multi_proc = torch.eye(self.state_size, device=self.device).expand(self.num_groups, -1, -1).clone()
+        diag_multi_proc = torch.eye(self.state_size).expand(self.num_groups, -1, -1).clone()
         dynamic_assignments = []
         for process_id, process in self.processes.items():
             o = self.process_start_idx[process_id]
@@ -176,7 +173,7 @@ class DesignForBatch:
             mat = base
 
         if self._Q_diag_multi_dynamic_assignments:
-            diag_multi = torch.eye(self.state_size, device=self.device).expand(self.num_groups, -1, -1).clone()
+            diag_multi = torch.eye(self.state_size).expand(self.num_groups, -1, -1).clone()
             for (r, c), values in self._Q_diag_multi_dynamic_assignments:
                 diag_multi[:, r, c] = values[t]
             return diag_multi.matmul(mat).matmul(diag_multi)
@@ -206,7 +203,7 @@ class DesignForBatch:
 
     # initial state belief ---
     def _build_init_mean(self) -> Tensor:
-        init_mean = torch.zeros(self.num_groups, self.state_size, device=self.device)
+        init_mean = torch.zeros(self.num_groups, self.state_size)
         for process_name, process in self.design.processes.items():
             # assign initial mean:
             pslice = self.process_idx[process_name]
@@ -220,7 +217,7 @@ class DesignForBatch:
 
         # init variances are scaled by the variances of the measurements they are associated with:
         measure_log_stds = self.design.measure_covariance.create().diag().sqrt().log()
-        diag_flat = torch.ones(self.state_size, device=self.device)
+        diag_flat = torch.ones(self.state_size)
         for process_name, process in self.design.processes.items():
             measure_idx = [self.measure_idx[m] for m in process.measures]
             log_scaling = measure_log_stds[measure_idx].mean()
@@ -231,18 +228,3 @@ class DesignForBatch:
         init_cov = diag_multi_measure.matmul(init_cov).matmul(diag_multi_measure)
 
         return init_cov
-
-    @staticmethod
-    def _prepare_process_kwargs(process: 'Process', kwargs: Union[Dict, Any]) -> Dict:
-        if isinstance(kwargs, dict):
-            return kwargs
-        params = [param for pname, param in inspect.signature(process.for_batch).parameters.items()
-                  if pname not in ('num_groups', 'num_timesteps')]
-        if len(params) == 1:
-            if (params[0].annotation == inspect.Parameter.empty) or isinstance(kwargs, params[0].annotation):
-                return {params[0].name: kwargs}
-            else:
-                raise ValueError(f"`{kwargs}` not of expected type for `{process}.for_batch`. "
-                                 f"Expected `{params[0].annotation}`.")
-        else:
-            raise ValueError(f"{process}.for_batch takes multiple kwargs, but got {kwargs}.")

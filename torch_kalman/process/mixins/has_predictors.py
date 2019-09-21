@@ -1,15 +1,14 @@
 import torch
 
 
-class HasPredictorsMixin:
-    for_batch_kwargs = ['predictors']  # TODO: append, don't replace
+class HasPredictors:
+    def for_batch(self,
+                  num_groups: int,
+                  num_timesteps: int,
+                  predictors: torch.Tensor,
+                  expected_num_predictors: int,
+                  allow_extra_timesteps: bool = False):
 
-    def _check_predictor_tens(self,
-                              predictors: torch.Tensor,
-                              num_groups: int,
-                              num_timesteps: int,
-                              num_measures: int,
-                              allow_extra_timesteps: bool = False):
         if not isinstance(predictors, torch.Tensor):
             raise ValueError(f"Process {self.id} received 'predictors' that is not a Tensor.")
         elif predictors.requires_grad:
@@ -23,5 +22,7 @@ class HasPredictorsMixin:
         if mm_num_ts != num_timesteps:
             if (not allow_extra_timesteps) or (mm_num_ts < num_timesteps):
                 f"Batch num. timesteps is {num_timesteps}, but predictors.shape[1] is {mm_num_ts}."
-        if mm_num_preds != num_measures:
-            raise ValueError(f"`predictors.shape[2]` = {mm_num_preds}, but expected {num_measures}")
+        if mm_num_preds != expected_num_predictors:
+            raise ValueError(f"`predictors.shape[2]` = {mm_num_preds}, but expected {expected_num_predictors}")
+
+        return super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)

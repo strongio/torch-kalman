@@ -28,10 +28,8 @@ class KalmanFilter(torch.nn.Module):
         # parameters from design:
         self.design_parameters = self.design.param_dict()
 
-        # the StateBelief family, implemented by property (default gaussian)
-        self._family = None
-
-        self.to(device=self.design.device)
+    def to(self, *args, **kwargs):
+        raise RuntimeError(f"Currently {self.__class__.__name__} does not support moving device.")
 
     @property
     def measure_size(self) -> int:
@@ -69,8 +67,8 @@ class KalmanFilter(torch.nn.Module):
 
         num_groups, num_timesteps_input, num_measures, *_ = self.family.get_input_dim(input)
         if num_measures != self.measure_size:
-            raise ValueError(f"This KalmanFilter has {self.measure_size} measurement-dimensions; but the input shape is "
-                             f"{(num_groups, num_timesteps_input, num_measures)} (3rd dim should == measure-size).")
+            raise ValueError(f"This KalmanFilter has {self.measure_size} measurement-dimensions; but the input shape is"
+                             f" {(num_groups, num_timesteps_input, num_measures)} (3rd dim should == measure-size).")
 
         assert forecast_horizon >= 0
         num_timesteps = num_timesteps_input + forecast_horizon

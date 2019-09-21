@@ -9,12 +9,11 @@ from torch.nn import Parameter, ParameterDict
 from torch_kalman.process import Process
 from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.utils.bounded import Bounded
-from torch_kalman.process.mixins.datetime import DatetimeMixin
-from torch_kalman.process.utils.handle_for_batch_kwargs import handle_for_batch_kwargs
+from torch_kalman.process.mixins.datetime import DatetimeProcess
 from torch_kalman.utils import split_flat
 
 
-class Season(DatetimeMixin, Process):
+class Season(DatetimeProcess, Process):
 
     def __init__(self,
                  id: str,
@@ -82,7 +81,6 @@ class Season(DatetimeMixin, Process):
     def dynamic_state_elements(self) -> Sequence[str]:
         return [self.measured_name]
 
-    @handle_for_batch_kwargs
     def for_batch(self,
                   num_groups: int,
                   num_timesteps: int,
@@ -124,7 +122,6 @@ class Season(DatetimeMixin, Process):
 
         return for_batch
 
-    @handle_for_batch_kwargs
     def initial_state_means_for_batch(self,
                                       parameters: Parameter,
                                       num_groups: int,

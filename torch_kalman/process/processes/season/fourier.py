@@ -9,12 +9,11 @@ import numpy as np
 
 from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.utils.bounded import Bounded
-from torch_kalman.process.mixins.datetime import DatetimeMixin
-from torch_kalman.process.utils.handle_for_batch_kwargs import handle_for_batch_kwargs
+from torch_kalman.process.mixins.datetime import DatetimeProcess
 from torch_kalman.process.utils.fourier import fourier_tensor
 
 
-class FourierSeason(DatetimeMixin, Process):
+class FourierSeason(DatetimeProcess, Process):
     def __init__(self,
                  id: str,
                  seasonal_period: Union[int, float],
@@ -97,7 +96,6 @@ class FourierSeasonDynamic(FourierSeason):
         state_elements.append('position')
         return state_elements, transitions
 
-    @handle_for_batch_kwargs
     def for_batch(self,
                   num_groups: int,
                   num_timesteps: int,
@@ -134,7 +132,6 @@ class FourierSeasonDynamic(FourierSeason):
 
 
 class FourierSeasonFixed(FourierSeason):
-    @handle_for_batch_kwargs
     def for_batch(self,
                   num_groups: int,
                   num_timesteps: int,

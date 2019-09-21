@@ -20,10 +20,6 @@ class Design:
         assert processes
         assert measures
 
-        if kwargs.get('device', 'cpu') != 'cpu' or kwargs.get('dtype', 'float') != 'float':
-            raise NotImplementedError("Only device='cpu' and dtype='float' are currently supported.")
-        self.device = torch.device('cpu')
-
         # measures:
         self.measures = tuple(measures)
         assert len(self.measures) == len(set(self.measures)), "Duplicate measures."
@@ -47,9 +43,6 @@ class Design:
             end_counter = start_counter + len(process.state_elements)
             self.process_idx[process_name] = slice(start_counter, end_counter)
 
-            # set device:
-            process.set_device(self.device)
-
             # check measures:
             for measure_id in process.measures:
                 if measure_id not in self.measures:
@@ -71,11 +64,11 @@ class Design:
 
         # measure-covariance:
         m_upper_tri = int(self.measure_size * (self.measure_size - 1) / 2)
-        self.measure_cholesky_log_diag = Parameter(data=.01 * torch.randn(self.measure_size, device=self.device))
-        self.measure_cholesky_off_diag = Parameter(data=.01 * torch.randn(m_upper_tri, device=self.device))
+        self.measure_cholesky_log_diag = Parameter(data=.01 * torch.randn(self.measure_size))
+        self.measure_cholesky_off_diag = Parameter(data=.01 * torch.randn(m_upper_tri))
 
         # initial state:
-        self.init_state_mean_params = Parameter(torch.randn(self.state_size, device=self.device))
+        self.init_state_mean_params = Parameter(torch.randn(self.state_size))
         self._init_covariance = None
 
         # process cov:

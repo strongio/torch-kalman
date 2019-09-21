@@ -1,3 +1,5 @@
+import functools
+import inspect
 from typing import Sequence, Union, Set, Callable, Dict, Tuple
 
 import torch
@@ -5,13 +7,17 @@ from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.process.for_batch import ProcessForBatch
-from torch_kalman.process.utils.handle_for_batch_kwargs import handle_for_batch_kwargs
 
 DesignMatAssignment = Union[float, Tensor, Callable]
 
 
 class Process:
-    for_batch_kwargs = []
+    def __init_subclass__(cls, **kwargs):
+        for method_name in ('for_batch', 'initial_state_means_for_batch'):
+            method = getattr(cls, method_name)
+            if method:
+                setattr(cls, method_name, handle_for_batch_kwargs(method))
+        super().__init_subclass__()
 
     def __init__(self,
                  id: str,
@@ -26,17 +32,8 @@ class Process:
         self.transitions: Dict[Tuple[str, str], DesignMatAssignment] = {}
         self.transitions_ilinks: Dict[Tuple[str, str], Union[Callable, None]] = {}
 
-        self._device = None
-
         if not set(self.dynamic_state_elements).isdisjoint(self.fixed_state_elements):
-            raise ValueError("Class has been misconfigured -- some fixed state-elements are also dynamic-state-elements.")
-
-        self._allow_single_kwarg = False
-
-        if not getattr(self.for_batch, 'decorated_pfb', False):
-            raise TypeError(f"`{self.__class__}.for_batch` was not decorated with `@handle_for_batch_kwargs`")
-        if not getattr(self.initial_state_means_for_batch, 'decorated_pfb', False):
-            raise TypeError(f"`{self.__class__}.initial_state_means_for_batch` not decorated w/`@handle_for_batch_kwargs`")
+            raise ValueError("Class has been misconfigured: some fixed state-elements are also dynamic-state-elements.")
 
     def param_dict(self) -> torch.nn.ParameterDict:
         raise NotImplementedError
@@ -131,33 +128,14 @@ class Process:
             raise ValueError("`value` must be float, tensor, or a function that produces a tensor")
         return value
 
-    @property
-    def device(self):
-        if self._device is None:
-            raise RuntimeError("Must call `set_device` first.")
-        return self._device
-
-    def set_device(self, device: torch.device) -> None:
-        self._device = device
-        for param in self.param_dict().values():
-            param.data = param.data.to(device)
-
     def requires_grad_(self, requires_grad: bool):
         for param in self.param_dict().values():
             param.requires_grad_(requires_grad=requires_grad)
 
-    @handle_for_batch_kwargs
-    def initial_state_means_for_batch(self,
-                                      parameters: Parameter,
-                                      num_groups: int,
-                                      **kwargs) -> Tensor:
+    def initial_state_means_for_batch(self, parameters: Parameter, num_groups: int) -> Tensor:
         return parameters.expand(num_groups, -1)
 
-    @handle_for_batch_kwargs
-    def for_batch(self,
-                  num_groups: int,
-                  num_timesteps: int,
-                  **kwargs) -> 'ProcessForBatch':
+    def for_batch(self, num_groups: int, num_timesteps: int) -> 'ProcessForBatch':
         assert self.measures, f"The process `{self.id}` has no measures."
         assert self.transitions, f"The process `{self.id}` has no transitions."
         return ProcessForBatch(process=self,
@@ -166,3 +144,42 @@ class Process:
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(id={self.id.__repr__()})"
+
+
+def handle_for_batch_kwargs(method: Callable) -> Callable:
+    """
+    Decorates a process's method so that it finds the keyword-arguments that were meant for it.
+
+    :param method: The process's `for_batch` method.
+    :return: Decorated version.
+    """
+
+    if getattr(method, '_handles_for_batch_kwargs', False):
+        return method
+
+    excluded = {'self', 'num_groups', 'num_timesteps'}
+    for_batch_kwargs = []
+    for kwarg in inspect.signature(method.for_batch).parameters:
+        if kwarg in excluded:
+            continue
+        if kwarg == 'kwargs':
+            raise ValueError(f"The signature for {method.__name__} should not use `**kwargs`, should instead specify "
+                             f"keyword arguments explicitly.")
+        for_batch_kwargs.append(kwarg)
+
+    @functools.wraps(method)
+    def wrapped(self, *args, **kwargs):
+        new_kwargs = {key: kwargs[key] for key in ('num_groups', 'num_timesteps') if key in kwargs}
+
+        for key in for_batch_kwargs:
+            specific_key = "{}__{}".format(self.id, key)
+            if specific_key in kwargs:
+                new_kwargs[key] = kwargs[specific_key]
+            elif key in kwargs:
+                new_kwargs[key] = kwargs[key]
+
+        return method(self, *args, **new_kwargs)
+
+    wrapped._handles_for_batch_kwargs = True
+
+    return wrapped

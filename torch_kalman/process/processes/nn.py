@@ -6,11 +6,10 @@ from torch import Tensor
 from torch.nn import Parameter, ParameterDict
 
 from torch_kalman.process import Process
-from torch_kalman.process.mixins.has_predictors import HasPredictorsMixin
-from torch_kalman.process.utils.handle_for_batch_kwargs import handle_for_batch_kwargs
+from torch_kalman.process.mixins.has_predictors import HasPredictors
 
 
-class NN(HasPredictorsMixin, Process):
+class NN(HasPredictors, Process):
 
     def __init__(self,
                  id: str,
@@ -64,14 +63,17 @@ class NN(HasPredictorsMixin, Process):
                 p[nm] = param
         return p
 
-    @handle_for_batch_kwargs
-    def for_batch(self, num_groups: int, num_timesteps: int, predictors: Tensor):
-        for_batch = super().for_batch(num_groups, num_timesteps)
+    def for_batch(self,
+                  num_groups: int,
+                  num_timesteps: int,
+                  predictors: Tensor,
+                  allow_extra_timesteps: bool = False) -> 'NN':
+        for_batch = super().for_batch(num_groups, num_timesteps,
+                                      expected_num_predictors=self.input_dim,
+                                      allow_extra_timesteps=allow_extra_timesteps)
 
         if predictors.shape[1] > num_timesteps:
             predictors = predictors[:, 0:num_timesteps, :]
-
-        self._check_predictor_tens(predictors, num_groups, num_timesteps, num_measures=self.input_dim)
 
         # need to split nn-output by each output element and by time
         # we don't want to call the nn once then slice it, because then autograd will be forced to keep track of large
@@ -84,7 +86,8 @@ class NN(HasPredictorsMixin, Process):
 
         for measure in self.measures:
             for el in self.state_elements:
-                for_batch.adjust_measure(measure=measure, state_element=el, adjustment=nn_outputs[el], check_slow_grad=False)
+                for_batch.adjust_measure(measure=measure, state_element=el, adjustment=nn_outputs[el],
+                                         check_slow_grad=False)
 
         return for_batch
 

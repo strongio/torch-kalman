@@ -4,13 +4,11 @@ from warnings import warn
 import numpy as np
 
 
-class DatetimeMixin:
-    for_batch_kwargs = ['start_datetimes']  # TODO: append, don't replace
+class DatetimeProcess:
     supported_dt_units = {'Y', 'D', 'h', 'm', 's'}
 
     def __init__(self, *args, **kwargs):
         """
-        :param process_id: For helpful error messages
         :param season_start: A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
         starts, which is useful to specify if season boundaries are meaningful. It is important to specify if different
         groups in your dataset start on different dates; when calling the kalman-filter you'll pass an array of
@@ -54,7 +52,7 @@ class DatetimeMixin:
                 offset = offset / 7
                 bad_freq = (np.mod(offset, 1) != 0)
                 if np.any(bad_freq):
-                    raise ValueError(f"start_datetimes has dates with unexpected day-of-week:\n{start_datetimes[bad_freq]}")
+                    raise ValueError(f"start_datetimes has dts with unexpected weekday:\n{start_datetimes[bad_freq]}")
 
             delta = offset.reshape((num_groups, 1)) + np.arange(0, num_timesteps)
         return delta

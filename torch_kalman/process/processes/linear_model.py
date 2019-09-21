@@ -6,11 +6,10 @@ from torch import Tensor
 
 from torch_kalman.process import Process
 from torch_kalman.process.for_batch import ProcessForBatch
-from torch_kalman.process.mixins.has_predictors import HasPredictorsMixin
-from torch_kalman.process.utils.handle_for_batch_kwargs import handle_for_batch_kwargs
+from torch_kalman.process.mixins.has_predictors import HasPredictors
 
 
-class LinearModel(HasPredictorsMixin, Process):
+class LinearModel(HasPredictors, Process):
 
     def __init__(self,
                  id: str,
@@ -62,14 +61,17 @@ class LinearModel(HasPredictorsMixin, Process):
             self._set_measure(measure=measure, state_element=cov, value=0., inv_link=self.inv_link)
         return self
 
-    @handle_for_batch_kwargs
-    def for_batch(self, num_groups: int, num_timesteps: int, predictors: Tensor) -> ProcessForBatch:
-        for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
+    def for_batch(self,
+                  num_groups: int,
+                  num_timesteps: int,
+                  predictors: Tensor,
+                  allow_extra_timesteps: bool = False) -> 'LinearModel':
+        for_batch = super().for_batch(num_groups, num_timesteps,
+                                      expected_num_predictors=len(self.state_elements),
+                                      allow_extra_timesteps=allow_extra_timesteps)
 
         if predictors.shape[1] > num_timesteps:
             predictors = predictors[:, 0:num_timesteps, :]
-
-        self._check_predictor_tens(predictors, num_groups, num_timesteps, num_measures=len(self.state_elements))
 
         for measure in self.measures:
             for i, cov in enumerate(self.state_elements):

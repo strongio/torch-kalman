@@ -171,8 +171,7 @@ class ProcessForBatch:
             # there's no dynamic, so all base
 
         if len(dynamic):
-            reduced_dynamic = [torch.zeros((self.num_groups,), device=self.process.device) for
-                               _ in range(self.num_timesteps)]
+            reduced_dynamic = [torch.zeros((self.num_groups,)) for _ in range(self.num_timesteps)]
             # TODO: this code could be optimized
             for tensor_or_seq in dynamic:
                 if isinstance(tensor_or_seq, Sequence):
