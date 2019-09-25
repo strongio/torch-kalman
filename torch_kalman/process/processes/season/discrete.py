@@ -9,7 +9,7 @@ from torch.nn import Parameter, ParameterDict
 from torch_kalman.process import Process
 from torch_kalman.process.utils.bounded import Bounded
 from torch_kalman.process.mixins.datetime import DatetimeProcess
-from torch_kalman.utils import split_flat
+from torch_kalman.utils import split_flat, zpad
 
 
 class Season(DatetimeProcess, Process):
@@ -27,10 +27,10 @@ class Season(DatetimeProcess, Process):
         :param id: Unique name for this process
         :param seasonal_period: The number of seasons (e.g. 7 for day_in_week).
         :param season_duration: The length of each season, default 1 time-step.
-        :param decay: Optional (float,float) boundaries for decay (between 0 and 1). Analogous to dampening a trend -- the
-        state will revert to zero as we get further from the last observation. This can be useful if two processes are
-        capturing the same seasonal pattern: one can be more flexible, but with decay have a tendency to revert to zero,
-        while the other is less variable but extrapolates into the future.
+        :param decay: Optional (float,float) boundaries for decay (between 0 and 1). Analogous to dampening a trend --
+        the state will revert to zero as we get further from the last observation. This can be useful if two processes
+        are capturing the same seasonal pattern: one can be more flexible, but with decay have a tendency to revert to
+        zero, while the other is less variable but extrapolates into the future.
         :param season_start:  A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
         starts, which is useful to specify if season boundaries are meaningful. It is important to specify if different
         groups in your dataset start on different dates; when calling the kalman-filter you'll pass an array of
@@ -46,7 +46,7 @@ class Season(DatetimeProcess, Process):
         self.measured_name = 'measured'
         pad_n = len(str(seasonal_period))
         super().__init__(id=id,
-                         state_elements=[self.measured_name] + [str(i).rjust(pad_n, "0") for i in range(1, seasonal_period)],
+                         state_elements=[self.measured_name] + [zpad(i, pad_n) for i in range(1, seasonal_period)],
                          season_start=season_start,
                          dt_unit=dt_unit)
 
@@ -87,12 +87,14 @@ class Season(DatetimeProcess, Process):
 
         for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
 
-        delta = self._get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
+        delta = self._get_delta(num_groups, num_timesteps, start_datetimes=start_datetimes)
 
         in_transition = (delta % self.season_duration) == (self.season_duration - 1)
 
-        transitions = {'to_next_state': torch.from_numpy(in_transition.astype('float32')),
-                       'from_measured_to_measured': torch.from_numpy(np.where(in_transition, -1., 1.).astype('float32'))}
+        transitions = {
+            'to_next_state': torch.from_numpy(in_transition.astype('float32')),
+            'from_measured_to_measured': torch.from_numpy(np.where(in_transition, -1., 1.).astype('float32'))
+        }
         transitions['to_self'] = 1 - transitions['to_next_state']
         transitions['to_measured'] = -transitions['to_next_state']
 
@@ -102,8 +104,8 @@ class Season(DatetimeProcess, Process):
                 decay_value = self.decay.get_value()
                 transitions[k] = [x * decay_value for x in transitions[k]]
 
-        # this is convoluted, but the idea is to manipulate the transitions so that we use one less degree of freedom than
-        # the number of seasons, by having the 'measured' state be equal to -sum(all others)
+        # this is convoluted, but the idea is to manipulate the transitions so that we use one less degree of freedom
+        # than the number of seasons, by having the 'measured' state be equal to -sum(all others)
         for i in range(1, len(self.state_elements)):
             current = self.state_elements[i]
             prev = self.state_elements[i - 1]
@@ -113,11 +115,11 @@ class Season(DatetimeProcess, Process):
             else:
                 to_measured = transitions['to_measured']
 
-            for_batch.adjust_transition(from_element=prev, to_element=current, adjustment=transitions['to_next_state'])
-            for_batch.adjust_transition(from_element=prev, to_element=self.measured_name, adjustment=to_measured)
+            for_batch._adjust_transition(from_element=prev, to_element=current, adjustment=transitions['to_next_state'])
+            for_batch._adjust_transition(from_element=prev, to_element=self.measured_name, adjustment=to_measured)
 
             # from state to itself:
-            for_batch.adjust_transition(from_element=current, to_element=current, adjustment=transitions['to_self'])
+            for_batch._adjust_transition(from_element=current, to_element=current, adjustment=transitions['to_self'])
 
         return for_batch
 

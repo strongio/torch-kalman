@@ -10,6 +10,7 @@ import numpy as np
 from torch_kalman.process.utils.bounded import Bounded
 from torch_kalman.process.mixins.datetime import DatetimeProcess
 from torch_kalman.process.utils.fourier import fourier_tensor
+from torch_kalman.utils import split_flat
 
 
 class FourierSeason(DatetimeProcess, Process):
@@ -22,13 +23,13 @@ class FourierSeason(DatetimeProcess, Process):
                  dt_unit: Optional[str] = None):
         """
         :param id: Unique name for this instance.
-        :param seasonal_period: The seasonal period (e.g. 24 for daily season in hourly data, 365.25 for yearly season in
-        daily data)
+        :param seasonal_period: The seasonal period (e.g. 24 for daily season in hourly data, 365.25 for yearly season
+        in daily data)
         :param K: The "K" parameter of the fourier series, see `fourier_tensor`.
-        :param decay: Optional (float,float) boundaries for decay (between 0 and 1). Analogous to dampening a trend -- the
-        state will revert to zero as we get further from the last observation. This can be useful if two processes are
-        capturing the same seasonal pattern: one can be more flexible, but with decay have a tendency to revert to zero,
-        while the other is less variable but extrapolates into the future.
+        :param decay: Optional (float,float) boundaries for decay (between 0 and 1). Analogous to dampening a trend --
+        the state will revert to zero as we get further from the last observation. This can be useful if two processes
+        are capturing the same seasonal pattern: one can be more flexible, but with decay have a tendency to revert to
+        zero, while the other is less variable but extrapolates into the future.
         :param season_start:  A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
         starts, which is useful to specify if season boundaries are meaningful. It is important to specify if different
         groups in your dataset start on different dates; when calling the kalman-filter you'll pass an array of
@@ -42,9 +43,8 @@ class FourierSeason(DatetimeProcess, Process):
             assert K.is_integer()
         self.K = int(K)
 
-        self.decay: Optional[Bounded] = None
+        self.decay = None
         if decay:
-            assert not isinstance(decay, bool), "decay should be floats of bounds (or False for no decay)"
             assert decay[0] > 0. and decay[1] <= 1.0
             self.decay = Bounded(*decay)
 
@@ -62,9 +62,11 @@ class FourierSeason(DatetimeProcess, Process):
             for c in range(2):
                 element_name = f"{r},{c}"
                 state_elements.append(element_name)
-                trans_kwargs = {'from_element': element_name,
-                                'to_element': element_name,
-                                'value': self.decay.get_value if decay else 1.0}
+                trans_kwargs = {
+                    'from_element': element_name,
+                    'to_element': element_name,
+                    'value': self.decay.get_value if decay else 1.0
+                }
                 transitions.append(trans_kwargs)
 
         return state_elements, transitions
@@ -115,9 +117,11 @@ class FourierSeasonDynamic(FourierSeason):
             if state_element == 'position':
                 continue
             r, c = (int(x) for x in state_element.split(sep=","))
-            for_batch.adjust_transition(from_element=state_element,
-                                        to_element='position',
-                                        adjustment=fourier_tens[:, :, r, c])
+            for_batch._adjust_transition(
+                from_element=state_element,
+                to_element='position',
+                adjustment=split_flat(fourier_tens[:, :, r, c], dim=1)
+            )
 
         return for_batch
 
@@ -150,8 +154,11 @@ class FourierSeasonFixed(FourierSeason):
         for measure in self.measures:
             for state_element in self.state_elements:
                 r, c = (int(x) for x in state_element.split(sep=","))
-                for_batch.adjust_measure(measure=measure, state_element=state_element,
-                                         adjustment=fourier_tens[:, :, r, c])
+                for_batch._adjust_measure(
+                    measure=measure,
+                    state_element=state_element,
+                    adjustment=split_flat(fourier_tens[:, :, r, c], dim=1)
+                )
 
         return for_batch
 

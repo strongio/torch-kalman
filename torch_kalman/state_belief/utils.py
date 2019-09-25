@@ -11,7 +11,7 @@ from torch.distributions.utils import _standard_normal
 def bmat_idx(*args) -> Tuple:
     """
     Create indices for tensor assignment that act like slices. E.g., batch[:,[1,2,3],[1,2,3]] does not select the upper
-    3x3 sub-matrix over batches, but batch[_bmat_idx(slice(None),[1,2,3],[1,2,3])] does.
+    3x3 sub-matrix over batches, but batch[bmat_idx(slice(None),[1,2,3],[1,2,3])] does.
 
     :param args: Each arg is a sequence of integers. The first N args can be slices, and the last N args can be slices.
     :return: A tuple that can be used for matrix/tensor-selection.

@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Generator, Tuple, Optional, Dict, Sequence
+from typing import Tuple, Sequence
 
 import torch
 
@@ -13,7 +13,12 @@ from torch_kalman.utils import cached_property
 
 
 class Design:
-    def __init__(self, processes: Sequence[Process], measures: Sequence[str]):
+    def __init__(self, processes: Sequence[Process], measures: Sequence[str], **kwargs):
+        """
+        :param processes: Processes
+        :param measures: Measure-names
+        :param kwargs: Not used by this base-class.
+        """
         self.measures = tuple(measures)
 
         self.processes = OrderedDict()

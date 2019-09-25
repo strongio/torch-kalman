@@ -13,15 +13,15 @@ class LocalLevel(Process):
                  decay: Union[bool, Tuple[float, float]] = False):
         super().__init__(id=id, state_elements=['position'])
 
-        self.decay: Optional[Bounded] = None
+        self.decay = None
         if decay:
-            assert not isinstance(decay, bool), "decay should be floats of bounds (or False for no decay)"
             assert decay[0] >= -1. and decay[1] <= 1.
             self.decay = Bounded(*decay)
-            self._set_transition(from_element='position',
-                                 to_element='position',
-                                 value=self.decay.get_value,
-                                 inv_link=None)
+            self._set_transition(
+                from_element='position',
+                to_element='position',
+                value=self.decay.get_value
+            )
         else:
             self._set_transition(from_element='position', to_element='position', value=1.)
 

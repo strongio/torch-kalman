@@ -36,7 +36,7 @@ class DesignForBatch:
                 raise RuntimeError(f"Failed to create `{process}.for_batch` (see traceback above).") from e
 
             if processes[process_name] is None:
-                raise RuntimeError(f"{process_name}'s `for_batch` call returned None.")
+                raise RuntimeError(f"{process_name}'s `for_batch` call did not return anything.")
         return processes
 
     def _build_initial_mean(self, **kwargs) -> torch.Tensor:
@@ -52,27 +52,34 @@ class DesignForBatch:
     # Transition Matrix -------:
     @cached_property
     def F(self) -> DynamicMatrix:
-        merged = TransitionMatrix.merge([process.transition_mat for process in self.processes.values()])
-        return merged.compile(num_groups=self.num_groups, num_timesteps=self.num_timesteps)
+        merged = TransitionMatrix.merge([(nm, process.transition_mat) for nm, process in self.processes.items()])
+        assert list(merged.from_elements) == list(self.design.state_elements) == list(merged.to_elements)
+        return merged.compile()
 
     # Measurement Matrix ------:
     @cached_property
     def H(self) -> DynamicMatrix:
-        merged = MeasureMatrix.merge([process.measure_mat for process in self.processes.values()])
-        return merged.compile(num_groups=self.num_groups, num_timesteps=self.num_timesteps)
+        merged = MeasureMatrix.merge([(nm, process.measure_mat) for nm, process in self.processes.items()])
+        assert list(merged.state_elements) == list(self.design.state_elements)
+        # order dim:
+        assert set(merged.measures) == set(self.design.measures)
+        merged.measures[:] = self.design.measures
+        return merged.compile()
 
     # Process-Covariance Matrix ------:
     def Q(self, t: int) -> torch.Tensor:
         # processes can apply multipliers to the variance of their state-elements:
         diag_multi = self._process_variance_multi(t=t)
-        Q = diag_multi.matmul(self._base_Q).matmul(diag_multi)
-        # expand for batch:
-        return Q
+        # TODO: should be a diagonal matrix w/zeros for non-dynamic state-elements
+        return diag_multi.matmul(self._base_Q).matmul(diag_multi)
 
     @cached_property
     def _process_variance_multi(self) -> DynamicMatrix:
-        merged = VarianceMultiplierMatrix.merge([process.variance_multi_mat for process in self.processes.values()])
-        return merged.compile(num_groups=self.num_groups, num_timesteps=self.num_timesteps)
+        merged = VarianceMultiplierMatrix.merge(
+            [(nm, process.variance_multi_mat) for nm, process in self.processes.items()]
+        )
+        assert list(merged.state_elements) == list(self.design.state_elements)
+        return merged.compile()
 
     @cached_property
     def _base_Q(self):

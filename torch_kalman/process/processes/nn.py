@@ -7,6 +7,7 @@ from torch.nn import Parameter, ParameterDict
 
 from torch_kalman.process import Process
 from torch_kalman.process.mixins.has_predictors import HasPredictors
+from torch_kalman.utils import zpad
 
 
 class NN(HasPredictors, Process):
@@ -36,8 +37,7 @@ class NN(HasPredictors, Process):
 
         #
         pad_n = len(str(state_dim))
-        super().__init__(id=id,
-                         state_elements=[str(i).rjust(pad_n, "0") for i in range(state_dim)])
+        super().__init__(id=id, state_elements=[zpad(i, pad_n) for i in range(state_dim)])
 
         for se in self.state_elements:
             self._set_transition(from_element=se, to_element=se, value=1.0)
@@ -58,7 +58,6 @@ class NN(HasPredictors, Process):
         p = ParameterDict()
         if self.add_module_params_to_process:
             for nm, param in self.nn_module.named_parameters():
-                nm: str = nm
                 nm = 'module_' + nm.replace('.', '_')
                 p[nm] = param
         return p
@@ -81,17 +80,21 @@ class NN(HasPredictors, Process):
         nn_outputs = {el: [] for el in self.state_elements}
         for t in range(num_timesteps):
             nn_output = self.nn_module(predictors[:, t, :])
-            for i, el in enumerate(self.state_elements):
-                nn_outputs[el].append(nn_output[:, i])
+            for i, state_element in enumerate(self.state_elements):
+                nn_outputs[state_element].append(nn_output[:, i])
 
         for measure in self.measures:
-            for el in self.state_elements:
-                for_batch.adjust_measure(measure=measure, state_element=el, adjustment=nn_outputs[el],
-                                         check_slow_grad=False)
+            for state_element in self.state_elements:
+                for_batch.adjust_measure(
+                    measure=measure,
+                    state_element=state_element,
+                    adjustment=nn_outputs[state_element],
+                    check_slow_grad=False
+                )
 
         return for_batch
 
     def add_measure(self, measure: str) -> 'NN':
         for se in self.state_elements:
-            self._set_measure(measure=measure, state_element=se, value=0., inv_link=self.inv_link)
+            self._set_measure(measure=measure, state_element=se, value=0., ilink=self.inv_link)
         return self

@@ -6,6 +6,7 @@ from torch import Tensor
 
 from torch_kalman.process import Process
 from torch_kalman.process.mixins.has_predictors import HasPredictors
+from torch_kalman.utils import split_flat
 
 
 class LinearModel(HasPredictors, Process):
@@ -57,7 +58,7 @@ class LinearModel(HasPredictors, Process):
 
     def add_measure(self, measure: str) -> 'LinearModel':
         for cov in self.state_elements:
-            self._set_measure(measure=measure, state_element=cov, value=0., inv_link=self.inv_link)
+            self._set_measure(measure=measure, state_element=cov, value=0., ilink=self.inv_link)
         return self
 
     def for_batch(self,
@@ -74,6 +75,10 @@ class LinearModel(HasPredictors, Process):
 
         for measure in self.measures:
             for i, cov in enumerate(self.state_elements):
-                for_batch.adjust_measure(measure=measure, state_element=cov, adjustment=predictors[:, :, i])
+                for_batch.adjust_measure(
+                    measure=measure,
+                    state_element=cov,
+                    adjustment=split_flat(predictors[:, :, i], dim=1)
+                )
 
         return for_batch
