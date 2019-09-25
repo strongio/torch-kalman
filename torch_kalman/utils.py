@@ -1,10 +1,27 @@
-from typing import Dict, Union, Any, Optional
+from typing import Dict, Union, Any, Optional, Callable, Iterable, Tuple
 
-import torch
 from pandas import Series
 
 import numpy as np
 from torch import Tensor
+
+
+def bifurcate(x: Iterable, lhs: Callable[[Any], bool]) -> Tuple[list, list]:
+    """
+    Split an iterable into two lists depending on a condition.
+
+    :param x: An iterable.
+    :param lhs: A function that takes an element of x; when this returns True, the element is added to the left output,
+    when this returns False, the element is added to the right output.
+    :return: Two lists.
+    """
+    l, r = [], []
+    for el in x:
+        if lhs(el):
+            l.append(el)
+        else:
+            r.append(el)
+    return l, r
 
 
 def fourier_model_mat(dt: Union[np.ndarray, Series],
@@ -74,3 +91,12 @@ def split_flat(tens: Tensor, dim: int, clone: bool = False):
 
 def identity(x: Any) -> Any:
     return x
+
+
+def is_slow_grad(tens: Tensor) -> bool:
+    if tens.requires_grad:
+        avoid_funs = {'CopyBackwards', 'SelectBackward'}
+        next_fun = tens.grad_fn.next_functions[0][0]
+        if (tens.grad_fn.__class__.__name__ in avoid_funs) or (next_fun.__class__.__name__ in avoid_funs):
+            return True
+    return False

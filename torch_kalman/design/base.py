@@ -9,7 +9,7 @@ from torch_kalman.design.for_batch import DesignForBatch
 from torch_kalman.covariance import CovarianceFromLogCholesky, PartialCovarianceFromLogCholesky
 
 from torch_kalman.process import Process
-from torch_kalman.utils import cached_property
+from lazy_object_proxy.utils import cached_property
 
 
 class Design:
