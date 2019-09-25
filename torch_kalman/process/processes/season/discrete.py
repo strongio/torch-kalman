@@ -7,7 +7,6 @@ from torch import Tensor
 from torch.nn import Parameter, ParameterDict
 
 from torch_kalman.process import Process
-from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.utils.bounded import Bounded
 from torch_kalman.process.mixins.datetime import DatetimeProcess
 from torch_kalman.utils import split_flat
@@ -84,7 +83,7 @@ class Season(DatetimeProcess, Process):
     def for_batch(self,
                   num_groups: int,
                   num_timesteps: int,
-                  start_datetimes: Optional[np.ndarray] = None) -> ProcessForBatch:
+                  start_datetimes: Optional[np.ndarray] = None):
 
         for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
 

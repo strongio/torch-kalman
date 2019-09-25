@@ -7,7 +7,6 @@ from torch_kalman.process import Process
 
 import numpy as np
 
-from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.utils.bounded import Bounded
 from torch_kalman.process.mixins.datetime import DatetimeProcess
 from torch_kalman.process.utils.fourier import fourier_tensor
@@ -99,7 +98,7 @@ class FourierSeasonDynamic(FourierSeason):
     def for_batch(self,
                   num_groups: int,
                   num_timesteps: int,
-                  start_datetimes: Optional[np.ndarray] = None) -> ProcessForBatch:
+                  start_datetimes: Optional[np.ndarray] = None):
 
         for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
 
@@ -135,7 +134,7 @@ class FourierSeasonFixed(FourierSeason):
     def for_batch(self,
                   num_groups: int,
                   num_timesteps: int,
-                  start_datetimes: Optional[np.ndarray] = None) -> ProcessForBatch:
+                  start_datetimes: Optional[np.ndarray] = None):
 
         for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
 
@@ -151,7 +150,8 @@ class FourierSeasonFixed(FourierSeason):
         for measure in self.measures:
             for state_element in self.state_elements:
                 r, c = (int(x) for x in state_element.split(sep=","))
-                for_batch.adjust_measure(measure=measure, state_element=state_element, adjustment=fourier_tens[:, :, r, c])
+                for_batch.adjust_measure(measure=measure, state_element=state_element,
+                                         adjustment=fourier_tens[:, :, r, c])
 
         return for_batch
 

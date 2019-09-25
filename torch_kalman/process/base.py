@@ -1,109 +1,68 @@
 import functools
 import inspect
-from typing import Sequence, Union, Set, Callable, Dict, Tuple
+from copy import copy
+from typing import Sequence, Callable, Optional
 
 import torch
 from torch import Tensor
 from torch.nn import Parameter
 
-from torch_kalman.process.for_batch import ProcessForBatch
-
-DesignMatAssignment = Union[float, Tensor, Callable]
+from torch_kalman.process.utils.design_matrix import (
+    TransitionMatrix, MeasureMatrix, VarianceMultiplierMatrix, DesignMatAssignment,
+    DesignMatAdjustment)
 
 
 class Process:
-    def __init_subclass__(cls, **kwargs):
-        for method_name in ('for_batch', 'initial_state_means_for_batch'):
-            method = getattr(cls, method_name)
-            if method:
-                setattr(cls, method_name, handle_for_batch_kwargs(method))
-        super().__init_subclass__()
+    _for_batch = False  # default overridden in for_batch
 
-    def __init__(self,
-                 id: str,
-                 state_elements: Sequence[str]):
-        self.id: str = str(id)
-        self.state_elements: Sequence[str] = state_elements
-        assert len(state_elements) == len(set(state_elements)), "Duplicate `state_elements`."
-        self.state_element_idx: Dict[str, int] = {se: i for i, se in enumerate(self.state_elements)}
+    def __init__(self, id: str, state_elements: Sequence[str]):
+        self.id = str(id)
+        self.state_elements = state_elements
 
-        self.ses_to_measures: Dict[Tuple[str, str], DesignMatAssignment] = {}
-        self.ses_to_measures_ilinks: Dict[Tuple[str, str], Union[Callable, None]] = {}
-        self.transitions: Dict[Tuple[str, str], DesignMatAssignment] = {}
-        self.transitions_ilinks: Dict[Tuple[str, str], Union[Callable, None]] = {}
+        self.transition_mat = TransitionMatrix(self.id, self.state_elements, self.state_elements)
+        self.measure_mat = MeasureMatrix(self.id, dim2_names=self.state_elements)
+        # TODO: variance-modification is rare/advanced. move to mixin?
+        self.variance_multi_mat = VarianceMultiplierMatrix(self.id, self.dynamic_state_elements)
 
-        if not set(self.dynamic_state_elements).isdisjoint(self.fixed_state_elements):
-            raise ValueError("Class has been misconfigured: some fixed state-elements are also dynamic-state-elements.")
+        self._validate()
 
-    def param_dict(self) -> torch.nn.ParameterDict:
-        raise NotImplementedError
-
-    # measures ---
-    def add_measure(self, measure: str) -> 'Process':
-        """
-        Calls 'set_measure' with default state_element, value
-        """
-        raise NotImplementedError
-
-    def _set_measure(self,
-                     measure: str,
-                     state_element: str,
-                     value: DesignMatAssignment,
-                     inv_link: Union[Callable, None, bool] = None):
-        """
-        sets the baseline contribution of state_element to measure; establishes a link function for how `adjust_measure`
-        changes this baseline (inv_link=None means identity link-fun)
-        """
-
-        assert state_element in self.state_elements
-
-        if (inv_link is not None) and (not callable(inv_link)):
-            raise ValueError("`inv_link` must be callable (or None).")
-
-        value = self._check_design_mat_assignment(value)
-
-        key = (measure, state_element)
-        assert key not in self.ses_to_measures, f"{key} already set"
-
-        self.ses_to_measures[key] = value
-        self.ses_to_measures_ilinks[key] = inv_link
+    def for_batch(self, num_groups: int, num_timesteps: int) -> 'Process':
+        if not self.measures:
+            raise TypeError(f"The process `{self.id}` has no measures.")
+        if self.transition_mat.empty:
+            raise TypeError(f"The process `{self.id}` has no transitions.")
+        for_batch = copy(self)
+        for_batch._for_batch = True
+        for_batch.variance_multi_mat = self.variance_multi_mat.for_batch()
+        for_batch.measure_mat = self.measure_mat.for_batch()
+        for_batch.transition_mat = self.transition_mat.for_batch()
+        return for_batch
 
     @property
-    def measures(self) -> Set[str]:
-        return set(measure for measure, state_element in self.ses_to_measures.keys())
+    def measures(self):
+        return self.measure_mat.measures
 
-    # transitions ---
-    def _set_transition(self,
-                        from_element: str,
-                        to_element: str,
-                        value: DesignMatAssignment,
-                        inv_link: Union[Callable, None, bool] = None
-                        ):
+    def requires_grad_(self, requires_grad: bool):
+        for param in self.param_dict().values():
+            param.requires_grad_(requires_grad=requires_grad)
+
+    # children should implement ----------------
+    def param_dict(self) -> torch.nn.ParameterDict:
         """
-       sets the baseline transition of between state_elements; establishes a link function for how `adjust_transition`
-       changes this baseline (inv_link=None means identity link-fun)
-       """
-        assert from_element in self.state_elements
-        assert to_element in self.state_elements
+        Any parameters that should be exposed to the owning nn.Module.
+        """
+        raise NotImplementedError
 
-        if (inv_link is not None) and (not callable(inv_link)):
-            raise ValueError("`inv_link` must be callable (or None).")
-
-        value = self._check_design_mat_assignment(value)
-
-        key = (from_element, to_element)
-        assert key not in self.transitions, f"{key} already set"
-
-        self.transitions[key] = value
-        self.transitions_ilinks[key] = inv_link
-
-    # process variance ---
-    # no set_variance: base handled by design, adjustments forced to be link='log'
+    def add_measure(self, measure: str) -> 'Process':
+        """
+        Calls '_set_measure' with default state_element, value
+        """
+        raise NotImplementedError
 
     @property
     def dynamic_state_elements(self) -> Sequence[str]:
         """
-        state elements with process-variance
+        state elements with process-variance. defaults to all
         """
         return self.state_elements
 
@@ -114,36 +73,78 @@ class Process:
         """
         return []
 
-    @staticmethod
-    def _check_design_mat_assignment(value: DesignMatAssignment) -> Union[Tensor, Callable]:
-        if isinstance(value, float):
-            value = torch.Tensor([value])
-        elif isinstance(value, Tensor):
-            if value.numel() != 1:
-                raise ValueError("Design-mat assignment should have only one-element.")
-            if value.grad_fn:
-                raise ValueError("If `value` is the result of computations that require_grad, need to wrap those "
-                                 "computations in a function and pass that for `value` instead.")
-        elif not callable(value):
-            raise ValueError("`value` must be float, tensor, or a function that produces a tensor")
-        return value
-
-    def requires_grad_(self, requires_grad: bool):
-        for param in self.param_dict().values():
-            param.requires_grad_(requires_grad=requires_grad)
-
     def initial_state_means_for_batch(self, parameters: Parameter, num_groups: int) -> Tensor:
+        """
+        Most children should use default. Handles rearranging of state-means based on for_batch keyword args. E.g. a
+        discrete seasonal process w/ a state-element for each season would need to know on which season the batch starts
+        """
         return parameters.expand(num_groups, -1)
 
-    def for_batch(self, num_groups: int, num_timesteps: int) -> 'ProcessForBatch':
-        assert self.measures, f"The process `{self.id}` has no measures."
-        assert self.transitions, f"The process `{self.id}` has no transitions."
-        return ProcessForBatch(process=self,
-                               num_groups=num_groups,
-                               num_timesteps=num_timesteps)
+    # hidden/util methods ----------------
+    def __init_subclass__(cls, **kwargs):
+        for method_name in ('for_batch', 'initial_state_means_for_batch'):
+            method = getattr(cls, method_name)
+            if method:
+                setattr(cls, method_name, handle_for_batch_kwargs(method))
+        super().__init_subclass__(**kwargs)
+
+    def _validate(self):
+        if len(self.state_elements) != len(set(self.state_elements)):
+            raise ValueError("Duplicate `state_elements`.")
+        if not set(self.dynamic_state_elements).isdisjoint(self.fixed_state_elements):
+            raise ValueError("Class has been misconfigured: some fixed state-elements are also dynamic-state-elements.")
+
+    def _set_measure(self,
+                     measure: str,
+                     state_element: str,
+                     value: DesignMatAssignment,
+                     ilink: Optional[Callable] = None):
+        self.measure_mat.assign(measure=measure, state_element=state_element, value=value)
+        self.measure_mat.set_ilink(measure=measure, state_element=state_element, ilink=ilink)
+
+    def _adjust_measure(self,
+                        measure: str,
+                        state_element: str,
+                        adjustment: 'DesignMatAdjustment',
+                        check_slow_grad: bool = True):
+        if not self._for_batch:
+            raise ValueError("Cannot _adjust_measure on the base process, must do so on the output of `for_batch()`.")
+        self.measure_mat.adjust(measure=measure,
+                                state_element=state_element,
+                                value=adjustment,
+                                check_slow_grad=check_slow_grad)
+
+    def _set_transition(self,
+                        from_element: str,
+                        to_element: str,
+                        value: DesignMatAssignment,
+                        ilink: Optional[Callable] = None):
+        self.transition_mat.assign(from_element=from_element, to_element=to_element, value=value)
+        self.transition_mat.set_ilink(from_element=from_element, to_element=to_element, ilink=ilink)
+
+    def _adjust_transition(self,
+                           from_element: str,
+                           to_element: str,
+                           adjustment: 'DesignMatAdjustment',
+                           check_slow_grad: bool = True):
+        if not self._for_batch:
+            raise ValueError("Cannot _adjust_transition on the base process, must do so on output of `for_batch()`.")
+        self.transition_mat.adjust(from_element=from_element,
+                                   to_element=to_element,
+                                   value=adjustment,
+                                   check_slow_grad=check_slow_grad)
+
+    # no _set_variance: base handled by design, adjustments forced to be link='log'
+    def _adjust_variance(self,
+                         state_element: str,
+                         adjustment: 'DesignMatAdjustment',
+                         check_slow_grad: bool = True):
+        if not self._for_batch:
+            raise ValueError("Cannot _adjust_variance on the base process, must do so on output of `for_batch()`.")
+        self.variance_multi_mat.adjust(state_element=state_element, value=adjustment, check_slow_grad=check_slow_grad)
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(id={self.id.__repr__()})"
+        return "{}(id={!r})".format(self.__class__.__name__, self.id)
 
 
 def handle_for_batch_kwargs(method: Callable) -> Callable:

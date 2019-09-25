@@ -5,7 +5,6 @@ import torch
 from torch import Tensor
 
 from torch_kalman.process import Process
-from torch_kalman.process.for_batch import ProcessForBatch
 from torch_kalman.process.mixins.has_predictors import HasPredictors
 
 
