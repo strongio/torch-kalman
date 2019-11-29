@@ -1,4 +1,6 @@
+import inspect
 from collections import OrderedDict
+from typing import Dict, Callable
 
 import torch
 
@@ -21,33 +23,6 @@ class DesignForBatch:
         self.num_timesteps = num_timesteps
         self.processes = self._build_processes(**kwargs)
         self.initial_mean = self._build_initial_mean(**kwargs)
-
-    def _build_processes(self, **kwargs) -> OrderedDict[str, Process]:
-        processes = OrderedDict()
-        for process_name, process in self.design.processes.items():
-            try:
-                processes[process_name] = process.for_batch(
-                    num_groups=self.design.num_groups,
-                    num_timesteps=self.design.num_timesteps,
-                    **kwargs
-                )
-            except (TypeError, ValueError) as e:
-                # add process-name to traceback
-                raise RuntimeError(f"Failed to create `{process}.for_batch` (see traceback above).") from e
-
-            if processes[process_name] is None:
-                raise RuntimeError(f"{process_name}'s `for_batch` call did not return anything.")
-        return processes
-
-    def _build_initial_mean(self, **kwargs) -> torch.Tensor:
-        init_mean = torch.zeros(self.num_groups, len(self.design.state_elements))
-        for process_name, process in self.processes.items():
-            init_mean[:, self.design.process_slices[process_name]] = process.initial_state_means_for_batch(
-                parameters=self.design.init_state_mean_params[self.design.process_slices[process_name]],
-                num_groups=self.num_groups,
-                **self._kwargs
-            )
-        return init_mean
 
     # Transition Matrix -------:
     @cached_property
@@ -100,7 +75,7 @@ class DesignForBatch:
     def _base_R(self):
         return self.design.measure_covariance.create(leading_dims=(self.num_groups,))
 
-    # Initial Cov:
+    # Initial Cov ------:
     @cached_property
     def initial_covariance(self) -> torch.Tensor:
         init_cov = self.design.init_covariance.create(leading_dims=())
@@ -123,3 +98,57 @@ class DesignForBatch:
         diag_multi = torch.diagflat(diag_flat)
         cov_rescaled = diag_multi.matmul(cov).matmul(diag_multi)
         return cov_rescaled
+
+    # utils ------:
+    def _build_processes(self, **kwargs) -> OrderedDict[str, Process]:
+        processes = OrderedDict()
+        for process_name, process in self.design.processes.items():
+            proc_kwargs = self._get_process_kwargs(process.id, process.for_batch, kwargs)
+            try:
+                processes[process_name] = process.for_batch(
+                    num_groups=self.design.num_groups,
+                    num_timesteps=self.design.num_timesteps,
+                    **proc_kwargs
+                )
+            except Exception as e:
+                # add process-name to traceback
+                raise RuntimeError(f"Failed to create `{process}.for_batch` (see traceback above).") from e
+
+            if processes[process_name] is None:
+                raise RuntimeError(f"{process_name}'s `for_batch` call did not return anything.")
+        return processes
+
+    def _build_initial_mean(self, **kwargs) -> torch.Tensor:
+        init_mean = torch.zeros(self.num_groups, len(self.design.state_elements))
+        for process_name, process in self.processes.items():
+            proc_kwargs = self._get_process_kwargs(process.id, process.initial_state_means_for_batch, kwargs)
+            init_mean[:, self.design.process_slices[process_name]] = process.initial_state_means_for_batch(
+                parameters=self.design.init_state_mean_params[self.design.process_slices[process_name]],
+                num_groups=self.num_groups,
+                **proc_kwargs
+            )
+        return init_mean
+
+    @staticmethod
+    def _get_process_kwargs(process_id: str, method: Callable, kwargs: Dict) -> Dict:
+        excluded = {'self', 'num_groups', 'num_timesteps'}
+        method_keys = []
+        for kwarg in inspect.signature(method).parameters:
+            if kwarg in excluded:
+                continue
+            if kwarg == 'kwargs':
+                raise ValueError(
+                    f"The signature for {method.__qualname__} should not use `**kwargs`, should instead "
+                    f"specify keyword-arguments explicitly."
+                )
+            method_keys.append(kwarg)
+
+        new_kwargs = {key: kwargs[key] for key in ('num_groups', 'num_timesteps') if key in kwargs}
+        for key in method_keys:
+            specific_key = "{}__{}".format(process_id, key)
+            if specific_key in kwargs:
+                new_kwargs[key] = kwargs[specific_key]
+            elif key in kwargs:
+                new_kwargs[key] = kwargs[key]
+
+        return new_kwargs

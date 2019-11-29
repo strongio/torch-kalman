@@ -91,21 +91,14 @@ class Process:
         """
         return []
 
-    def initial_state_means_for_batch(self, parameters: Parameter, num_groups: int) -> Tensor:
+    def initial_state_means_for_batch(self, parameters: Parameter, num_groups: int, **kwargs) -> Tensor:
         """
         Most children should use default. Handles rearranging of state-means based on for_batch keyword args. E.g. a
         discrete seasonal process w/ a state-element for each season would need to know on which season the batch starts
         """
         return parameters.expand(num_groups, -1)
 
-    # hidden/util methods ----------------
-    def __init_subclass__(cls, **kwargs):
-        for method_name in ('for_batch', 'initial_state_means_for_batch'):
-            method = getattr(cls, method_name)
-            if method:
-                setattr(cls, method_name, handle_for_batch_kwargs(method))
-        super().__init_subclass__(**kwargs)
-
+    # util methods ----------------
     def _validate(self):
         if len(self.state_elements) != len(set(self.state_elements)):
             raise ValueError("Duplicate `state_elements`.")
@@ -164,42 +157,3 @@ class Process:
 
     def __repr__(self) -> str:
         return "{}(id={!r})".format(self.__class__.__name__, self.id)
-
-
-def handle_for_batch_kwargs(method: Callable) -> Callable:
-    """
-    Decorates a process's method so that it finds the keyword-arguments that were meant for it.
-
-    :param method: The process's `for_batch` method.
-    :return: Decorated version.
-    """
-
-    if getattr(method, '_handles_for_batch_kwargs', False):
-        return method
-
-    excluded = {'self', 'num_groups', 'num_timesteps'}
-    for_batch_kwargs = []
-    for kwarg in inspect.signature(method.for_batch).parameters:
-        if kwarg in excluded:
-            continue
-        if kwarg == 'kwargs':
-            raise ValueError(f"The signature for {method.__name__} should not use `**kwargs`, should instead specify "
-                             f"keyword arguments explicitly.")
-        for_batch_kwargs.append(kwarg)
-
-    @functools.wraps(method)
-    def wrapped(self, *args, **kwargs):
-        new_kwargs = {key: kwargs[key] for key in ('num_groups', 'num_timesteps') if key in kwargs}
-
-        for key in for_batch_kwargs:
-            specific_key = "{}__{}".format(self.id, key)
-            if specific_key in kwargs:
-                new_kwargs[key] = kwargs[specific_key]
-            elif key in kwargs:
-                new_kwargs[key] = kwargs[key]
-
-        return method(self, *args, **new_kwargs)
-
-    wrapped._handles_for_batch_kwargs = True
-
-    return wrapped
