@@ -7,11 +7,6 @@ import torch
 from torch import Tensor
 import numpy as np
 
-try:
-    from pandas import DataFrame
-except ImportError:
-    DataFrame = None
-
 # assumed by `day_of_week_num`:
 assert np.zeros(1).astype('datetime64[D]') == np.datetime64('1970-01-01', 'D')
 
@@ -76,11 +71,13 @@ class TimeSeriesBatch:
     def subset(self, ind: Union[int, Sequence, slice]) -> 'TimeSeriesBatch':
         if isinstance(ind, int):
             ind = [ind]
-        return self.__class__(self.tensor[ind],
-                              self.group_names[ind],
-                              self.start_times[ind],
-                              self.measures,
-                              dt_unit=self.dt_unit)
+        return type(self)(
+            tensor=self.tensor[ind],
+            group_names=self.group_names[ind],
+            start_times=self.start_times[ind],
+            measures=self.measures,
+            dt_unit=self.dt_unit
+        )
 
     def subset_by_groups(self, groups: Sequence[Any]) -> 'TimeSeriesBatch':
         """
@@ -96,11 +93,13 @@ class TimeSeriesBatch:
         """
         assert tensor.shape[2] == len(self.measures)
         assert tensor.shape[0] == len(self.group_names)
-        return self.__class__(tensor,
-                              group_names=self.group_names,
-                              start_times=self.start_times,
-                              measures=self.measures,
-                              dt_unit=self.dt_unit)
+        return type(self)(
+            tensor=tensor,
+            group_names=self.group_names,
+            start_times=self.start_times,
+            measures=self.measures,
+            dt_unit=self.dt_unit
+        )
 
     def times(self) -> np.ndarray:
         offset = np.arange(0, self.tensor.shape[1])
@@ -126,11 +125,11 @@ class TimeSeriesBatch:
         idx = round(time_len * split_frac)
         if 1 < idx < time_len:
             train_batch = self.with_new_tensor(self.tensor[:, :idx, :])
-            val_batch = self.__class__(self.tensor[:, idx:, :],
-                                       self.group_names,
-                                       self.times()[:, idx],
-                                       self.measures,
-                                       dt_unit=self.dt_unit)
+            val_batch = type(self)(self.tensor[:, idx:, :],
+                                   self.group_names,
+                                   self.times()[:, idx],
+                                   self.measures,
+                                   dt_unit=self.dt_unit)
         else:
             raise ValueError("`split_frac` too extreme, results in empty tensor.")
         return train_batch, val_batch
@@ -158,11 +157,7 @@ class TimeSeriesBatch:
                             time_colname: str,
                             measures: Sequence[str]) -> 'DataFrame':
         # TODO: for speed, decide whether to iterate over times or iterate over groups based on which is longer?
-
-        try:
-            import pandas as pd
-        except ImportError:
-            raise RuntimeError("Must install `pandas` for `tensor_to_dataframe` to work.")
+        from pandas import DataFrame, concat
 
         tensor = tensor.data.numpy()
 
@@ -176,12 +171,12 @@ class TimeSeriesBatch:
                 continue
             end_idx = np.max(np.where(~all_nan_per_row)[0]) + 1
             # convert to dataframe:
-            df = pd.DataFrame(data=values[:end_idx, :], columns=measures)
+            df = DataFrame(data=values[:end_idx, :], columns=measures)
             df[group_colname] = group_name
             df[time_colname] = times[g, 0:len(df.index)]
             dfs.append(df)
 
-        return pd.concat(dfs)
+        return concat(dfs)
 
     @classmethod
     def from_dataframe(cls,
@@ -233,11 +228,13 @@ class TimeSeriesBatch:
         if missing is not None:
             tens[torch.isnan(tens)] = missing
 
-        return cls(tensor=tens,
-                   group_names=group_names,
-                   start_times=start_times,
-                   measures=measure_colnames,
-                   dt_unit=dt_unit)
+        return cls(
+            tensor=tens,
+            group_names=group_names,
+            start_times=start_times,
+            measures=measure_colnames,
+            dt_unit=dt_unit
+        )
 
     def with_dt_unit(self, new_dt_unit: str) -> 'TimeSeriesBatch':
         """
@@ -250,7 +247,9 @@ class TimeSeriesBatch:
         num_groups, num_timesteps, num_measures = self.tensor.shape
 
         if new_dt_unit not in self.supported_dt_units:
-            raise ValueError(f"Time-unit of {new_dt_unit} not currently supported; please report to package maintainer.")
+            raise ValueError(
+                f"Time-unit of {new_dt_unit} not currently supported; please report to package maintainer."
+            )
 
         new_over_old = np.timedelta64(1, new_dt_unit) / np.timedelta64(1, self.dt_unit)
 
@@ -287,8 +286,10 @@ class TimeSeriesBatch:
 
         new_start_times = self.start_times.astype(f'datetime64[{new_dt_unit}]')
 
-        return self.__class__(tensor=new_tens,
-                              group_names=self.group_names,
-                              start_times=new_start_times,
-                              measures=self.measures,
-                              dt_unit=new_dt_unit)
+        return type(self)(
+            tensor=new_tens,
+            group_names=self.group_names,
+            start_times=new_start_times,
+            measures=self.measures,
+            dt_unit=new_dt_unit
+        )
