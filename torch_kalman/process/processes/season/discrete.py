@@ -13,6 +13,7 @@ from torch_kalman.utils import split_flat, zpad
 
 
 class Season(DatetimeProcess, Process):
+    measured_name = 'measured'
 
     def __init__(self,
                  id: str,
@@ -20,7 +21,8 @@ class Season(DatetimeProcess, Process):
                  season_duration: int = 1,
                  decay: Union[bool, Tuple[float, float]] = False,
                  season_start: Optional[str] = None,
-                 dt_unit: Optional[str] = None):
+                 dt_unit: Optional[str] = None,
+                 fixed: bool = False):
         """
         Process representing discrete seasons.
 
@@ -36,14 +38,16 @@ class Season(DatetimeProcess, Process):
         groups in your dataset start on different dates; when calling the kalman-filter you'll pass an array of
         `start_datetimes` for group in the input, and this will be used to align the seasons for each group.
         :param dt_unit: Currently supports {'Y', 'D', 'h', 'm', 's'}. 'W' is experimentally supported.
+        :param fixed: If True, then the seasonality does not vary over time, and this amounts to one-hot-encoding the
+        seasons. Default False.
         """
 
         #
         self.seasonal_period = seasonal_period
         self.season_duration = season_duration
+        self.fixed = fixed
 
         # state-elements:
-        self.measured_name = 'measured'
         pad_n = len(str(seasonal_period))
         super().__init__(id=id,
                          state_elements=[self.measured_name] + [zpad(i, pad_n) for i in range(1, seasonal_period)],
@@ -78,7 +82,7 @@ class Season(DatetimeProcess, Process):
 
     @property
     def dynamic_state_elements(self) -> Sequence[str]:
-        return [self.measured_name]
+        return [] if self.fixed else [self.measured_name]
 
     def for_batch(self,
                   num_groups: int,

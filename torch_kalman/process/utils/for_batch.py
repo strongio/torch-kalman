@@ -2,7 +2,7 @@ import functools
 from typing import Callable
 
 
-class is_for_batch:
+class method_for_batch:
     def __init__(self, setting: bool):
         """
         :param setting: If True, then method can only be called on output of `for_batch`; if False, then method
@@ -15,9 +15,9 @@ class is_for_batch:
 
         @functools.wraps(func)
         def wrapped(slf, *args, **kwargs):
-            if slf._for_batch != self.setting:
+            if bool(slf.is_for_batch) != self.setting:
                 raise ValueError(
-                    f"{msg} call f{slf.__class__.__name__}.{func.__name__} if it's the output of `for_batch()`."
+                    f"{msg} call `{type(slf).__name__}.{func.__name__}()` if it's the output of `for_batch()`."
                 )
             return func(slf, *args, **kwargs)
 

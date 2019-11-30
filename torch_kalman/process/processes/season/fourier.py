@@ -174,7 +174,8 @@ class FourierSeasonFixed(FourierSeason):
 
 class TBATS(FourierSeason):
     """
-    This implementation is not complete: (1) does not allow decay, (2) does not offset seasons according to group start date.
+    This implementation is not complete: (1) does not allow decay, (2) does not offset seasons according to group start
+    date.
     """
 
     def __init__(self,
@@ -186,9 +187,9 @@ class TBATS(FourierSeason):
                  dt_unit: Optional[str] = None):
 
         if decay:
-            raise NotImplementedError(f"{self.__class__.__name__} does not yet support decay.")
+            raise NotImplementedError(f"{type(self).__name__} does not yet support decay.")
         if season_start or dt_unit:
-            raise NotImplementedError(f"{self.__class__.__name__} does not yet support datetimes.")
+            raise NotImplementedError(f"{type(self).__name__} does not yet support datetimes.")
 
         super().__init__(id=id,
                          seasonal_period=seasonal_period,

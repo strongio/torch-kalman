@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Tuple, Sequence
+from typing import Tuple, Sequence, Dict
 
 import torch
 
@@ -34,12 +34,12 @@ class Design:
         for process_name, process in self.processes.items():
             p[f"process:{process_name}"] = process.param_dict()
 
-        p['measure_cov'] = self.measure_covariance.param_dict
+        p['measure_cov'] = self.measure_covariance.param_dict()
 
         p['init_state'] = ParameterDict([('mean', self.init_mean_params)])
-        p['init_state'].update(self.init_covariance.param_dict.items())
+        p['init_state'].update(self.init_covariance.param_dict().items())
 
-        p['process_cov'] = self.process_covariance.param_dict
+        p['process_cov'] = self.process_covariance.param_dict()
 
         return p
 
@@ -89,7 +89,7 @@ class Design:
         return out
 
     @cached_property
-    def process_slices(self) -> OrderedDict[str, slice]:
+    def process_slices(self) -> Dict[str, slice]:
         process_slices = OrderedDict()
         start_counter = 0
         for process_name, process in self.processes.items():
@@ -126,11 +126,11 @@ class Design:
             for measure in process.measures:
                 if measure not in self.measures:
                     raise RuntimeError(f"{measure} not in `measures`")
-                used_measures.add(process.measures)
+                used_measures.add(measure)
 
         unused_measures = set(self.measures).difference(used_measures)
         if unused_measures:
             raise ValueError(f"The following `measures` are not in any of the `processes`:\n{unused_measures}")
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(processes={list(self.processes.values())}, measures={self.measures})"
+        return f"{type(self).__name__}(processes={list(self.processes.values())}, measures={self.measures})"

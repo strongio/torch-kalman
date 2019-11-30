@@ -37,7 +37,7 @@ class TestKalmanFilter(TestCaseTK):
 
         #
         filter_kf = filterpy_KalmanFilter(dim_x=2, dim_z=1)
-        filter_kf.x = torch_kf.design.init_state_mean_params.detach().numpy()[:, None]
+        filter_kf.x = torch_kf.design.init_mean_params.detach().numpy()[:, None]
         filter_kf.P = Covariance.from_log_cholesky(torch_kf.design.init_cholesky_log_diag,
                                                    torch_kf.design.init_cholesky_off_diag).detach().numpy()
 

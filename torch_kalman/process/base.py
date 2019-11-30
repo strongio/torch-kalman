@@ -10,7 +10,7 @@ from torch.nn import Parameter
 from torch_kalman.process.utils.design_matrix import (
     TransitionMatrix, MeasureMatrix, VarianceMultiplierMatrix, DesignMatAssignment, DesignMatAdjustment
 )
-from torch_kalman.process.utils.for_batch import is_for_batch
+from torch_kalman.process.utils.for_batch import method_for_batch
 
 
 class Process:
@@ -18,23 +18,21 @@ class Process:
     def __init__(self, id: str, state_elements: Sequence[str]):
         self.id = str(id)
         self.state_elements = state_elements
-        self._for_batch = False
+        self._for_batch = None
 
         # transitions:
         self.transition_mat = TransitionMatrix(self.state_elements, self.state_elements)
 
         # state-element -> measure
-        self.measure_mat = MeasureMatrix(self.state_elements, self.state_elements)
+        # measures will be appended in add_measure, but state-elements need to be known at init
+        self.measure_mat = MeasureMatrix(dim1_names=None, dim2_names=self.state_elements)
 
         # variance of dynamic state elements:
         self.variance_multi_mat = VarianceMultiplierMatrix(self.state_elements)
-        for state_element in self.dynamic_state_elements:
-            self.variance_multi_mat.assign(state_element=state_element, value=0.0)
-            self.variance_multi_mat.set_ilink(state_element=state_element, ilink=torch.exp)
 
         self._validate()
 
-    @is_for_batch(False)
+    @method_for_batch(False)
     def for_batch(self, num_groups: int, num_timesteps: int) -> 'Process':
         assert num_groups > 0
         assert num_timesteps > 0
@@ -50,12 +48,16 @@ class Process:
         return for_batch
 
     @property
-    @is_for_batch(True)
+    def is_for_batch(self) -> bool:
+        return bool(self._for_batch)
+
+    @property
+    @method_for_batch(True)
     def num_groups(self) -> int:
         return self._for_batch[0]
 
     @property
-    @is_for_batch(True)
+    @method_for_batch(True)
     def num_timesteps(self) -> int:
         return self._for_batch[1]
 
@@ -70,7 +72,7 @@ class Process:
         """
         raise NotImplementedError
 
-    @is_for_batch(False)
+    @method_for_batch(False)
     def add_measure(self, measure: str) -> 'Process':
         """
         Calls '_set_measure' with default state_element, value
@@ -91,7 +93,7 @@ class Process:
         """
         return []
 
-    def initial_state_means_for_batch(self, parameters: Parameter, num_groups: int, **kwargs) -> Tensor:
+    def initial_state_means_for_batch(self, parameters: Parameter, num_groups: int) -> Tensor:
         """
         Most children should use default. Handles rearranging of state-means based on for_batch keyword args. E.g. a
         discrete seasonal process w/ a state-element for each season would need to know on which season the batch starts
@@ -105,7 +107,7 @@ class Process:
         if not set(self.dynamic_state_elements).isdisjoint(self.fixed_state_elements):
             raise ValueError("Class has been misconfigured: some fixed state-elements are also dynamic-state-elements.")
 
-    @is_for_batch(False)
+    @method_for_batch(False)
     def _set_measure(self,
                      measure: str,
                      state_element: str,
@@ -115,18 +117,20 @@ class Process:
         self.measure_mat.assign(measure=measure, state_element=state_element, value=value, force=force)
         self.measure_mat.set_ilink(measure=measure, state_element=state_element, ilink=ilink, force=force)
 
-    @is_for_batch(True)
+    @method_for_batch(True)
     def _adjust_measure(self,
                         measure: str,
                         state_element: str,
                         adjustment: 'DesignMatAdjustment',
                         check_slow_grad: bool = True):
-        self.measure_mat.adjust(measure=measure,
-                                state_element=state_element,
-                                value=adjustment,
-                                check_slow_grad=check_slow_grad)
+        self.measure_mat.adjust(
+            measure=measure,
+            state_element=state_element,
+            value=adjustment,
+            check_slow_grad=check_slow_grad
+        )
 
-    @is_for_batch(False)
+    @method_for_batch(False)
     def _set_transition(self,
                         from_element: str,
                         to_element: str,
@@ -136,19 +140,21 @@ class Process:
         self.transition_mat.assign(from_element=from_element, to_element=to_element, value=value, force=force)
         self.transition_mat.set_ilink(from_element=from_element, to_element=to_element, ilink=ilink, force=force)
 
-    @is_for_batch(True)
+    @method_for_batch(True)
     def _adjust_transition(self,
                            from_element: str,
                            to_element: str,
                            adjustment: 'DesignMatAdjustment',
                            check_slow_grad: bool = True):
-        self.transition_mat.adjust(from_element=from_element,
-                                   to_element=to_element,
-                                   value=adjustment,
-                                   check_slow_grad=check_slow_grad)
+        self.transition_mat.adjust(
+            from_element=from_element,
+            to_element=to_element,
+            value=adjustment,
+            check_slow_grad=check_slow_grad
+        )
 
     # no _set_variance: base handled by design, adjustments forced to be link='log'
-    @is_for_batch(True)
+    @method_for_batch(True)
     def _adjust_variance(self,
                          state_element: str,
                          adjustment: 'DesignMatAdjustment',
@@ -156,4 +162,4 @@ class Process:
         self.variance_multi_mat.adjust(state_element=state_element, value=adjustment, check_slow_grad=check_slow_grad)
 
     def __repr__(self) -> str:
-        return "{}(id={!r})".format(self.__class__.__name__, self.id)
+        return "{}(id={!r})".format(type(self).__name__, self.id)

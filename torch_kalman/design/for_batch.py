@@ -89,25 +89,25 @@ class DesignForBatch:
         Rescale variances associated with processes (process-covariance or initial covariance) by the
         measurement-variances. Helpful in practice for training.
         """
-        measure_idx = {measure: i for i, measure in enumerate(self.design.measures)}
+        measure_idx_by_measure = {measure: i for i, measure in enumerate(self.design.measures)}
         measure_log_stds = self.design.measure_covariance.create().diag().sqrt().log()
         diag_flat = torch.ones(len(self.design.state_elements))
         for process_name, process in self.processes.items():
-            measure_idx = [measure_idx[m] for m in process.measures]
+            measure_idx = [measure_idx_by_measure[m] for m in process.measures]
             diag_flat[self.design.process_slices[process_name]] = measure_log_stds[measure_idx].mean().exp()
         diag_multi = torch.diagflat(diag_flat)
         cov_rescaled = diag_multi.matmul(cov).matmul(diag_multi)
         return cov_rescaled
 
     # utils ------:
-    def _build_processes(self, **kwargs) -> OrderedDict[str, Process]:
+    def _build_processes(self, **kwargs) -> Dict[str, Process]:
         processes = OrderedDict()
         for process_name, process in self.design.processes.items():
             proc_kwargs = self._get_process_kwargs(process.id, process.for_batch, kwargs)
             try:
                 processes[process_name] = process.for_batch(
-                    num_groups=self.design.num_groups,
-                    num_timesteps=self.design.num_timesteps,
+                    num_groups=self.num_groups,
+                    num_timesteps=self.num_timesteps,
                     **proc_kwargs
                 )
             except Exception as e:
@@ -123,7 +123,7 @@ class DesignForBatch:
         for process_name, process in self.processes.items():
             proc_kwargs = self._get_process_kwargs(process.id, process.initial_state_means_for_batch, kwargs)
             init_mean[:, self.design.process_slices[process_name]] = process.initial_state_means_for_batch(
-                parameters=self.design.init_state_mean_params[self.design.process_slices[process_name]],
+                parameters=self.design.init_mean_params[self.design.process_slices[process_name]],
                 num_groups=self.num_groups,
                 **proc_kwargs
             )

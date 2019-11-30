@@ -1,11 +1,13 @@
 import itertools
+from copy import copy
 from typing import Optional, Sequence, Union, Callable, Tuple, List, Hashable, Dict
 
 import torch
 from torch import Tensor
+from torch.distributions.utils import broadcast_all
 
-from torch_kalman.process.utils.for_batch import is_for_batch
-from torch_kalman.utils import bifurcate, is_slow_grad
+from torch_kalman.process.utils.for_batch import method_for_batch
+from torch_kalman.utils import bifurcate, is_slow_grad, identity
 
 DesignMatAssignment = Union[float, Tensor, Callable]
 SeqOfTensors = Union[Tuple[Tensor], List[Tensor]]
@@ -35,14 +37,14 @@ class DesignMatrix:
 
         self._assignments = {}
         self._ilinks = {}
-        self._for_batch = False
+        self._for_batch = None
 
     # base ------------------------------------
     @property
     def empty(self) -> bool:
         return not self._assignments
 
-    @is_for_batch(False)
+    @method_for_batch(False)
     def assign(self, value: DesignMatAssignment, force: bool = False, **kwargs):
         key = self._get_key(kwargs)
         self._check_or_expand_dims(*key)
@@ -51,7 +53,7 @@ class DesignMatrix:
             raise ValueError(f"Already have assignment for {key}.")
         self._assignments[key] = value
 
-    @is_for_batch(False)
+    @method_for_batch(False)
     def set_ilink(self, ilink: Optional[Callable], force: bool = False, **kwargs):
         key = self._get_key(kwargs)
         if key not in self._assignments:
@@ -63,28 +65,35 @@ class DesignMatrix:
 
     # for batch -----------------------
     @property
-    @is_for_batch(True)
+    def is_for_batch(self):
+        return bool(self._for_batch)
+
+    @property
+    @method_for_batch(True)
     def num_groups(self) -> int:
         return self._for_batch[0]
 
     @property
-    @is_for_batch(True)
+    @method_for_batch(True)
     def num_timesteps(self) -> int:
         return self._for_batch[1]
 
-    @is_for_batch(False)
-    def for_batch(self, num_groups: int, num_timesteps: int) -> 'DesignMatrix':
-        # shallow-copy dimnames:
-        out = self.__class__(dim1_names=list(self.dim1_names), dim2_names=list(self.dim2_names))
-        # convert assignments to lists so adjustments can be appended:
-        out._assignments = {key: [value() if callable(value) else value] for key, value in self._assignments.items()}
-        # shallow-copy ilinks:
+    def copy(self):
+        out = type(self)(dim1_names=list(self.dim1_names), dim2_names=list(self.dim2_names))
+        out._assignments = {k: copy(v) for k, v in self._assignments.items()}
         out._ilinks = dict(self._ilinks)
+        return out
+
+    @method_for_batch(False)
+    def for_batch(self, num_groups: int, num_timesteps: int) -> 'DesignMatrix':
+        out = self.copy()
+        # wrap assignments in lists; adjustments will be appended:
+        out._assignments = {key: [value() if callable(value) else value] for key, value in out._assignments.items()}
         # disable setting assignments/ilinks, enable adjustments:
         out._for_batch = (num_groups, num_timesteps)
         return out
 
-    @is_for_batch(True)
+    @method_for_batch(True)
     def adjust(self, value: DesignMatAdjustment, check_slow_grad: bool, **kwargs):
         key = self._get_key(kwargs)
         value = self._validate_adjustment(value, check_slow_grad=check_slow_grad)
@@ -94,8 +103,8 @@ class DesignMatrix:
     def merge(cls, mats: Sequence[Tuple[str, 'DesignMatrix']]) -> 'DesignMatrix':
         if not all(isinstance(mat, cls) for _, mat in mats):
             raise RuntimeError(f"All mats should be instance of {cls.__name__}")
-        dims = set(mat._for_batch for _, mat in mats)
-        if len(dims) == 1:
+        dims = set((mat.num_groups, mat.num_timesteps) for _, mat in mats)
+        if len(dims) != 1:
             raise RuntimeError(f"All mats should have same num-groups/num-timesteps, got: {dims}")
 
         # new dimnames:
@@ -112,8 +121,8 @@ class DesignMatrix:
         new_ilinks = {}
         new_assignments = {}
         for process_name, mat in mats:
-            new_assignments.update({cls._rename_merged_key(k, process_name): v for k, v in mat._assignments})
-            new_ilinks.update({cls._rename_merged_key(k, process_name): v for k, v in mat._ilinks})
+            new_assignments.update({cls._rename_merged_key(k, process_name): v for k, v in mat._assignments.items()})
+            new_ilinks.update({cls._rename_merged_key(k, process_name): v for k, v in mat._ilinks.items()})
 
         out = cls(dim1_names=list(new_dimnames[1]), dim2_names=list(new_dimnames[2]))
         out._for_batch = list(dims)[0]
@@ -121,30 +130,28 @@ class DesignMatrix:
         out._ilinks = new_ilinks
         return out
 
-    @is_for_batch(True)
+    @method_for_batch(True)
     def compile(self) -> 'DynamicMatrix':
         """
         Consolidate assignments then apply the link function. Some assignments can be "frozen" into a pre-computed
         matrix, while others must remain as lists to be evaluated in DesignForBatch as needed.
         """
-        num_groups, num_timesteps = self._for_batch
-        base_mat = torch.zeros(num_groups, len(self.dim1_names), len(self.dim2_names))
+        base_mat = torch.zeros(self.num_groups, len(self.dim1_names), len(self.dim2_names))
         dynamic_assignments = {}
         for (dim1, dim2), values in self._assignments.items():
             r = self.dim1_names.index(dim1)
             c = self.dim2_names.index(dim2)
-            ilink = self._ilinks[(dim1, dim2)]
+            ilink = self._ilinks[(dim1, dim2)] or identity
             dynamic, base = bifurcate(values, _is_dynamic_assignment)
-            if ilink is None or not dynamic:
-                # if using identity link, or there are no dynamic, can take shortcut
-                base_mat[:, r, c] = torch.sum(base)
-            else:
-                # otherwise, need to replicate those static assignments to match each dynamic
-                dynamic = dynamic + [[x] * num_timesteps for x in base]
             if dynamic:
-                per_timestep = list(zip(*dynamic))
-                assert len(per_timestep) == num_timesteps
-                dynamic_assignments[(r, c)] = [torch.sum(x) for x in per_timestep]
+                # if any dynamic, then all dynamic:
+                dynamic = dynamic + [[x] * self.num_timesteps for x in base]
+                per_timestep = list(zip(*dynamic))  # invert
+                assert len(per_timestep) == self.num_timesteps
+                assert (r, c) not in dynamic_assignments.keys()
+                dynamic_assignments[(r, c)] = [ilink(torch.sum(torch.stack(broadcast_all(*x)))) for x in per_timestep]
+            else:
+                base_mat[:, r, c] = ilink(torch.sum(torch.stack(broadcast_all(*base))))
         return DynamicMatrix(base_mat, dynamic_assignments)
 
     # utils ------------------------------------------
@@ -157,8 +164,8 @@ class DesignMatrix:
     @classmethod
     def _rename_merged_key(cls, old_key: Tuple[str, str], process_name: str) -> Tuple:
         new_key = list(old_key)
-        for i, d in enumerate(new_key, start=1):
-            if not cls._is_measure_dim(i):
+        for i, d in enumerate(new_key):
+            if not cls._is_measure_dim(i + 1):
                 new_key[i] = (process_name, old_key[i])
         return tuple(new_key)
 
@@ -258,17 +265,26 @@ class VarianceMultiplierMatrix(DesignMatrix):
     dim1_name = 'state_element'
     dim2_name = 'state_element'
 
-    def __init__(self, dim_names: Sequence[str]):
-        super().__init__(dim1_names=dim_names, dim2_names=dim_names)
+    def __init__(self,
+                 *args,
+                 dim1_names: Optional[Sequence[Hashable]] = None,
+                 dim2_names: Optional[Sequence[Hashable]] = None):
+        if len(args) == 1 and dim1_names is None and dim2_names is None:
+            dim1_names = dim2_names = args[0]
+        assert dim1_names == dim2_names
+        super().__init__(dim1_names=dim1_names, dim2_names=dim2_names)
+        for state_element in dim1_names:
+            self.assign(state_element=state_element, value=0.0)
+            self.set_ilink(state_element=state_element, ilink=torch.exp)
 
     def assign(self, value: DesignMatAssignment, **kwargs):
         if value != 0.0:
-            raise ValueError(f"Cannot override assignment-value for {self.__class__.__name__}.")
+            raise ValueError(f"Cannot override assignment-value for {type(self).__name__}.")
         super().assign(value=value, **kwargs)
 
     def set_ilink(self, ilink: Optional[Callable], **kwargs):
         if ilink is not torch.exp:
-            raise ValueError(f"Cannot override ilink for {self.__class__.__name__}.")
+            raise ValueError(f"Cannot override ilink for {type(self).__name__}.")
         super().set_ilink(ilink=ilink, **kwargs)
 
     @property

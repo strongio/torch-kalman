@@ -6,9 +6,12 @@ import torch
 
 from torch import Tensor
 
+from torch_kalman.data_utils import TimeSeriesBatch
 from torch_kalman.design import Design
 from torch_kalman.state_belief import StateBelief
 from torch_kalman.state_belief.base import UnmeasuredError
+
+import numpy as np
 
 Selector = Union[Sequence[int], slice]
 
@@ -71,7 +74,7 @@ class StateBeliefOverTime:
             means, stds = zip(*means_and_stds)
             means = torch.stack(means).permute(1, 0, 2)
             stds = torch.stack(stds).permute(1, 0, 2)
-            for s, (process_name, state_element) in enumerate(self.design.all_state_elements()):
+            for s, (process_name, state_element) in enumerate(self.design.state_elements):
                 if ~torch.isclose(means[:, :, s].abs().max(), torch.zeros(1)):
                     out[(measure, process_name, state_element)] = (means[:, :, s], stds[:, :, s])
         return out
@@ -120,12 +123,14 @@ class StateBeliefOverTime:
 
         num_groups, num_times, num_dist_dims = obs.shape
 
-        # group into chunks for log-prob evaluation. the way indexing works makes this tricky, and slow if we just create a
-        # separate group X measure index for each separate time-slice. two shortcuts are used to mitigate this:
-        # (1) the first N time-slices that are nan-free will all be evaluated as a chunk
-        # (2) subsequent nan-free slices use `slice` notation instead of having to iterate through each group, checking
-        #     which measures were nan
-        # For all other time-points, we need a separate (group-indices, time-index, measure-indices) tuple.
+        """
+        group into chunks for log-prob evaluation. the way indexing works makes this tricky, and slow if we just create 
+        a separate group X measure index for each separate time-slice. two shortcuts are used to mitigate this:
+        (1) the first N time-slices that are nan-free will all be evaluated as a chunk
+        (2) subsequent nan-free slices use `slice` notation instead of having to iterate through each group, checking
+            which measures were nan
+        For all other time-points, we need a separate (group-indices, time-index, measure-indices) tuple.
+        """
 
         times_without_nan = list()
         last_nonan_t = -1
@@ -166,7 +171,8 @@ class StateBeliefOverTime:
         for group_idx, time_idx, measure_idx in lp_groups:
             if isinstance(time_idx, int):
                 # assignment is dimensionless in time; needed b/c group isn't a slice
-                lp = self._log_prob_with_subsetting(obs, group_idx=group_idx, time_idx=(time_idx,), measure_idx=measure_idx,
+                lp = self._log_prob_with_subsetting(obs, group_idx=group_idx, time_idx=(time_idx,),
+                                                    measure_idx=measure_idx,
                                                     **kwargs)
                 out[group_idx, time_idx] = lp.squeeze(-1)
             else:
@@ -189,8 +195,10 @@ class StateBeliefOverTime:
     def _check_lp_sub_input(group_idx: Selector, time_idx: Selector):
         if isinstance(group_idx, Sequence) and isinstance(time_idx, Sequence):
             if len(group_idx) > 1 and len(time_idx) > 1:
-                warn("Both `group_idx` and `time_idx` are indices (i.e. neither is an int or a slice). This is rarely the "
-                     "expected input.")
+                warn(
+                    "Both `group_idx` and `time_idx` are indices (i.e. neither is an int or a slice). This is rarely "
+                    "the expected input."
+                )
 
     def sample_measurements(self, eps: Optional[Tensor] = None):
         raise NotImplementedError
@@ -219,3 +227,81 @@ class StateBeliefOverTime:
             Ht = self.H.permute(0, 1, 3, 2)
             self._prediction_uncertainty = self.H.matmul(self.covs).matmul(Ht) + self.R
         return self._prediction_uncertainty
+
+    def to_dataframe(self,
+                     batch: Union[TimeSeriesBatch, dict],
+                     type: str = 'predictions',
+                     group_colname: str = 'group',
+                     time_colname: str = 'date_time') -> 'DataFrame':
+        """
+        :param batch: Either a TimeSeriesBatch, or a dictionary with 'start_times' and 'group_names'.
+        :param group_colname: Column-name for 'group'
+        :param time_colname: Column-name for 'time'
+        :return: A pandas DataFrame with group, time, measure, predicted_mean, predicted_std
+        """
+        from pandas import concat
+
+        if isinstance(batch, TimeSeriesBatch):
+            batch = {'start_times': batch.start_times, 'group_names': batch.group_names, 'tensor': batch.tensor}
+
+        num_timesteps = len(self.state_beliefs)
+        times = batch['start_times'][:, None] + np.arange(0, num_timesteps)
+
+        out = []
+        if type == 'predictions':
+            stds = torch.diagonal(self.prediction_uncertainty, dim1=-1, dim2=-2).sqrt()
+            for i, measure in enumerate(self.design.measures):
+                # mean:
+                df_pred = TimeSeriesBatch.tensor_to_dataframe(
+                    tensor=self.predictions[..., [i]],
+                    times=times,
+                    group_names=batch['group_names'],
+                    measures=['predicted_mean'],
+                    group_colname=group_colname,
+                    time_colname=time_colname
+                )
+
+                # std:
+                df_std = TimeSeriesBatch.tensor_to_dataframe(
+                    tensor=stds[..., [i]],
+                    times=times,
+                    group_names=batch['group_names'],
+                    measures=['predicted_std'],
+                    group_colname=group_colname,
+                    time_colname=time_colname
+                )
+
+                out.append(df_pred.merge(df_std, on=[group_colname, time_colname]))
+                out[-1]['measure'] = measure
+        elif type == 'components':
+
+            def _tensor_to_df(tens, measures):
+                return TimeSeriesBatch.tensor_to_dataframe(
+                    tensor=tens,
+                    times=times,
+                    group_names=batch['group_names'],
+                    group_colname=group_colname,
+                    time_colname=time_colname,
+                    measures=measures
+                )
+
+            for (measure, process, state_element), (m, std) in self.components().items():
+                df = _tensor_to_df(torch.stack([m, std], 2), measures=['value', 'std'])
+                df['process'], df['state_element'], df['measure'] = process, state_element, measure
+                out.append(df)
+
+            # residuals:
+            if 'tensor' in batch.keys():
+                orig_padded = self.predictions.data.clone()
+                orig_padded[:] = np.nan
+                orig_padded[:, 0:batch['tensor'].shape[1], :] = batch['tensor']
+                dfr = _tensor_to_df(self.predictions - orig_padded, measures=self.design.measures)
+                for measure in self.design.measures:
+                    df = dfr.loc[:, [group_colname, time_colname, measure]].copy()
+                    df['process'], df['state_element'], df['measure'] = 'residuals', 'residuals', measure
+                    df['value'] = df.pop(measure)
+                    out.append(df)
+        else:
+            raise ValueError("Expected `type` to be 'predictions' or 'components'.")
+
+        return concat(out, sort=True)

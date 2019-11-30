@@ -32,10 +32,13 @@ def bmat_idx(*args) -> Tuple:
 
 
 def deterministic_sample_mvnorm(distribution: MultivariateNormal, eps: Optional[Tensor] = None) -> Tensor:
-    if eps is None:
-        shape = distribution.batch_shape + distribution.event_shape
-        eps = _standard_normal(shape, dtype=distribution.loc.dtype, device=distribution.loc.device)
-    else:
+    if isinstance(eps, Tensor):
         if eps.shape[-len(distribution.event_shape):] != distribution.event_shape:
             raise RuntimeError(f"Expected shape ending in {distribution.event_shape}, got {eps.shape}.")
+
+    else:
+        shape = distribution.batch_shape + distribution.event_shape
+        if eps is None:
+            eps = 1.0
+        eps *= _standard_normal(shape, dtype=distribution.loc.dtype, device=distribution.loc.device)
     return distribution.loc + _batch_mv(distribution._unbroadcasted_scale_tril, eps)

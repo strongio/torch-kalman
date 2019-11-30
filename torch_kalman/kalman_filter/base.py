@@ -26,7 +26,7 @@ class KalmanFilter(torch.nn.Module):
         self.design_parameters = self.design.param_dict()
 
     def to(self, *args, **kwargs):
-        raise RuntimeError(f"Currently {self.__class__.__name__} does not support moving device.")
+        raise RuntimeError(f"Currently {type(self).__name__} does not support moving device.")
 
     def predict_initial_state(self, design_for_batch: DesignForBatch) -> 'Gaussian':
         return self.family(

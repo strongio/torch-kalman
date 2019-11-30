@@ -54,7 +54,7 @@ class StateBelief:
             self.last_measured = last_measured
 
     def copy(self) -> 'StateBelief':
-        sb = self.__class__(means=self.means.clone(), covs=self.covs.clone(), last_measured=self.last_measured.clone())
+        sb = type(self)(means=self.means.clone(), covs=self.covs.clone(), last_measured=self.last_measured.clone())
         try:
             sb.compute_measurement(H=self.H.clone(), R=self.R.clone())
         except UnmeasuredError:
@@ -93,7 +93,7 @@ class StateBelief:
         Ft = F.permute(0, 2, 1)
         means = F.matmul(self.means.unsqueeze(2)).squeeze(2)
         covs = F.matmul(self.covs).matmul(Ft) + Q
-        return self.__class__(means=means, covs=covs, last_measured=self.last_measured + 1)
+        return type(self)(means=means, covs=covs, last_measured=self.last_measured + 1)
 
     def update(self, obs: Tensor, **kwargs) -> 'StateBelief':
         if torch.isinf(obs).any():
@@ -133,7 +133,7 @@ class StateBelief:
                                                                            **kwargs)
 
         last_measured = self._update_last_measured(obs)
-        return self.__class__(means=means_new, covs=covs_new, last_measured=last_measured)
+        return type(self)(means=means_new, covs=covs_new, last_measured=last_measured)
 
     def _update_last_measured(self, obs: Tensor) -> Tensor:
         any_measured_group_idx = (torch.sum(~torch.isnan(obs), 1) > 0).nonzero().squeeze(-1)
@@ -169,13 +169,11 @@ class StateBelief:
         for t in times:
             if t > 0:
                 # move sim forward one step:
-                state = state.predict(F=design_for_batch.F(t - 1), Q=design_for_batch.Q(t - 1))
+                Q = design_for_batch.Q(t - 1)
+                state = state.predict(F=design_for_batch.F(t - 1), Q=Q)
 
             # realize the state:
-            t_eps = None
-            if eps is not None:
-                t_eps = eps[:, t, :]
-            state._realize(ntry=ntry_diag_incr, eps=t_eps)
+            state._realize(ntry=ntry_diag_incr, eps=eps[:, t, :] if eps is not None else None)
 
             # measure the state:
             if compute_measurements:
@@ -183,7 +181,7 @@ class StateBelief:
 
             states.append(state)
 
-        return self.__class__.concatenate_over_time(state_beliefs=states, design=design_for_batch.design)
+        return type(self).concatenate_over_time(state_beliefs=states, design=design_for_batch.design)
 
     def _realize(self, ntry: int, eps: Optional[Tensor] = None) -> None:
         # the realized state has no variance (b/c it's realized), so uncertainty will only come in on the predict step

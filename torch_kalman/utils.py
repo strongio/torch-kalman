@@ -1,7 +1,5 @@
 from typing import Dict, Union, Any, Optional, Callable, Iterable, Tuple
 
-from pandas import Series
-
 import numpy as np
 from torch import Tensor
 
@@ -24,7 +22,7 @@ def bifurcate(x: Iterable, lhs: Callable[[Any], bool]) -> Tuple[list, list]:
     return l, r
 
 
-def fourier_model_mat(dt: Union[np.ndarray, Series],
+def fourier_model_mat(dt: Union[np.ndarray, 'Series'],
                       K: int,
                       period: Union[np.timedelta64, str],
                       start_dt: Optional[np.datetime64] = None) -> np.ndarray:
@@ -40,7 +38,7 @@ def fourier_model_mat(dt: Union[np.ndarray, Series],
             raise ValueError("Unrecognized `period`.")
 
     # convert datetimes and period into ints:
-    if isinstance(dt, Series):
+    if hasattr(dt, 'values'):
         dt = dt.values
     time_unit = np.datetime_data(period)[0]
     if start_dt is None:
