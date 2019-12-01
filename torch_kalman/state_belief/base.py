@@ -169,8 +169,7 @@ class StateBelief:
         for t in times:
             if t > 0:
                 # move sim forward one step:
-                Q = design_for_batch.Q(t - 1)
-                state = state.predict(F=design_for_batch.F(t - 1), Q=Q)
+                state = state.predict(F=design_for_batch.F(t - 1), Q=design_for_batch.Q(t - 1))
 
             # realize the state:
             state._realize(ntry=ntry_diag_incr, eps=eps[:, t, :] if eps is not None else None)

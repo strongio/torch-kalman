@@ -89,6 +89,10 @@ class Season(DatetimeProcess, Process):
                   num_timesteps: int,
                   start_datetimes: Optional[np.ndarray] = None):
 
+        if start_datetimes is not None:
+            if len(start_datetimes.shape) != 1 or len(start_datetimes) != num_groups:
+                raise ValueError(f"Expected `start_datetimes` to be 1D array of length {num_groups}.")
+
         for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
 
         delta = self._get_delta(num_groups, num_timesteps, start_datetimes=start_datetimes)

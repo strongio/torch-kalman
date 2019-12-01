@@ -149,9 +149,11 @@ class DesignMatrix:
                 per_timestep = list(zip(*dynamic))  # invert
                 assert len(per_timestep) == self.num_timesteps
                 assert (r, c) not in dynamic_assignments.keys()
-                dynamic_assignments[(r, c)] = [ilink(torch.sum(torch.stack(broadcast_all(*x)))) for x in per_timestep]
+                dynamic_assignments[(r, c)] = [
+                    ilink(torch.sum(torch.stack(broadcast_all(*x), dim=0), dim=0)) for x in per_timestep
+                ]
             else:
-                base_mat[:, r, c] = ilink(torch.sum(torch.stack(broadcast_all(*base))))
+                base_mat[:, r, c] = ilink(torch.sum(torch.stack(broadcast_all(*base), dim=0), dim=0))
         return DynamicMatrix(base_mat, dynamic_assignments)
 
     # utils ------------------------------------------
@@ -231,9 +233,8 @@ class DesignMatrix:
 
 
 class TransitionMatrix(DesignMatrix):
-    # TODO: order?
-    dim1_name = 'from_element'
-    dim2_name = 'to_element'
+    dim1_name = 'to_element'
+    dim2_name = 'from_element'
 
     @property
     def from_elements(self):
