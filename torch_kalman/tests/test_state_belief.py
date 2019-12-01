@@ -1,11 +1,13 @@
+import unittest
+
 import torch
 from torch import Tensor
 
 from torch_kalman.state_belief import Gaussian
-from torch_kalman.tests import TestCaseTK, simple_mv_velocity_design
+from torch_kalman.tests.utils import simple_mv_velocity_design
 
 
-class TestStateBelief(TestCaseTK):
+class TestStateBelief(unittest.TestCase):
     def test_update(self):
         design = simple_mv_velocity_design(dims=1)
         batch_design = design.for_batch(1, 1)
@@ -26,26 +28,3 @@ class TestStateBelief(TestCaseTK):
         update2 = sb2.update(obs=data[:, 0, :])
 
         self.assertTrue((update2.means < update1.means).all())
-
-    # def test_censored(self):
-    #     foo = CensoredGaussian(torch.zeros(1, 1), torch.ones(1, 1, 1))
-    #     bar = foo.predict(F=torch.eye(1).expand(1, -1, -1), Q=torch.eye(1).expand(1, -1, -1))
-    #     print(f"pre-mean: {bar.means}")
-    #     bar.compute_measurement(H=torch.ones(1, 1, 1), R=torch.ones(1, 1, 1))
-    #     print(f"obs: {obs}")
-    #     print(f"post-mean: {bar.update(obs).means}")
-    #
-    #     foo = CensoredGaussian(torch.zeros(1, 1) - 1, torch.ones(1, 1, 1))
-    #     bar = foo.predict(F=torch.eye(1).expand(1, -1, -1), Q=torch.eye(1).expand(1, -1, -1))
-    #     print(f"pre-mean: {bar.means}")
-    #     bar.compute_measurement(H=torch.ones(1, 1, 1), R=torch.ones(1, 1, 1))
-    #     print(f"obs: {obs-1}")
-    #     print(f"post-mean: {bar.update(obs-1).means}")
-
-    def test_predict(self):
-        # TODO
-        pass
-
-    def test_log_likelihood(self):
-        # TODO
-        pass

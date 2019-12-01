@@ -1,16 +1,17 @@
+from unittest import TestCase
+
 import torch
-from numpy import datetime64, array
 from torch import Tensor
+
+import numpy as np
 
 from torch_kalman.design import Design
 from torch_kalman.process import Season, FourierSeasonDynamic
 from torch_kalman.process.processes.local_trend import LocalTrend
 from torch_kalman.process.processes.season.fourier import TBATS
 
-from torch_kalman.tests import TestCaseTK
 
-
-class TestProcess(TestCaseTK):
+class TestProcess(TestCase):
 
     def test_fourier_season(self):
         season = FourierSeasonDynamic(id='season', seasonal_period=24, K=2, decay=False, season_start=False)
@@ -86,12 +87,10 @@ class TestProcess(TestCaseTK):
         # need to include start_datetimes since included above
         with self.assertRaises(ValueError) as cm:
             season.for_batch(1, 1)
-        self.assertEqual(cm.exception.args[0], 'Must pass `start_datetimes` to process `day_of_week`.')
+        self.assertIn('Must pass `start_datetimes`', cm.exception.args[0])
 
         design = Design(processes=[season], measures=['measure'])
-        process_kwargs = {'day_of_week': {'start_datetimes': array([datetime64('2018-01-01')])}}
-        batch_season = design.for_batch(1, 1,
-                                        process_kwargs=process_kwargs)
+        batch_season = design.for_batch(1, 1, start_datetimes=np.array([np.datetime64('2018-01-01')]))
 
         # test transitions manually:
         state_mean = torch.arange(0.0, 7.0)[:, None]

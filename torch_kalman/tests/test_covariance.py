@@ -1,9 +1,9 @@
 import torch
 from torch_kalman.covariance import Covariance
-from torch_kalman.tests import TestCaseTK
+import unittest
 
 
-class TestCovariance(TestCaseTK):
+class TestCovariance(unittest.TestCase):
     def test_from_log_cholesky(self):
         covs = Covariance.from_log_cholesky(log_diag=torch.arange(1., 3.1).expand(3, -1),
                                             off_diag=torch.arange(1., 3.1).expand(3, -1))

@@ -112,7 +112,7 @@ class DesignForBatch:
                 )
             except Exception as e:
                 # add process-name to traceback
-                raise RuntimeError(f"Failed to create `{process}.for_batch` (see traceback above).") from e
+                raise type(e)(f"Failed to create `{process}.for_batch()` (see traceback above).") from e
 
             if processes[process_name] is None:
                 raise RuntimeError(f"{process_name}'s `for_batch` call did not return anything.")

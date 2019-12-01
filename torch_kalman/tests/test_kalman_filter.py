@@ -1,45 +1,31 @@
 from itertools import product
+from unittest import TestCase
 
 from torch import Tensor
 
-from torch_kalman.covariance import Covariance
 from torch_kalman.kalman_filter import KalmanFilter
-from torch_kalman.tests import TestCaseTK, simple_mv_velocity_design, name_to_proc
 
 import numpy as np
 from filterpy.kalman import KalmanFilter as filterpy_KalmanFilter
 
+from torch_kalman.tests.utils import simple_mv_velocity_design
 
-class TestKalmanFilter(TestCaseTK):
-    season_start = '2010-01-04'
 
-    def test_complex_kf_init(self):
-        proc_specs = {'hour_in_day': {'K': 3},
-                      'day_in_year': {'K': 3},
-                      'local_level': {'decay': (.33, .95)},
-                      'local_trend': {'decay_position': (0.95, 1.00), 'decay_velocity': (0.90, 1.00)}
-                      }
-        processes = []
-        for id, pkwargs in proc_specs.items():
-            processes.append(name_to_proc(id, **pkwargs))
-            processes[-1].add_measure('measure')
-
-        kf = KalmanFilter(measures=['measure'], processes=processes)
+class TestKalmanFilter(TestCase):
 
     def test_equations(self):
         data = Tensor([[-50., 50., 1.]])[:, :, None]
 
         #
-        design = simple_mv_velocity_design(dims=1)
-        batch_design = design.for_batch(1, 1)
-        torch_kf = KalmanFilter(processes=design.processes.values(), measures=design.measures)
+        _design = simple_mv_velocity_design(dims=1)
+        torch_kf = KalmanFilter(processes=_design.processes.values(), measures=_design.measures)
+        batch_design = torch_kf.design.for_batch(1, 1)
         pred = torch_kf(data)
 
         #
         filter_kf = filterpy_KalmanFilter(dim_x=2, dim_z=1)
-        filter_kf.x = torch_kf.design.init_mean_params.detach().numpy()[:, None]
-        filter_kf.P = Covariance.from_log_cholesky(torch_kf.design.init_cholesky_log_diag,
-                                                   torch_kf.design.init_cholesky_off_diag).detach().numpy()
+        filter_kf.x = batch_design.initial_mean.detach().numpy().T
+        filter_kf.P = batch_design.initial_covariance.detach().numpy().squeeze(0)
 
         filter_kf.F = batch_design.F(0)[0].detach().numpy()
         filter_kf.H = batch_design.H(0)[0].detach().numpy()

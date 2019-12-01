@@ -1,7 +1,7 @@
-from typing import Type, Optional, Callable, List, Union, Tuple, Sequence, Any
+from typing import Optional, Union, Sequence, Any
 
 import torch
-from torch import Tensor
+from torch.nn import Module
 
 from tqdm import tqdm
 
@@ -13,7 +13,7 @@ from torch_kalman.state_belief.over_time import StateBeliefOverTime
 from torch_kalman.utils import identity
 
 
-class KalmanFilter(torch.nn.Module):
+class KalmanFilter(Module):
     family = Gaussian
     design_cls = Design
 
