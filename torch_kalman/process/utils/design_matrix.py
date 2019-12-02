@@ -41,7 +41,7 @@ class DesignMatrix(Batchable):
         if self._batch_info:
             raise RuntimeError("Cannot call `for_batch()` on output of `for_batch()`.")
         out = type(self)(dim1_names=list(self.dim1_names), dim2_names=list(self.dim2_names))
-        out._batch_info = (num_groups, num_timesteps)
+        out.batch_info = (num_groups, num_timesteps)
         out._ilinks = dict(self._ilinks)
         out._assignments = {}
         for key, values in self._assignments.items():
@@ -129,7 +129,7 @@ class DesignMatrix(Batchable):
             new_ilinks.update({cls._rename_merged_key(k, process_name): v for k, v in mat._ilinks.items()})
 
         out = cls(dim1_names=list(new_dimnames[1]), dim2_names=list(new_dimnames[2]))
-        out._batch_info = list(dims)[0]
+        out.batch_info = list(dims)[0]
         out._assignments = new_assignments
         out._ilinks = new_ilinks
         return out

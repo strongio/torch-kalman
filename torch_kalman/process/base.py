@@ -31,14 +31,12 @@ class Process(Batchable):
         self._validate()
 
     def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'Process':
-        if self._batch_info:
-            raise RuntimeError("Cannot call `for_batch()` on output of `for_batch()`.")
         if not self.measures:
             raise TypeError(f"The process `{self.id}` has no measures.")
         if self.transition_mat.empty:
             raise TypeError(f"The process `{self.id}` has no transitions.")
         for_batch = copy(self)
-        for_batch._batch_info = num_groups, num_timesteps
+        for_batch.batch_info = num_groups, num_timesteps
         for_batch.variance_multi_mat = self.variance_multi_mat.for_batch(num_groups, num_timesteps)
         for_batch.measure_mat = self.measure_mat.for_batch(num_groups, num_timesteps)
         for_batch.transition_mat = self.transition_mat.for_batch(num_groups, num_timesteps)

@@ -100,12 +100,9 @@ class Design(Batchable):
 
     # For Batch -------:
     def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'Design':
-        if self._batch_info:
-            raise RuntimeError("Cannot call `for_batch()` on output of `for_batch()`.")
-
         out = copy(self)
         out.processes = OrderedDict()
-        out._batch_info = (num_groups, num_timesteps)
+        out.batch_info = (num_groups, num_timesteps)
         out._initial_mean = torch.zeros(num_groups, len(self.state_elements))
 
         for process_name, process in self.processes.items():

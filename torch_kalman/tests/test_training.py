@@ -1,5 +1,6 @@
 import unittest
 import numpy as np
+import torch
 from torch.optim import LBFGS
 
 from torch_kalman.kalman_filter import KalmanFilter
@@ -14,9 +15,7 @@ class TestTraining(unittest.TestCase):
         'season_spec': {'season_start': np.datetime64('2018-01-01'), 'dt_unit': 'D'}
     }
 
-    def test_training(self):
-        sim_data = simulate(**self.config, noise=0.1)
-
+    def _train_kf(self, data: torch.Tensor, num_epochs: int = 8):
         kf = KalmanFilter(
             measures=['y'],
             processes=[
@@ -35,17 +34,32 @@ class TestTraining(unittest.TestCase):
 
         def closure():
             kf.opt.zero_grad()
-            pred = kf(sim_data, start_datetimes=start_datetimes)
-            loss = -pred.log_prob(sim_data).mean()
+            pred = kf(data, start_datetimes=start_datetimes)
+            loss = -pred.log_prob(data).mean()
             loss.backward()
             return loss
 
-        print(f"{type(self).__name__} starting training...")
+        print(f"Will train for {num_epochs} epochs...")
         loss = float('nan')
-        for i in range(8):
+        for i in range(num_epochs):
             new_loss = kf.opt.step(closure)
             print(f"EPOCH {i}, LOSS {new_loss.item()}, DELTA {loss - new_loss.item()}")
             loss = new_loss.item()
 
-        se = (sim_data - kf(sim_data, start_datetimes=start_datetimes).predictions) ** 2
+        return kf(data, start_datetimes=start_datetimes).predictions
+
+    def test_training_from_sim(self):
+        sim_data = simulate(**self.config, noise=0.1)
+        predictions = self._train_kf(sim_data)
+        se = (sim_data - predictions) ** 2
         self.assertLess(se.mean().item(), .4)
+
+    def test_training_from_manual_sim(self):
+        sim_data = (
+                torch.cumsum(torch.randn(self.config['num_timesteps']), 0) +
+                torch.sin(torch.arange(1., self.config['num_timesteps'] + 1., 1.) / 10.)
+        )
+        sim_data = sim_data[None, :, None] + torch.randn((self.config['num_groups'], self.config['num_timesteps'], 1))
+        predictions = self._train_kf(sim_data)
+        se = (sim_data - predictions) ** 2
+        self.assertLess(se.mean().item(), 5.0)
