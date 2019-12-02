@@ -10,9 +10,11 @@ from torch_kalman.batch import Batchable
 from torch_kalman.process.utils.design_matrix import (
     TransitionMatrix, MeasureMatrix, VarianceMultiplierMatrix, DesignMatAssignment, DesignMatAdjustment
 )
+from torch_kalman.utils import NiceRepr
 
 
-class Process(Batchable):
+class Process(NiceRepr, Batchable):
+    _repr_attrs = ('id',)
 
     def __init__(self, id: str, state_elements: Sequence[str]):
         self.id = str(id)
@@ -80,7 +82,7 @@ class Process(Batchable):
         """
         return parameters.expand(num_groups, -1)
 
-    # TODO -----------:
+    # For specifying design -----------:
     def _set_measure(self,
                      measure: str,
                      state_element: str,
@@ -162,7 +164,7 @@ class Process(Batchable):
         super().__init_subclass__()
 
     @classmethod
-    def for_batch_kwargs(cls, method=None) -> Iterable[str]:
+    def for_batch_kwargs(cls, method: Optional[Callable] = None) -> Iterable[str]:
         if method is None:
             method = cls.for_batch
         excluded = {'self', 'num_groups', 'num_timesteps', 'parameters'}
@@ -170,6 +172,3 @@ class Process(Batchable):
             if kwarg in excluded:
                 continue
             yield kwarg
-
-    def __repr__(self) -> str:
-        return "{}(id={!r})".format(type(self).__name__, self.id)

@@ -15,9 +15,12 @@ from lazy_object_proxy.utils import cached_property
 from torch_kalman.process.utils.design_matrix import (
     DynamicMatrix, TransitionMatrix, MeasureMatrix, VarianceMultiplierMatrix
 )
+from torch_kalman.utils import NiceRepr
 
 
-class Design(Batchable):
+class Design(NiceRepr, Batchable):
+    _repr_attrs = ('process_list', 'measures')
+
     def __init__(self, processes: Sequence[Process], measures: Sequence[str], **kwargs):
         """
         :param processes: Processes
@@ -181,7 +184,6 @@ class Design(Batchable):
     def Q(self, t: int) -> torch.Tensor:
         # processes can apply multipliers to the variance of their state-elements:
         diag_multi = self._process_variance_multi(t=t)
-        # TODO: should be a diagonal matrix w/zeros for non-dynamic state-elements
         return diag_multi.matmul(self._base_Q).matmul(diag_multi)
 
     @cached_property
@@ -235,5 +237,6 @@ class Design(Batchable):
         cov_rescaled = diag_multi.matmul(cov).matmul(diag_multi)
         return cov_rescaled
 
-    def __repr__(self):
-        return f"{type(self).__name__}(processes={list(self.processes.values())}, measures={self.measures})"
+    @property
+    def process_list(self):
+        return list(self.processes.values())

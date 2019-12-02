@@ -1,5 +1,4 @@
 import itertools
-from copy import copy
 from typing import Optional, Sequence, Union, Callable, Tuple, List, Dict
 
 import torch
@@ -7,16 +6,17 @@ from torch import Tensor
 from torch.distributions.utils import broadcast_all
 
 from torch_kalman.batch import Batchable
-from torch_kalman.utils import bifurcate, is_slow_grad, identity
+from torch_kalman.utils import bifurcate, is_slow_grad, identity, NiceRepr
 
 DesignMatAssignment = Union[float, Tensor, Callable]
 SeqOfTensors = Union[Tuple[Tensor], List[Tensor]]
 DesignMatAdjustment = Union[Tensor, SeqOfTensors]
 
 
-class DesignMatrix(Batchable):
+class DesignMatrix(NiceRepr, Batchable):
     dim1_name: str = None
     dim2_name: str = None
+    _repr_attrs = ('dim1_names', 'dim2_names')
 
     def __init__(self,
                  dim1_names: Optional[Sequence[str]] = None,
@@ -234,9 +234,6 @@ class DesignMatrix(Batchable):
                 "this error by passing check_slow_grad=False to the adjustment method."
             )
 
-    def __repr__(self):
-        return "{}(dim1_names={!r}, dim2_names={!r})".format(type(self).__name__, self.dim1_names, self.dim2_names)
-
 
 class TransitionMatrix(DesignMatrix):
     dim1_name = 'to_element'
@@ -298,7 +295,9 @@ class VarianceMultiplierMatrix(DesignMatrix):
         return self.dim1_names
 
 
-class DynamicMatrix:
+class DynamicMatrix(NiceRepr):
+    _repr_attrs = ()
+
     def __init__(self, base_mat: Tensor, dynamic_assignments: Dict[Tuple[int, int], SeqOfTensors]):
         self.base_mat = base_mat
         self.dynamic_assignments = dynamic_assignments
@@ -310,9 +309,6 @@ class DynamicMatrix:
         for (r, c), values in self.dynamic_assignments.items():
             out[..., r, c] = values[t]
         return out
-
-    def __repr__(self):
-        return f"{type(self).__name__}()"
 
 
 def _is_dynamic_assignment(x) -> bool:

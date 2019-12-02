@@ -3,6 +3,7 @@ from typing import Sequence, Dict, Tuple, Union, Optional, Iterable
 from warnings import warn
 
 import torch
+from lazy_object_proxy.utils import cached_property
 
 from torch import Tensor
 
@@ -13,10 +14,14 @@ from torch_kalman.state_belief.base import UnmeasuredError
 
 import numpy as np
 
+from torch_kalman.utils import NiceRepr
+
 Selector = Union[Sequence[int], slice]
 
 
-class StateBeliefOverTime:
+class StateBeliefOverTime(NiceRepr):
+    _repr_attrs = ('num_groups', 'num_timesteps')
+
     def __init__(self, state_beliefs: Sequence['StateBelief'], design: Design):
         """
         Belief in the state of the system over a range of times, for a batch of time-serieses.
@@ -40,8 +45,6 @@ class StateBeliefOverTime:
         self._last_measured = None
         self._H = None
         self._R = None
-        self._predictions = None
-        self._prediction_uncertainty = None
 
     def _means_covs(self) -> None:
         means, covs = zip(*[(state_belief.means, state_belief.covs) for state_belief in self.state_beliefs])
@@ -59,6 +62,10 @@ class StateBeliefOverTime:
         if self._covs is None:
             self._means_covs()
         return self._covs
+
+    @property
+    def num_timesteps(self) -> int:
+        return len(self.state_beliefs)
 
     def components(self) -> Dict[Tuple[str, str, str], Tuple[Tensor, Tensor]]:
         states_per_measure = defaultdict(list)
@@ -110,7 +117,8 @@ class StateBeliefOverTime:
     def state_belief_for_time(self, times: Sequence[int]) -> StateBelief:
         return self._restore_sb(enumerate(times))
 
-    def _which_valid_key(self, is_nan: Tensor) -> Tuple[int]:
+    @staticmethod
+    def _which_valid_key(is_nan: Tensor) -> Tuple[int]:
         num_multi_dims = sum(x > 1 for x in is_nan.shape)
         if num_multi_dims > 1:
             raise ValueError("Expected `tensor` to be 1D (or have only one non-singleton dimension.")
@@ -215,18 +223,14 @@ class StateBeliefOverTime:
             self._R = torch.stack([sb.R for sb in self.state_beliefs], 1)
         return self._R
 
-    @property
+    @cached_property
     def predictions(self) -> Tensor:
-        if self._predictions is None:
-            self._predictions = self.H.matmul(self.means.unsqueeze(-1)).squeeze(-1)
-        return self._predictions
+        return self.H.matmul(self.means.unsqueeze(-1)).squeeze(-1)
 
-    @property
+    @cached_property
     def prediction_uncertainty(self) -> Tensor:
-        if self._prediction_uncertainty is None:
-            Ht = self.H.permute(0, 1, 3, 2)
-            self._prediction_uncertainty = self.H.matmul(self.covs).matmul(Ht) + self.R
-        return self._prediction_uncertainty
+        Ht = self.H.permute(0, 1, 3, 2)
+        return self.H.matmul(self.covs).matmul(Ht) + self.R
 
     def to_dataframe(self,
                      batch: Union[TimeSeriesBatch, dict],
@@ -244,8 +248,7 @@ class StateBeliefOverTime:
         if isinstance(batch, TimeSeriesBatch):
             batch = {'start_times': batch.start_times, 'group_names': batch.group_names, 'tensor': batch.tensor}
 
-        num_timesteps = len(self.state_beliefs)
-        times = batch['start_times'][:, None] + np.arange(0, num_timesteps)
+        times = batch['start_times'][:, None] + np.arange(0, self.num_timesteps)
 
         out = []
         if type == 'predictions':

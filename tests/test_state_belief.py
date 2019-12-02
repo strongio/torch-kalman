@@ -28,3 +28,12 @@ class TestStateBelief(unittest.TestCase):
         update2 = sb2.update(obs=data[:, 0, :])
 
         self.assertTrue((update2.means < update1.means).all())
+
+    def test_over_time(self):
+        over_time = Gaussian.concatenate_over_time([
+            Gaussian(means=torch.randn((5, 2)), covs=torch.ones((5, 2, 2))),
+            Gaussian(means=torch.randn((5, 2)), covs=torch.ones((5, 2, 2))),
+            Gaussian(means=torch.randn((5, 2)), covs=torch.ones((5, 2, 2))),
+        ], design=None)
+        self.assertEqual(over_time.num_groups, 5)
+        self.assertEqual(over_time.num_timesteps, 3)

@@ -102,8 +102,6 @@ class TestProcess(TestCase):
 
         self.assertListEqual(batch_season.H(0)[0].tolist(), [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
 
-        # TODO: test seasons w/durations
-
     def test_cls_validation(self):
         with self.assertRaises(TypeError):
             class MyProcess(Process):

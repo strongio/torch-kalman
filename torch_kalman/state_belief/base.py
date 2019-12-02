@@ -8,14 +8,12 @@ from torch import Tensor
 from tqdm import tqdm
 
 from torch_kalman.design import Design
-from torch_kalman.utils import identity
+from torch_kalman.utils import identity, NiceRepr
 
 
-class UnmeasuredError(RuntimeError):
-    pass
+class StateBelief(NiceRepr):
+    _repr_attrs = ('means', 'covs', 'last_measured')
 
-
-class StateBelief:
     def __init__(self,
                  means: Tensor,
                  covs: Tensor,
@@ -28,36 +26,19 @@ class StateBelief:
         :param last_measured: 2D tensor indicating number of timesteps since mean/cov were updated with measurements;
         defaults to 0s.
         """
-        if means.dim() != 2:
-            raise ValueError("means should be 2D (first dimension batch-size)")
-        if covs.dim() != 3:
-            raise ValueError("covs should be 3D (first dimension batch-size)")
-        if torch.isinf(means).any():
-            raise ValueError("Infs in `means`.")
-        if torch.isinf(covs).any():
-            raise ValueError("Infs in `covs`.")
-        if torch.isnan(means).any():
-            raise ValueError("nans in `means`.")
-        if torch.isnan(covs).any():
-            raise ValueError("nans in `covs`.")
-
         num_groups, state_size = means.shape
-        assert covs.shape[0] == num_groups, "The batch-size (1st dimension) of cov doesn't match that of mean."
-        assert covs.shape[1] == covs.shape[2], "The cov should be symmetric in the last two dimensions."
-        assert covs.shape[1] == state_size, "The state-size (2nd/3rd dimension) of cov doesn't match that of mean."
-
         self.num_groups = num_groups
         self.means = means
         self.covs = covs
         self._H = None
         self._R = None
 
-        self.last_measured: Tensor
         if last_measured is None:
             self.last_measured = torch.zeros(self.num_groups, dtype=torch.int)
         else:
-            assert last_measured.shape[0] == self.num_groups and last_measured.dim() == 1
             self.last_measured = last_measured
+
+        self._validate()
 
     def copy(self) -> 'StateBelief':
         sb = type(self)(means=self.means.clone(), covs=self.covs.clone(), last_measured=self.last_measured.clone())
@@ -215,3 +196,29 @@ class StateBelief:
 
     def sample_transition(self, eps: Optional[Tensor] = None) -> Tensor:
         raise NotImplementedError
+
+    def _validate(self):
+        if self.means.dim() != 2:
+            raise ValueError("means should be 2D (first dimension batch-size)")
+        if self.covs.dim() != 3:
+            raise ValueError("covs should be 3D (first dimension batch-size)")
+        if torch.isinf(self.means).any():
+            raise ValueError("Infs in `means`.")
+        if torch.isinf(self.covs).any():
+            raise ValueError("Infs in `covs`.")
+        if torch.isnan(self.means).any():
+            raise ValueError("nans in `means`.")
+        if torch.isnan(self.covs).any():
+            raise ValueError("nans in `covs`.")
+        if self.covs.shape[0] != self.means.shape[0]:
+            raise ValueError("The batch-size (1st dimension) of cov doesn't match that of mean.")
+        if self.covs.shape[1] != self.covs.shape[2]:
+            raise ValueError("The cov should be symmetric in the last two dimensions.")
+        if self.covs.shape[1] != self.means.shape[1]:
+            raise ValueError("The state-size (2nd/3rd dimension) of cov doesn't match that of mean.")
+        if self.last_measured.shape[0] != self.num_groups or self.last_measured.dim() != 1:
+            raise ValueError(f"`last_measured` should be 1D tensor w/length of {self.num_groups:,}.")
+
+
+class UnmeasuredError(RuntimeError):
+    pass

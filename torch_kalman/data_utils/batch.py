@@ -1,4 +1,3 @@
-import datetime
 from typing import Sequence, Any, Optional, Union, Tuple
 from warnings import warn
 
@@ -7,21 +6,18 @@ import torch
 from torch import Tensor
 import numpy as np
 
-# assumed by `day_of_week_num`:
-assert np.zeros(1).astype('datetime64[D]') == np.datetime64('1970-01-01', 'D')
+from torch_kalman.data_utils.utils import day_of_week_num
+from torch_kalman.utils import NiceRepr
 
 
-def day_of_week_num(dts):
-    return (dts.astype('datetime64[D]').view('int64') - 4) % 7
-
-
-class TimeSeriesBatch:
+class TimeSeriesBatch(NiceRepr):
     """
-    TimeSeriesBatch includes additional information about each of the Tensor's dimensions: the name for each group in the
-    first dimension, the start (date)time (and optionally datetime-unit) for the second dimension, and the name of the
-    measures for the third dimension.
+    TimeSeriesBatch includes additional information about each of the Tensor's dimensions: the name for each group in
+    the first dimension, the start (date)time (and optionally datetime-unit) for the second dimension, and the name of
+    the measures for the third dimension.
     """
     supported_dt_units = {'Y', 'D', 'h', 'm', 's'}
+    _repr_attrs = ('tensor', 'num_groups', 'num_timesteps', 'measures', 'dt_unit')
 
     def __init__(self,
                  tensor: Tensor,
@@ -34,13 +30,13 @@ class TimeSeriesBatch:
             group_names = np.array(group_names)
 
         if not isinstance(start_times, np.ndarray):
-            if isinstance(start_times[0], np.number):
+            if isinstance(start_times[0], np.datetime64):
+                start_times = np.array(start_times, dtype='datetime64')
+            else:
                 start_times_int = np.array(start_times, dtype=np.int64)
                 if not np.isclose(start_times_int - start_times, 0.).all():
                     raise ValueError("`start_times` should be a datetime64 array or an array of whole numbers")
                 start_times = start_times_int
-            else:
-                start_times = np.array(start_times, dtype='datetime64')
 
         self.dt_unit = dt_unit
         if dt_unit in self.supported_dt_units:
@@ -67,6 +63,7 @@ class TimeSeriesBatch:
         self.group_names = group_names
         self.start_times = start_times
         self.measures = measures
+        self.num_groups, self.num_timesteps, self.num_measures = self.tensor.shape
 
     def subset(self, ind: Union[int, Sequence, slice]) -> 'TimeSeriesBatch':
         if isinstance(ind, int):
@@ -156,7 +153,6 @@ class TimeSeriesBatch:
                             group_colname: str,
                             time_colname: str,
                             measures: Sequence[str]) -> 'DataFrame':
-        # TODO: for speed, decide whether to iterate over times or iterate over groups based on which is longer?
         from pandas import DataFrame, concat
 
         tensor = tensor.data.numpy()
@@ -244,8 +240,6 @@ class TimeSeriesBatch:
         if self.dt_unit is None:
             raise ValueError("This batch doesn't have a dt-unit, so can't up/downsample.")
 
-        num_groups, num_timesteps, num_measures = self.tensor.shape
-
         if new_dt_unit not in self.supported_dt_units:
             raise ValueError(
                 f"Time-unit of {new_dt_unit} not currently supported; please report to package maintainer."
@@ -261,9 +255,9 @@ class TimeSeriesBatch:
             ids_all = torch.from_numpy(ids_all - np.min(ids_all, 1, keepdims=True))
 
             new_tens_items = []
-            for g in range(num_groups):
+            for g in range(self.num_groups):
                 new_tens_items.append([])
-                for m in range(num_measures):
+                for m in range(self.num_measures):
                     ids = ids_all[g]
                     weights = self.tensor[g, :, m].clone()
                     isnan = torch.isnan(weights)
@@ -274,7 +268,7 @@ class TimeSeriesBatch:
                 new_tens_items[g] = torch.stack(new_tens_items[g], 1)
 
             new_num_timesteps = max(len(t) for t in new_tens_items)
-            new_tens = torch.empty((num_groups, new_num_timesteps, num_measures))
+            new_tens = torch.empty((self.num_groups, new_num_timesteps, self.num_measures))
             new_tens[:] = np.nan
             for g, item in enumerate(new_tens_items):
                 new_tens[g, 0:len(item), :] = item
@@ -282,7 +276,7 @@ class TimeSeriesBatch:
             old_over_new = 1. / new_over_old
             if not old_over_new.is_integer():
                 raise ValueError("If old time-unit > new time-unit, then ratio must be an integer.")
-            new_tens = self.tensor[:, np.repeat(np.arange(0, num_timesteps), int(old_over_new)), :].clone()
+            new_tens = self.tensor[:, np.repeat(np.arange(0, self.num_timesteps), int(old_over_new)), :].clone()
 
         new_start_times = self.start_times.astype(f'datetime64[{new_dt_unit}]')
 

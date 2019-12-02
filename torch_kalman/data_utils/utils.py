@@ -3,6 +3,15 @@ from typing import Union, Sequence, Dict
 from numpy.core.multiarray import ndarray
 from torch import Tensor
 
+import numpy as np
+
+# assumed by `day_of_week_num`:
+assert np.zeros(1).astype('datetime64[D]') == np.datetime64('1970-01-01', 'D')
+
+
+def day_of_week_num(dts: np.ndarray) -> np.ndarray:
+    return (dts.astype('datetime64[D]').view('int64') - 4) % 7
+
 
 def tens_to_long(tens: Union[ndarray, Tensor], **kwargs) -> Sequence[Dict[str, Union[float, int]]]:
     """

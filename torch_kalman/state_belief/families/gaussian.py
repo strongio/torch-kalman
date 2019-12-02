@@ -1,9 +1,9 @@
 from typing import Sequence, Optional, Union, Tuple
-from warnings import warn
 
 import torch
 
 from torch import Tensor
+from torch.distributions import MultivariateNormal
 
 from torch_kalman.design import Design
 from torch_kalman.state_belief import StateBelief
@@ -71,8 +71,7 @@ class Gaussian(StateBelief):
         return GaussianOverTime(state_beliefs=state_beliefs, design=design)
 
     def sample_transition(self, eps: Optional[Tensor] = None) -> Tensor:
-        # TODO: remove zero-var-dims, replace at the end
-        distribution = torch.distributions.MultivariateNormal(loc=self.means, covariance_matrix=self.covs)
+        distribution = MultivariateNormal(loc=self.means, covariance_matrix=self.covs)
         return deterministic_sample_mvnorm(distribution, eps=eps)
 
 
@@ -81,7 +80,7 @@ class GaussianOverTime(StateBeliefOverTime):
         super().__init__(state_beliefs=state_beliefs, design=design)
 
     def sample_measurements(self, eps: Optional[Tensor] = None) -> Tensor:
-        distribution = torch.distributions.MultivariateNormal(self.predictions, self.prediction_uncertainty)
+        distribution = MultivariateNormal(self.predictions, self.prediction_uncertainty)
         return deterministic_sample_mvnorm(distribution, eps=eps)
 
     def _log_prob_with_subsetting(self,
@@ -95,5 +94,5 @@ class GaussianOverTime(StateBeliefOverTime):
         idx_3d = bmat_idx(group_idx, time_idx, measure_idx)
         idx_4d = bmat_idx(group_idx, time_idx, measure_idx, measure_idx)
 
-        dist = torch.distributions.MultivariateNormal(self.predictions[idx_3d], self.prediction_uncertainty[idx_4d])
+        dist = MultivariateNormal(self.predictions[idx_3d], self.prediction_uncertainty[idx_4d])
         return dist.log_prob(obs[idx_3d])
