@@ -23,7 +23,7 @@ def bifurcate(x: Iterable, lhs: Callable[[Any], bool]) -> Tuple[list, list]:
 
     :param x: An iterable.
     :param lhs: A function that takes an element of x; when this returns True, the element is added to the left output,
-    when this returns False, the element is added to the right output.
+      when this returns False, the element is added to the right output.
     :return: Two lists.
     """
     l, r = [], []

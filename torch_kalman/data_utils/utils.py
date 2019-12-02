@@ -20,7 +20,7 @@ def tens_to_long(tens: Union[ndarray, Tensor], **kwargs) -> Sequence[Dict[str, U
 
     :param tens: A multidimensional array, e.g. a numpy ndarray, pytorch Tensor, etc.
     :return: A list of dictionaries, with keys dim0-N specifying the index, and a 'value' key specifying the value at
-    that index.
+      that index.
     """
     shape = tens.shape
     dims = len(shape)
