@@ -14,6 +14,10 @@ from torch_kalman.state_belief.utils import bmat_idx, deterministic_sample_mvnor
 
 
 class Gaussian(StateBelief):
+    """
+    Underlying states in most kalman-filters are assumed to be gaussian; this is implemented by this class.
+    """
+
     def __init__(self, means: Tensor, covs: Tensor, last_measured: Optional[Tensor] = None):
         self._measured_means = None
         self._system_uncertainty = None

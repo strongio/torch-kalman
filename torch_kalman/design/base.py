@@ -19,6 +19,9 @@ from torch_kalman.utils import NiceRepr
 
 
 class Design(NiceRepr, Batchable):
+    """
+    A class for specifying the 'design' of a KalmanFilter -- i.e. what measures are modeled by what processes.
+    """
     _repr_attrs = ('process_list', 'measures')
 
     def __init__(self, processes: Sequence[Process], measures: Sequence[str], **kwargs):
