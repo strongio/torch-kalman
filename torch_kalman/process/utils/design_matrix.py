@@ -71,7 +71,7 @@ class DesignMatrix(NiceRepr, Batchable):
         design-matrix into their final value.
 
         :param ilink: A callable that is appropriate for torch.Tensors (e.g. torch.exp). If None, then the identity
-        link is assumed.
+          link is assumed.
         :param overwrite: If False (default) then cannot re-assign if already assigned; if True will overwrite.
         :param kwargs: The names of the dimensions.
         """
@@ -89,11 +89,11 @@ class DesignMatrix(NiceRepr, Batchable):
         initial value and all adjustments, (b) applying the ilink function from `set_ilink()`.
 
         :param value: Either (a) a torch.Tensor or (b) a sequence of torch.Tensors (one for each timepoint). The tensor
-        should be either scalar, or be 1D with length = self.num_groups.
+          should be either scalar, or be 1D with length = self.num_groups.
         :param check_slow_grad: A natural way to create adjustments is to first create a tensor that `requires_grad`,
-        then split it into a list of tensors, one for each time-point. This way of creating adjustments should be
-        avoided because it leads to a very slow backwards pass. When check_slow_grad is True then a heuristic is used
-        to check for this "gotcha". It can lead to false-alarms, so disabling is allowed with `check_slow_grad=False`.
+          then split it into a list of tensors, one for each time-point. This way of creating adjustments should be
+          avoided because it leads to a very slow backwards pass. When check_slow_grad is True then a heuristic is used
+          to check for this "gotcha". It can lead to false-alarms, so disabling is allowed with `check_slow_grad=False`.
         :param kwargs: The names of the dimensions.
         """
         key = self._get_key(kwargs)

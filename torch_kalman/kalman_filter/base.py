@@ -43,10 +43,10 @@ class KalmanFilter(Module):
                 **kwargs) -> StateBeliefOverTime:
         """
         :param input: The multivariate time-series to be fit by the kalman-filter. The exact structure depends on the
-        kalman-filter `family`; for most, it is a tensor where the first dimension represents the groups, the second
-        dimension represents the time-points, and the third dimension represents the measures.
+          kalman-filter `family`; for most, it is a tensor where the first dimension represents the groups, the second
+          dimension represents the time-points, and the third dimension represents the measures.
         :param initial_prediction: If a StateBelief, this is used as the prediction for time=0; if None then each
-        process generates initial values.
+          process generates initial values.
         :param forecast_horizon: Number of timesteps past the end of the input to continue making predictions
         :param progress: Should progress-bar be generated?
         :param kwargs: Other kwargs that will be passed to the `design_for_batch` method.

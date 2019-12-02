@@ -123,7 +123,7 @@ class StateBeliefOverTime(NiceRepr):
 
         :param obs: A Tensor that could be used in the KalmanFilter.forward pass.
         :param kwargs: Other keyword arguments needed to evaluate the log-prob (e.g. for a censored-kalman-filter, the
-        upper and lower bounds).
+          upper and lower bounds).
         :return: A tensor with one element for each group X timestep indicating the log-probability.
         """
         if obs.grad_fn is not None:
@@ -203,8 +203,8 @@ class StateBeliefOverTime(NiceRepr):
         Generate samples from the underlying torch.Distribution (usually a MultivariateNormal) on the measurement scale.
 
         :param eps: An optional float that will act as a multiplier on the noise in sampling. For advanced use-cases can
-         alternatively be a Tensor that will be used as uncorrelated white noise when generating samples (this can be
-        useful e.g. in generating laplace samples from a fitted model).
+          alternatively be a Tensor that will be used as uncorrelated white noise when generating samples (this can be
+          useful e.g. in generating laplace samples from a fitted model).
         :return: A tensor of random samples.
         """
         raise NotImplementedError
