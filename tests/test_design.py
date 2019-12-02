@@ -7,7 +7,7 @@ from torch import Tensor
 from torch_kalman.design import Design
 from torch_kalman.process.processes.local_trend import LocalTrend
 
-from torch_kalman.tests.utils import simple_mv_velocity_design
+from tests.utils import simple_mv_velocity_design
 import numpy as np
 
 

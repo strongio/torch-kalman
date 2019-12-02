@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 
 from torch_kalman.state_belief import Gaussian
-from torch_kalman.tests.utils import simple_mv_velocity_design
+from tests.utils import simple_mv_velocity_design
 
 
 class TestStateBelief(unittest.TestCase):

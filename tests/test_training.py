@@ -5,7 +5,7 @@ from torch.optim import LBFGS
 
 from torch_kalman.kalman_filter import KalmanFilter
 from torch_kalman.process import FourierSeasonDynamic, LocalLevel, Season
-from torch_kalman.tests.utils import simulate
+from tests.utils import simulate
 
 
 class TestTraining(unittest.TestCase):
@@ -60,6 +60,6 @@ class TestTraining(unittest.TestCase):
                 torch.sin(torch.arange(1., self.config['num_timesteps'] + 1., 1.) / 10.)
         )
         sim_data = sim_data[None, :, None] + torch.randn((self.config['num_groups'], self.config['num_timesteps'], 1))
-        predictions = self._train_kf(sim_data)
+        predictions = self._train_kf(sim_data, num_epochs=5)
         se = (sim_data - predictions) ** 2
         self.assertLess(se.mean().item(), 5.0)

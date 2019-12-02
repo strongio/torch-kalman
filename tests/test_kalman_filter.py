@@ -8,7 +8,7 @@ from torch_kalman.kalman_filter import KalmanFilter
 import numpy as np
 from filterpy.kalman import KalmanFilter as filterpy_KalmanFilter
 
-from torch_kalman.tests.utils import simple_mv_velocity_design
+from tests.utils import simple_mv_velocity_design
 
 
 class TestKalmanFilter(TestCase):
