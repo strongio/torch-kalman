@@ -6,7 +6,6 @@ from torch.nn import Module
 from tqdm import tqdm
 
 from torch_kalman.design import Design
-from torch_kalman.design.for_batch import DesignForBatch
 from torch_kalman.process import Process
 from torch_kalman.state_belief import Gaussian, StateBelief
 from torch_kalman.state_belief.over_time import StateBeliefOverTime
@@ -28,7 +27,7 @@ class KalmanFilter(Module):
     def to(self, *args, **kwargs):
         raise RuntimeError(f"Currently {type(self).__name__} does not support moving device.")
 
-    def predict_initial_state(self, design_for_batch: DesignForBatch) -> 'Gaussian':
+    def predict_initial_state(self, design_for_batch: Design) -> 'Gaussian':
         return self.family(
             means=design_for_batch.initial_mean,
             covs=design_for_batch.initial_covariance,

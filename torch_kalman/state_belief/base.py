@@ -8,8 +8,6 @@ from torch import Tensor
 from tqdm import tqdm
 
 from torch_kalman.design import Design
-from torch_kalman.design.for_batch import DesignForBatch
-
 from torch_kalman.utils import identity
 
 
@@ -30,10 +28,18 @@ class StateBelief:
         :param last_measured: 2D tensor indicating number of timesteps since mean/cov were updated with measurements;
         defaults to 0s.
         """
-        assert means.dim() == 2, "mean should be 2D (first dimension batch-size)"
-        assert covs.dim() == 3, "cov should be 3D (first dimension batch-size)"
-        if (means != means).any():
-            raise ValueError("Missing values in StateBelief (can be caused by gradient-issues -> nan initial-state).")
+        if means.dim() != 2:
+            raise ValueError("means should be 2D (first dimension batch-size)")
+        if covs.dim() != 3:
+            raise ValueError("covs should be 3D (first dimension batch-size)")
+        if torch.isinf(means).any():
+            raise ValueError("Infs in `means`.")
+        if torch.isinf(covs).any():
+            raise ValueError("Infs in `covs`.")
+        if torch.isnan(means).any():
+            raise ValueError("nans in `means`.")
+        if torch.isnan(covs).any():
+            raise ValueError("nans in `covs`.")
 
         num_groups, state_size = means.shape
         assert covs.shape[0] == num_groups, "The batch-size (1st dimension) of cov doesn't match that of mean."
@@ -153,7 +159,7 @@ class StateBelief:
         raise NotImplementedError
 
     def simulate_trajectories(self,
-                              design_for_batch: DesignForBatch,
+                              design_for_batch: Design,
                               progress: bool = False,
                               eps: Optional[Tensor] = None,
                               ntry_diag_incr: int = 1000,
@@ -180,7 +186,7 @@ class StateBelief:
 
             states.append(state)
 
-        return type(self).concatenate_over_time(state_beliefs=states, design=design_for_batch.design)
+        return type(self).concatenate_over_time(state_beliefs=states, design=design_for_batch)
 
     def _realize(self, ntry: int, eps: Optional[Tensor] = None) -> None:
         # the realized state has no variance (b/c it's realized), so uncertainty will only come in on the predict step

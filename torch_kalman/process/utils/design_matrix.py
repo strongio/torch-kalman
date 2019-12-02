@@ -1,12 +1,12 @@
 import itertools
 from copy import copy
-from typing import Optional, Sequence, Union, Callable, Tuple, List, Hashable, Dict
+from typing import Optional, Sequence, Union, Callable, Tuple, List, Dict
 
 import torch
 from torch import Tensor
 from torch.distributions.utils import broadcast_all
 
-from torch_kalman.process.utils.for_batch import method_for_batch
+from torch_kalman.batch import Batchable
 from torch_kalman.utils import bifurcate, is_slow_grad, identity
 
 DesignMatAssignment = Union[float, Tensor, Callable]
@@ -14,19 +14,13 @@ SeqOfTensors = Union[Tuple[Tensor], List[Tensor]]
 DesignMatAdjustment = Union[Tensor, SeqOfTensors]
 
 
-class DesignMatrix:
+class DesignMatrix(Batchable):
     dim1_name: str = None
     dim2_name: str = None
 
-    def __init_subclass__(cls, **kwargs):
-        for attr in ('dim1_name', 'dim2_name'):
-            if attr is None:
-                raise TypeError(f"{cls.__name__} must set `{attr}` attribute.")
-        super().__init_subclass__(**kwargs)
-
     def __init__(self,
-                 dim1_names: Optional[Sequence[Hashable]] = None,
-                 dim2_names: Optional[Sequence[Hashable]] = None):
+                 dim1_names: Optional[Sequence[str]] = None,
+                 dim2_names: Optional[Sequence[str]] = None):
         if dim1_names is None and not self._is_measure_dim(1):
             raise ValueError("Must supply dim1_names")
         self.dim1_names = list(dim1_names or [])
@@ -39,65 +33,75 @@ class DesignMatrix:
         self._ilinks = {}
         self._for_batch = None
 
-    # base ------------------------------------
     @property
     def empty(self) -> bool:
         return not self._assignments
 
-    @method_for_batch(False)
-    def assign(self, value: DesignMatAssignment, force: bool = False, **kwargs):
+    def for_batch(self, num_groups: int, num_timesteps: int) -> 'DesignMatrix':
+        if self._batch_info:
+            raise RuntimeError("Cannot call `for_batch()` on output of `for_batch()`.")
+        out = type(self)(dim1_names=list(self.dim1_names), dim2_names=list(self.dim2_names))
+        out._batch_info = (num_groups, num_timesteps)
+        out._ilinks = dict(self._ilinks)
+        out._assignments = {}
+        for key, values in self._assignments.items():
+            # assignments can be no-grad tensors or callables
+            out._assignments[key] = [v() if callable(v) else v for v in values]
+        return out
+
+    def assign(self, value: DesignMatAssignment, overwrite: bool = False, **kwargs):
+        """
+        Assign a value to an element of a design-matrix.
+
+        :param value: A float, a (single-element) Tensor, or a callable that produces one of these.
+        :param overwrite: If False (default) then cannot re-assign if already assigned; if True will overwrite.
+        :param kwargs: The names of the dimensions.
+        """
         key = self._get_key(kwargs)
         self._check_or_expand_dims(*key)
         value = self._validate_assignment(value)
-        if key in self._assignments and not force:
+        if overwrite or key not in self._assignments:
+            self._assignments[key] = [value]
+        else:
             raise ValueError(f"Already have assignment for {key}.")
-        self._assignments[key] = value
 
-    @method_for_batch(False)
-    def set_ilink(self, ilink: Optional[Callable], force: bool = False, **kwargs):
+    def set_ilink(self, ilink: Optional[Callable], overwrite: bool = False, **kwargs):
+        """
+        Set the inverse-link function that will translate value-assignments/adjustments for an element of the
+        design-matrix into their final value.
+
+        :param ilink: A callable that is appropriate for torch.Tensors (e.g. torch.exp). If None, then the identity
+        link is assumed.
+        :param overwrite: If False (default) then cannot re-assign if already assigned; if True will overwrite.
+        :param kwargs: The names of the dimensions.
+        """
         key = self._get_key(kwargs)
         if key not in self._assignments:
             raise ValueError(f"Tried to set ilink for {key} but must `assign` first.")
-        if key in self._ilinks and not force:
+        if key in self._ilinks and not overwrite:
             raise ValueError(f"Already have ilink for {key}.")
         assert ilink is None or callable(ilink)
         self._ilinks[key] = ilink
 
-    # for batch -----------------------
-    @property
-    def is_for_batch(self):
-        return bool(self._for_batch)
-
-    @property
-    @method_for_batch(True)
-    def num_groups(self) -> int:
-        return self._for_batch[0]
-
-    @property
-    @method_for_batch(True)
-    def num_timesteps(self) -> int:
-        return self._for_batch[1]
-
-    def copy(self):
-        out = type(self)(dim1_names=list(self.dim1_names), dim2_names=list(self.dim2_names))
-        out._assignments = {k: copy(v) for k, v in self._assignments.items()}
-        out._ilinks = dict(self._ilinks)
-        return out
-
-    @method_for_batch(False)
-    def for_batch(self, num_groups: int, num_timesteps: int) -> 'DesignMatrix':
-        out = self.copy()
-        # wrap assignments in lists; adjustments will be appended:
-        out._assignments = {key: [value() if callable(value) else value] for key, value in out._assignments.items()}
-        # disable setting assignments/ilinks, enable adjustments:
-        out._for_batch = (num_groups, num_timesteps)
-        return out
-
-    @method_for_batch(True)
     def adjust(self, value: DesignMatAdjustment, check_slow_grad: bool, **kwargs):
+        """
+        Adjust the value of an assignment. The final value for an element will be given by (a) taking the sum of the
+        initial value and all adjustments, (b) applying the ilink function from `set_ilink()`.
+
+        :param value: Either (a) a torch.Tensor or (b) a sequence of torch.Tensors (one for each timepoint). The tensor
+        should be either scalar, or be 1D with length = self.num_groups.
+        :param check_slow_grad: A natural way to create adjustments is to first create a tensor that `requires_grad`,
+        then split it into a list of tensors, one for each time-point. This way of creating adjustments should be
+        avoided because it leads to a very slow backwards pass. When check_slow_grad is True then a heuristic is used
+        to check for this "gotcha". It can lead to false-alarms, so disabling is allowed with `check_slow_grad=False`.
+        :param kwargs: The names of the dimensions.
+        """
         key = self._get_key(kwargs)
         value = self._validate_adjustment(value, check_slow_grad=check_slow_grad)
-        self._assignments[key].append(value)
+        try:
+            self._assignments[key].append(value)
+        except KeyError:
+            raise RuntimeError("Tried to adjust {} (in {}); but need to `assign()` it first.".format(key, self))
 
     @classmethod
     def merge(cls, mats: Sequence[Tuple[str, 'DesignMatrix']]) -> 'DesignMatrix':
@@ -125,12 +129,11 @@ class DesignMatrix:
             new_ilinks.update({cls._rename_merged_key(k, process_name): v for k, v in mat._ilinks.items()})
 
         out = cls(dim1_names=list(new_dimnames[1]), dim2_names=list(new_dimnames[2]))
-        out._for_batch = list(dims)[0]
+        out._batch_info = list(dims)[0]
         out._assignments = new_assignments
         out._ilinks = new_ilinks
         return out
 
-    @method_for_batch(True)
     def compile(self) -> 'DynamicMatrix':
         """
         Consolidate assignments then apply the link function. Some assignments can be "frozen" into a pre-computed
@@ -224,12 +227,15 @@ class DesignMatrix:
                 raise ValueError("If tensor is passed, then should be scalar or be 1D w/len = num_groups.")
         if in_list and check_slow_grad and is_slow_grad(tens):
             raise RuntimeError(
-                f"This adjustment appears to have been generated by first creating a tensor that requires_grad, then "
-                f"splitting it into a list of tensors, one for each time-point. This way of creating adjustments should"
-                f" be avoided because it leads to a very slow backwards pass; instead make the list of tensors first, "
-                f"*then* do computations that require_grad on each element of the list. If this is a false-alarm, avoid"
-                f" this error by passing check_slow_grad=False to the adjustment method."
+                "This adjustment appears to have been generated by first creating a tensor that `requires_grad`, then "
+                "splitting it into a list of tensors, one for each time-point. This way of creating adjustments should "
+                "be avoided because it leads to a very slow backwards pass; instead make the list of tensors first, "
+                "*then* do computations that require_grad on each element of the list. If this is a false-alarm, avoid "
+                "this error by passing check_slow_grad=False to the adjustment method."
             )
+
+    def __repr__(self):
+        return "{}(dim1_names={!r}, dim2_names={!r})".format(type(self).__name__, self.dim1_names, self.dim2_names)
 
 
 class TransitionMatrix(DesignMatrix):
@@ -246,7 +252,6 @@ class TransitionMatrix(DesignMatrix):
 
 
 class MeasureMatrix(DesignMatrix):
-    # TODO: order?
     dim1_name = 'measure'
     dim2_name = 'state_element'
 
@@ -268,8 +273,8 @@ class VarianceMultiplierMatrix(DesignMatrix):
 
     def __init__(self,
                  *args,
-                 dim1_names: Optional[Sequence[Hashable]] = None,
-                 dim2_names: Optional[Sequence[Hashable]] = None):
+                 dim1_names: Optional[Sequence[str]] = None,
+                 dim2_names: Optional[Sequence[str]] = None):
         if len(args) == 1 and dim1_names is None and dim2_names is None:
             dim1_names = dim2_names = args[0]
         assert dim1_names == dim2_names
@@ -305,6 +310,9 @@ class DynamicMatrix:
         for (r, c), values in self.dynamic_assignments.items():
             out[..., r, c] = values[t]
         return out
+
+    def __repr__(self):
+        return f"{type(self).__name__}()"
 
 
 def _is_dynamic_assignment(x) -> bool:
