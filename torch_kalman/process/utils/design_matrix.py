@@ -5,8 +5,9 @@ import torch
 from torch import Tensor
 from torch.distributions.utils import broadcast_all
 
-from torch_kalman.batch import Batchable
-from torch_kalman.utils import bifurcate, is_slow_grad, identity, NiceRepr
+from torch_kalman.internals.batch import Batchable
+from torch_kalman.internals.utils import bifurcate, is_slow_grad, identity
+from torch_kalman.internals.repr import NiceRepr
 
 DesignMatAssignment = Union[float, Tensor, Callable]
 SeqOfTensors = Union[Tuple[Tensor], List[Tensor]]

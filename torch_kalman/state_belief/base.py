@@ -8,7 +8,8 @@ from torch import Tensor
 from tqdm import tqdm
 
 from torch_kalman.design import Design
-from torch_kalman.utils import identity, NiceRepr
+from torch_kalman.internals.utils import identity
+from torch_kalman.internals.repr import NiceRepr
 
 
 class StateBelief(NiceRepr):

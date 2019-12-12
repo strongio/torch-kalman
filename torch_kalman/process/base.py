@@ -6,11 +6,11 @@ import torch
 from torch import Tensor
 from torch.nn import Parameter
 
-from torch_kalman.batch import Batchable
+from torch_kalman.internals.batch import Batchable
 from torch_kalman.process.utils.design_matrix import (
     TransitionMatrix, MeasureMatrix, VarianceMultiplierMatrix, DesignMatAssignment, DesignMatAdjustment
 )
-from torch_kalman.utils import NiceRepr
+from torch_kalman.internals.repr import NiceRepr
 
 
 class Process(NiceRepr, Batchable):

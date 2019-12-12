@@ -14,7 +14,7 @@ from torch_kalman.state_belief.base import UnmeasuredError
 
 import numpy as np
 
-from torch_kalman.utils import NiceRepr
+from torch_kalman.internals.repr import NiceRepr
 
 Selector = Union[Sequence[int], slice]
 

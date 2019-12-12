@@ -1,6 +1,6 @@
 import unittest
 
-from torch_kalman.batch import Batchable
+from torch_kalman.internals.batch import Batchable
 
 
 class TestBatchable(unittest.TestCase):

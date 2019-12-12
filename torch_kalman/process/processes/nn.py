@@ -7,7 +7,7 @@ from torch.nn import Parameter, ParameterDict
 
 from torch_kalman.process import Process
 from torch_kalman.process.mixins.has_predictors import HasPredictors
-from torch_kalman.utils import zpad
+from torch_kalman.internals.utils import zpad
 
 
 class NN(HasPredictors, Process):

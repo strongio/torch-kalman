@@ -6,7 +6,7 @@ from torch import Tensor
 
 from torch_kalman.process import Process
 from torch_kalman.process.mixins.has_predictors import HasPredictors
-from torch_kalman.utils import split_flat
+from torch_kalman.internals.utils import split_flat
 
 
 class LinearModel(HasPredictors, Process):

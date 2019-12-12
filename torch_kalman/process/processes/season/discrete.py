@@ -9,7 +9,7 @@ from torch.nn import Parameter, ParameterDict
 from torch_kalman.process import Process
 from torch_kalman.process.utils.bounded import Bounded
 from torch_kalman.process.mixins.datetime import DatetimeProcess
-from torch_kalman.utils import split_flat, zpad
+from torch_kalman.internals.utils import split_flat, zpad
 
 
 class Season(DatetimeProcess, Process):

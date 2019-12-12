@@ -9,7 +9,7 @@ from torch_kalman.design import Design
 from torch_kalman.process import Process
 from torch_kalman.state_belief import Gaussian, StateBelief
 from torch_kalman.state_belief.over_time import StateBeliefOverTime
-from torch_kalman.utils import identity
+from torch_kalman.internals.utils import identity
 
 
 class KalmanFilter(Module):
@@ -23,9 +23,6 @@ class KalmanFilter(Module):
 
         # parameters from design:
         self.design_parameters = self.design.param_dict()
-
-    def to(self, *args, **kwargs):
-        raise RuntimeError(f"Currently {type(self).__name__} does not support moving device.")
 
     def predict_initial_state(self, design_for_batch: Design) -> 'Gaussian':
         return self.family(

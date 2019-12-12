@@ -7,7 +7,7 @@ from torch import Tensor
 import numpy as np
 
 from torch_kalman.data_utils.utils import day_of_week_num
-from torch_kalman.utils import NiceRepr
+from torch_kalman.internals.repr import NiceRepr
 
 
 class TimeSeriesBatch(NiceRepr):

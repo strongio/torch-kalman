@@ -6,7 +6,7 @@ import torch
 
 from torch.nn import Parameter, ModuleDict, ParameterDict
 
-from torch_kalman.batch import Batchable
+from torch_kalman.internals.batch import Batchable
 from torch_kalman.covariance import CovarianceFromLogCholesky, PartialCovarianceFromLogCholesky
 
 from torch_kalman.process import Process
@@ -15,7 +15,7 @@ from lazy_object_proxy.utils import cached_property
 from torch_kalman.process.utils.design_matrix import (
     DynamicMatrix, TransitionMatrix, MeasureMatrix, VarianceMultiplierMatrix
 )
-from torch_kalman.utils import NiceRepr
+from torch_kalman.internals.repr import NiceRepr
 
 
 class Design(NiceRepr, Batchable):

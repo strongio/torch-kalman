@@ -1,10 +1,9 @@
-from typing import Generator, Tuple, Union, Callable, Sequence
+from typing import Tuple, Union
 
-from torch.nn import Parameter, ParameterDict
+from torch.nn import ParameterDict
 
 from torch_kalman.process import Process
 from torch_kalman.process.utils.bounded import Bounded
-from torch_kalman.utils import itervalues_sorted_keys
 
 
 class LocalTrend(Process):
