@@ -68,6 +68,7 @@ class NN(HasPredictors, Process):
                   predictors: Tensor,
                   allow_extra_timesteps: bool = False) -> 'NN':
         for_batch = super().for_batch(num_groups, num_timesteps,
+                                      predictors=predictors,
                                       expected_num_predictors=self.input_dim,
                                       allow_extra_timesteps=allow_extra_timesteps)
 
@@ -85,7 +86,7 @@ class NN(HasPredictors, Process):
 
         for measure in self.measures:
             for state_element in self.state_elements:
-                for_batch.adjust_measure(
+                for_batch._adjust_measure(
                     measure=measure,
                     state_element=state_element,
                     adjustment=nn_outputs[state_element],

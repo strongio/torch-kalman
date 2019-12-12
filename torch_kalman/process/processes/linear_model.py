@@ -75,7 +75,7 @@ class LinearModel(HasPredictors, Process):
 
         for measure in self.measures:
             for i, cov in enumerate(self.state_elements):
-                for_batch.adjust_measure(
+                for_batch._adjust_measure(
                     measure=measure,
                     state_element=cov,
                     adjustment=split_flat(predictors[:, :, i], dim=1)
