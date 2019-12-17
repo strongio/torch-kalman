@@ -7,14 +7,14 @@ from torch_kalman.utils.data import TimeSeriesDataset
 
 
 class TestDataUtils(unittest.TestCase):
-    def test_timeseriesbatch(self):
+    def test_time_series_dataset(self):
         values = torch.randn((3, 39, 2))
 
         batch = TimeSeriesDataset(
-            tensor=values,
+            values,
             group_names=['one', 'two', 'three'],
             start_times=[0, 0, 0],
-            measures=['y1', 'y2'],
+            measures=[['y1', 'y2']],
             dt_unit=None
         )
         try:
@@ -25,7 +25,7 @@ class TestDataUtils(unittest.TestCase):
         df1 = batch.to_dataframe()
 
         df2 = pd.concat([
-            pd.DataFrame(values[i].numpy(), columns=batch.measures).assign(group=group, time=batch.times()[0])
+            pd.DataFrame(values[i].numpy(), columns=batch.all_measures).assign(group=group, time=batch.times()[0])
             for i, group in enumerate(batch.group_names)
         ])
         self.assertTrue((df1 == df2).all().all())
