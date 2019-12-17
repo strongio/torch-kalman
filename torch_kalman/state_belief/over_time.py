@@ -7,7 +7,7 @@ from lazy_object_proxy.utils import cached_property
 
 from torch import Tensor
 
-from torch_kalman.data_utils import TimeSeriesBatch
+from torch_kalman.utils.data import TimeSeriesDataset
 from torch_kalman.design import Design
 from torch_kalman.state_belief import StateBelief
 from torch_kalman.state_belief.base import UnmeasuredError
@@ -130,6 +130,7 @@ class StateBeliefOverTime(NiceRepr):
             warn("`obs` has a grad_fn, nans may propagate to gradient")
 
         num_groups, num_times, num_dist_dims = obs.shape
+        assert self.predictions.shape[2] == num_dist_dims
 
         """
         group into chunks for log-prob evaluation. the way indexing works makes this tricky, and slow if we just create 
@@ -211,20 +212,23 @@ class StateBeliefOverTime(NiceRepr):
 
     # Exporting to other Formats ---------:
     def to_dataframe(self,
-                     batch: Union[TimeSeriesBatch, dict],
+                     batch: Union[TimeSeriesDataset, dict],
                      type: str = 'predictions',
                      group_colname: str = 'group',
                      time_colname: str = 'date_time') -> 'DataFrame':
         """
-        :param batch: Either a TimeSeriesBatch, or a dictionary with 'start_times' and 'group_names'.
+        :param batch: Either a TimeSeriesDataset, or a dictionary with 'start_times' and 'group_names'.
+        :param type: Either 'predictions' or 'components'.
         :param group_colname: Column-name for 'group'
         :param time_colname: Column-name for 'time'
-        :return: A pandas DataFrame with group, time, measure, predicted_mean, predicted_std
+        :return: A pandas DataFrame with group, time, measure, plus:
+            - For type='predictions': predicted_mean, predicted_std
+            - For type='components': process, state_element, value, std
         """
         from pandas import concat
 
-        if isinstance(batch, TimeSeriesBatch):
-            batch = {'start_times': batch.start_times, 'group_names': batch.group_names, 'tensor': batch.tensor}
+        if isinstance(batch, TimeSeriesDataset):
+            batch = {'start_times': batch.start_times, 'group_names': batch.group_names}
 
         times = batch['start_times'][:, None] + np.arange(0, self.num_timesteps)
 
@@ -233,7 +237,7 @@ class StateBeliefOverTime(NiceRepr):
             stds = torch.diagonal(self.prediction_uncertainty, dim1=-1, dim2=-2).sqrt()
             for i, measure in enumerate(self.design.measures):
                 # mean:
-                df_pred = TimeSeriesBatch.tensor_to_dataframe(
+                df_pred = TimeSeriesDataset.tensor_to_dataframe(
                     tensor=self.predictions[..., [i]],
                     times=times,
                     group_names=batch['group_names'],
@@ -243,7 +247,7 @@ class StateBeliefOverTime(NiceRepr):
                 )
 
                 # std:
-                df_std = TimeSeriesBatch.tensor_to_dataframe(
+                df_std = TimeSeriesDataset.tensor_to_dataframe(
                     tensor=stds[..., [i]],
                     times=times,
                     group_names=batch['group_names'],
@@ -257,7 +261,7 @@ class StateBeliefOverTime(NiceRepr):
         elif type == 'components':
 
             def _tensor_to_df(tens, measures):
-                return TimeSeriesBatch.tensor_to_dataframe(
+                return TimeSeriesDataset.tensor_to_dataframe(
                     tensor=tens,
                     times=times,
                     group_names=batch['group_names'],
@@ -271,17 +275,6 @@ class StateBeliefOverTime(NiceRepr):
                 df['process'], df['state_element'], df['measure'] = process, state_element, measure
                 out.append(df)
 
-            # residuals:
-            if 'tensor' in batch.keys():
-                orig_padded = self.predictions.data.clone()
-                orig_padded[:] = np.nan
-                orig_padded[:, 0:batch['tensor'].shape[1], :] = batch['tensor']
-                dfr = _tensor_to_df(self.predictions - orig_padded, measures=self.design.measures)
-                for measure in self.design.measures:
-                    df = dfr.loc[:, [group_colname, time_colname, measure]].copy()
-                    df['process'], df['state_element'], df['measure'] = 'residuals', 'residuals', measure
-                    df['value'] = df.pop(measure)
-                    out.append(df)
         else:
             raise ValueError("Expected `type` to be 'predictions' or 'components'.")
 

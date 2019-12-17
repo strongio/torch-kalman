@@ -13,6 +13,9 @@ from torch_kalman.internals.utils import identity
 
 
 class KalmanFilter(Module):
+    """
+    TODO
+    """
     family = Gaussian
     design_cls = Design
 
@@ -52,8 +55,10 @@ class KalmanFilter(Module):
 
         num_groups, num_timesteps, num_measures, *_ = self.family.get_input_dim(input)
         if num_measures != len(self.design.measures):
-            raise ValueError(f"This KalmanFilter has {len(self.design.measures)} measures; but the input shape is"
-                             f" {(num_groups, num_timesteps, num_measures)} (3rd dim should == measure-size).")
+            raise ValueError(
+                f"This KalmanFilter has {len(self.design.measures)} measures; but the input shape is "
+                f"{(num_groups, num_timesteps, num_measures)} (3rd dim should == measure-size)."
+            )
 
         assert forecast_horizon >= 0
         num_timesteps += forecast_horizon
