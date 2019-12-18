@@ -65,7 +65,7 @@ class Gaussian(StateBelief):
 
         A = system_covariance.permute(0, 2, 1)
         B = covs_measured.permute(0, 2, 1)
-        Kt, _ = torch.gesv(B, A)
+        Kt, _ = torch.solve(B, A)
         K = Kt.permute(0, 2, 1)
 
         return K
