@@ -1,6 +1,6 @@
-from typing import Dict, Union, Any, Callable, Iterable, Tuple
+from typing import Dict, Union, Any, Callable, Iterable, Tuple, Sequence
 
-from torch import Tensor
+import torch
 
 
 def bifurcate(x: Iterable, lhs: Callable[[Any], bool]) -> Tuple[list, list]:
@@ -38,7 +38,7 @@ def zpad(x: Any, n: int) -> str:
     return str(x).rjust(n, "0")
 
 
-def split_flat(tens: Tensor, dim: int, clone: bool = False):
+def split_flat(tens: torch.Tensor, dim: int, clone: bool = False):
     if clone:
         return [tens.select(dim, i).clone() for i in range(tens.shape[dim])]
     else:
@@ -50,10 +50,27 @@ def identity(x: Any) -> Any:
     return x
 
 
-def is_slow_grad(tens: Tensor) -> bool:
+def is_slow_grad(tens: torch.Tensor) -> bool:
     if tens.requires_grad:
         avoid_funs = {'CopyBackwards', 'SelectBackward'}
         next_fun = tens.grad_fn.next_functions[0][0]
         if (tens.grad_fn.__class__.__name__ in avoid_funs) or (next_fun.__class__.__name__ in avoid_funs):
             return True
     return False
+
+
+def ragged_cat(tensors: Sequence[torch.Tensor], ragged_dim: int, cat_dim: int = 0) -> torch.Tensor:
+    max_dim_len = max(tensor.shape[ragged_dim] for tensor in tensors)
+    out = []
+    num_dims = len(tensors[0].shape)
+    for tensor in tensors:
+        this_tens_dim_len = tensor.shape[ragged_dim]
+        shape = list(tensor.shape)
+        assert len(shape) == num_dims
+        shape[ragged_dim] = max_dim_len
+        padded = torch.empty(shape)
+        padded[:] = float('nan')
+        idx = tuple(slice(0, this_tens_dim_len) if i == ragged_dim else slice(None) for i in range(num_dims))
+        padded[idx] = tensor
+        out.append(padded)
+    return torch.cat(out, cat_dim)

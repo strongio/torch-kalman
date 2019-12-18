@@ -5,9 +5,10 @@ from warnings import warn
 import numpy as np
 import torch
 from torch import Tensor
-from torch.utils.data import TensorDataset
+from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
 
 from torch_kalman.internals.repr import NiceRepr
+from torch_kalman.internals.utils import ragged_cat
 
 
 class TimeSeriesDataset(NiceRepr, TensorDataset):
@@ -17,7 +18,8 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
     the measures for the third dimension.
 
     Note that unlike TensorDataset, indexing a TimeSeriesDataset returns another TimeSeriesDataset, not a tuple of
-    tensors. So when using TimeSeriesDataset, use `DataLoader(collate_fn=TimeSeriesDataset.collate)`.
+    tensors. So when using TimeSeriesDataset, use `TimeSeriesDataLoader` (or just use
+    `DataLoader(collate_fn=TimeSeriesDataset.collate)`).
     """
     supported_dt_units = {'Y', 'D', 'h', 'm', 's'}
     _repr_attrs = ('sizes', 'measures')
@@ -152,7 +154,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
                 if new_val != required_val:
                     raise ValueError(f"Element {i} has `{attr}` = {new_val}, but for element 0 it's {required_val}.")
 
-        tensors = tuple(torch.cat(t) for t in zip(*to_concat['tensors']))
+        tensors = tuple(ragged_cat(t, ragged_dim=1) for t in zip(*to_concat['tensors']))
 
         return cls(
             *tensors,
@@ -296,6 +298,41 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             raise ValueError(f"Time-unit of {dt_unit} not currently supported; please report to package maintainer.")
 
         return start_times
+
+
+class TimeSeriesDataLoader(DataLoader):
+    """
+    This is a convenience wrapper around `DataLoader(collate_fn=TimeSeriesDataset.collate)`. Additionally, it provides
+    a `from_dataframe()` classmethod so that the data-loader can be created directly from a pandas dataframe. This can
+    be more memory-efficient than the alternative route of first creating a TimeSeriesDataset from a dataframe, and then
+     passing that object to a data-loader.
+    """
+
+    def __init__(self, *args, **kwargs):
+        kwargs['collate_fn'] = kwargs.get('collate_fn') or TimeSeriesDataset.collate
+        super().__init__(*args, **kwargs)
+
+    @classmethod
+    def from_dataframe(cls,
+                       dataframe: 'DataFrame',
+                       group_colname: str,
+                       time_colname: str,
+                       measure_colnames: Sequence[str],
+                       dt_unit: Optional[str],
+                       **kwargs) -> 'TimeSeriesDataLoader':
+        dataset = ConcatDataset(
+            datasets=[
+                TimeSeriesDataset.from_dataframe(
+                    dataframe=df,
+                    group_colname=group_colname,
+                    time_colname=time_colname,
+                    measure_colnames=measure_colnames,
+                    dt_unit=dt_unit
+                )
+                for g, df in dataframe.groupby(group_colname)
+            ]
+        )
+        return cls(dataset=dataset, **kwargs)
 
 
 # assumed by `day_of_week_num`:
