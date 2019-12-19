@@ -54,14 +54,18 @@ class CensoredGaussian(Gaussian):
 
         # observed values, censoring limits
         obs = obs[idx_2d]
-        if lower is not None:
+        if lower is None:
+            lower = torch.full_like(obs, -float('inf'))
+        else:
             lower = lower[idx_2d]
-        elif torch.isnan(lower).any():
-            raise ValueError("NaNs not allowed in `lower`")
-        if upper is not None:
+            if torch.isnan(lower).any():
+                raise ValueError("NaNs not allowed in `lower`")
+        if upper is None:
+            upper = torch.full_like(obs, float('inf'))
+        else:
             upper = upper[idx_2d]
-        elif torch.isnan(upper).any():
-            raise ValueError("NaNs not allowed in `upper`")
+            if torch.isnan(upper).any():
+                raise ValueError("NaNs not allowed in `upper`")
 
         if (lower == upper).any():
             raise RuntimeError("lower cannot == upper")
@@ -161,75 +165,47 @@ class CensoredGaussianOverTime(GaussianOverTime):
                                   upper: Optional[Tensor] = None) -> Tensor:
         self._check_lp_sub_input(group_idx, time_idx)
 
-        idx_no_measure = bmat_idx(group_idx, time_idx)
         idx_3d = bmat_idx(group_idx, time_idx, measure_idx)
         idx_4d = bmat_idx(group_idx, time_idx, measure_idx, measure_idx)
 
         # subset obs, lower, upper:
+        if upper is None:
+            upper = torch.full_like(obs, float('inf'))
+        if lower is None:
+            lower = torch.full_like(obs, -float('inf'))
         obs, lower, upper = obs[idx_3d], lower[idx_3d], upper[idx_3d]
 
-        if method.lower() == 'update':
-            means = self.means[idx_no_measure]
-            covs = self.covs[idx_no_measure]
-            H = self.H[idx_3d]
-            R = self.R[idx_4d]
-            measured_means = H.matmul(means.unsqueeze(-1)).squeeze(-1)
+        #
+        pred_mean = self.predictions[idx_3d]
+        pred_cov = self.prediction_uncertainty[idx_4d]
 
-            # calculate prob-obs:
-            prob_lo, prob_up = tobit_probs(mean=measured_means,
-                                           cov=R,
-                                           lower=lower,
-                                           upper=upper)
-            prob_obs = torch.diag_embed(1 - prob_up - prob_lo)
+        #
+        cens_up = torch.isclose(obs, upper)
+        cens_lo = torch.isclose(obs, lower)
 
-            # calculate adjusted measure mean and cov:
-            mm_adj, R_adj = tobit_adjustment(mean=measured_means,
-                                             cov=R,
-                                             lower=lower,
-                                             upper=upper,
-                                             probs=(prob_lo, prob_up))
+        #
+        loglik_uncens = torch.zeros_like(obs)
+        loglik_cens_up = torch.zeros_like(obs)
+        loglik_cens_lo = torch.zeros_like(obs)
+        for m in range(pred_mean.shape[-1]):
+            std = pred_cov[..., m, m].sqrt()
+            z = (pred_mean[..., m] - obs[..., m]) / std
 
-            # system uncertainty:
-            Ht = H.permute(0, 1, 3, 2)
-            system_uncertainty = prob_obs.matmul(H).matmul(covs).matmul(Ht).matmul(prob_obs) + R_adj
+            # pdf is well behaved at tails:
+            loglik_uncens[..., m] = std_normal.log_prob(z) - std.log()
 
-            # log prob:
-            dist = torch.distributions.MultivariateNormal(mm_adj, system_uncertainty)
-            return dist.log_prob(obs)
-        elif method.lower() == 'independent':
-            #
-            pred_mean = self.predictions[idx_3d]
-            pred_cov = self.prediction_uncertainty[idx_4d]
+            # but cdf is not, clamp:
+            z = torch.clamp(z, -5., 5.)
+            loglik_cens_up[..., m] = std_normal.cdf(z).log()
+            loglik_cens_lo[..., m] = (1. - std_normal.cdf(z)).log()
 
-            #
-            cens_up = torch.isclose(obs, upper)
-            cens_lo = torch.isclose(obs, lower)
+        loglik = torch.zeros_like(obs)
+        loglik[cens_up] = loglik_cens_up[cens_up]
+        loglik[cens_lo] = loglik_cens_lo[cens_lo]
+        loglik[~(cens_up | cens_lo)] = loglik_uncens[~(cens_up | cens_lo)]
 
-            #
-            loglik_uncens = torch.zeros_like(obs)
-            loglik_cens_up = torch.zeros_like(obs)
-            loglik_cens_lo = torch.zeros_like(obs)
-            for m in range(pred_mean.shape[-1]):
-                std = pred_cov[..., m, m].sqrt()
-                z = (pred_mean[..., m] - obs[..., m]) / std
-
-                # pdf is well behaved at tails:
-                loglik_uncens[..., m] = std_normal.log_prob(z) - std.log()
-
-                # but cdf is not, clamp:
-                z = torch.clamp(z, -5., 5.)
-                loglik_cens_up[..., m] = std_normal.cdf(z).log()
-                loglik_cens_lo[..., m] = (1. - std_normal.cdf(z)).log()
-
-            loglik = torch.zeros_like(obs)
-            loglik[cens_up] = loglik_cens_up[cens_up]
-            loglik[cens_lo] = loglik_cens_lo[cens_lo]
-            loglik[~(cens_up | cens_lo)] = loglik_uncens[~(cens_up | cens_lo)]
-
-            # take the product of the dimension probs (i.e., assume independence)
-            return torch.sum(loglik, -1)
-        else:
-            raise RuntimeError("Expected method to be one of: {}.".format({'update', 'independent'}))
+        # take the product of the dimension probs (i.e., assume independence)
+        return torch.sum(loglik, -1)
 
     def sample_measurements(self,
                             lower: Optional[Tensor] = None,
