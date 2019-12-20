@@ -68,6 +68,7 @@ class LinearModel(HasPredictors, Process):
                   allow_extra_timesteps: bool = False) -> 'LinearModel':
         for_batch = super().for_batch(num_groups, num_timesteps,
                                       expected_num_predictors=len(self.state_elements),
+                                      predictors = predictors,
                                       allow_extra_timesteps=allow_extra_timesteps)
 
         if predictors.shape[1] > num_timesteps:
