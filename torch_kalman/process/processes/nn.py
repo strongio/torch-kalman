@@ -11,6 +11,9 @@ from torch_kalman.internals.utils import zpad
 
 
 class NN(HasPredictors, Process):
+    """
+    Uses a torch.nn.module to map an input tensor into a lower-dimensional state representation.
+    """
 
     def __init__(self,
                  id: str,
@@ -21,10 +24,6 @@ class NN(HasPredictors, Process):
                  init_variance: bool = True,
                  add_module_params_to_process: bool = True,
                  inv_link: Optional[Callable] = None):
-        """
-        Uses a torch.nn.module to map an input tensor into a lower-dimensional state representation.
-        """
-
         self.inv_link = inv_link
 
         self.add_module_params_to_process = add_module_params_to_process
@@ -67,10 +66,13 @@ class NN(HasPredictors, Process):
                   num_timesteps: int,
                   predictors: Tensor,
                   allow_extra_timesteps: bool = False) -> 'NN':
-        for_batch = super().for_batch(num_groups, num_timesteps,
-                                      predictors=predictors,
-                                      expected_num_predictors=self.input_dim,
-                                      allow_extra_timesteps=allow_extra_timesteps)
+        for_batch = super().for_batch(
+            num_groups=num_groups,
+            num_timesteps=num_timesteps,
+            predictors=predictors,
+            expected_num_predictors=self.input_dim,
+            allow_extra_timesteps=allow_extra_timesteps
+        )
 
         if predictors.shape[1] > num_timesteps:
             predictors = predictors[:, 0:num_timesteps, :]
