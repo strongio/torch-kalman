@@ -84,8 +84,8 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
 
     def get_groups(self, groups: Sequence[Any]) -> 'TimeSeriesDataset':
         """
-        Get the subset of the batch corresponding to groups. Note that the ordering in the output will match the original
-        ordering (not that of `group`), and that duplicates will be dropped.
+        Get the subset of the batch corresponding to groups. Note that the ordering in the output will match the
+        original ordering (not that of `group`), and that duplicates will be dropped.
         """
         group_idx = np.where(np.isin(self.group_names, groups))[0]
         return self[group_idx]
