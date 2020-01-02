@@ -27,6 +27,9 @@ class KalmanFilter(Module):
         # parameters from design:
         self.design_parameters = self.design.param_dict()
 
+        # generally a more reasonable init:
+        self.design.process_covariance.set(self.design.process_covariance.create().data / 10.)
+
     def predict_initial_state(self, design_for_batch: Design) -> 'Gaussian':
         return self.family(
             means=design_for_batch.initial_mean,
