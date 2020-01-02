@@ -90,25 +90,6 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         group_idx = np.where(np.isin(self.group_names, groups))[0]
         return self[group_idx]
 
-    def split_times(self, split_frac: float) -> Tuple['TimeSeriesDataset', 'TimeSeriesDataset']:
-        """
-        Split data along a pre-post (typically: train/validation).
-        """
-        assert 0. < split_frac < 1.
-
-        num_timesteps = max(tensor.shape[1] for tensor in self.tensors)
-        idx = round(num_timesteps * split_frac)
-        if 1 < idx < num_timesteps:
-            train_batch = self.with_new_tensors(*(tensor[:, :idx, :] for tensor in self.tensors))
-            val_batch = type(self)(*(tensor[:, idx:, :] for tensor in self.tensors),
-                                   self.group_names,
-                                   self.times()[:, idx],
-                                   self.measures,
-                                   dt_unit=self.dt_unit)
-        else:
-            raise ValueError("`split_frac` too extreme, results in empty tensor.")
-        return train_batch, val_batch
-
     def split_measures(self, *measure_groups) -> 'TimeSeriesDataset':
         """
         :param measure_groups: Each argument should be an indexer (i.e. list of ints or a slice), or should be a list
@@ -211,11 +192,21 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
                        dataframe: 'DataFrame',
                        group_colname: str,
                        time_colname: str,
-                       measure_colnames: Sequence[str],
-                       dt_unit: Optional[str]) -> 'TimeSeriesDataset':
+                       dt_unit: Optional[str],
+                       measure_colnames: Optional[Sequence[str]] = None,
+                       X_colnames: Optional[Sequence[str]] = None,
+                       y_colnames: Optional[Sequence[str]] = None) -> 'TimeSeriesDataset':
+
+        if measure_colnames is None:
+            if X_colnames is None or y_colnames is None:
+                raise ValueError("Must pass either `measure_colnames` or `X_colnames` & `y_colnames`")
+            measure_colnames = list(y_colnames) + list(X_colnames)
+        else:
+            if X_colnames is not None or y_colnames is not None:
+                raise ValueError("If passing `measure_colnames` do not pass `X_colnames` or `y_colnames`.")
+
         assert isinstance(group_colname, str)
         assert isinstance(time_colname, str)
-        assert isinstance(measure_colnames, (list, tuple))
         assert len(measure_colnames) == len(set(measure_colnames))
 
         # sort by time:
@@ -252,13 +243,22 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         for i, (array, time_idx) in enumerate(zip(arrays, time_idxs)):
             tens[i, time_idx, :] = Tensor(array)
 
-        return cls(
+        dataset = cls(
             tens,
             group_names=group_names,
             start_times=start_times,
             measures=[measure_colnames],
             dt_unit=dt_unit
         )
+
+        if X_colnames is not None:
+            dataset = dataset.split_measures(y_colnames, X_colnames)
+            y, X = dataset.tensors
+            # don't use nan-padding on the predictor tensor:
+            for i, time_idx in enumerate(time_idxs):
+                X[:, time_idx.max():, :] = 0.0
+
+        return dataset
 
     def with_new_tensors(self, *tensors: Tensor) -> 'TimeSeriesDataset':
         """
