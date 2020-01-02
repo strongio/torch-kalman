@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Sequence, Dict, Tuple, Union, Optional, Iterable, Callable
+from typing import Sequence, Dict, Tuple, Union, Optional, Iterable
 from warnings import warn
 
 import torch
@@ -7,7 +7,6 @@ from lazy_object_proxy.utils import cached_property
 
 from torch import Tensor
 
-from torch_kalman.internals.utils import identity
 from torch_kalman.utils.data import TimeSeriesDataset
 from torch_kalman.design import Design
 from torch_kalman.state_belief import StateBelief
@@ -216,7 +215,7 @@ class StateBeliefOverTime(NiceRepr):
                      dataset: Union[TimeSeriesDataset, dict],
                      type: str = 'predictions',
                      group_colname: str = 'group',
-                     time_colname: str = 'date_time') -> 'DataFrame':
+                     time_colname: str = 'time') -> 'DataFrame':
         """
         :param dataset: Either a TimeSeriesDataset, or a dictionary with 'start_times' and 'group_names'.
         :param type: Either 'predictions' or 'components'.
@@ -230,10 +229,10 @@ class StateBeliefOverTime(NiceRepr):
 
         if isinstance(dataset, TimeSeriesDataset):
             batch_info = {'start_times': dataset.start_times, 'group_names': dataset.group_names, 'named_tensors': {}}
-            for measure_group, tensors in zip(dataset.measures, dataset.tensors):
-                for i, measure in measure_group:
+            for measure_group, tensor in zip(dataset.measures, dataset.tensors):
+                for i, measure in enumerate(measure_group):
                     if measure in self.design.measures:
-                        batch_info['named_tensors'][measure] = tensors[..., [i]]
+                        batch_info['named_tensors'][measure] = tensor[..., [i]]
         elif isinstance(dataset, dict):
             batch_info = dataset
         else:
@@ -262,7 +261,7 @@ class StateBeliefOverTime(NiceRepr):
                 df = df_pred.merge(df_std, on=[group_colname, time_colname])
 
                 # actual:
-                orig_tensor = batch_info.get(measure, None)
+                orig_tensor = batch_info.get('named_tensors', {}).get(measure, None)
                 if orig_tensor is not None:
                     df_actual = _tensor_to_df(orig_tensor, measures=['actual'])
                     df = df.merge(df_actual, on=[group_colname, time_colname], how='left')
@@ -281,7 +280,7 @@ class StateBeliefOverTime(NiceRepr):
                 orig_padded = self.predictions.data.clone()
                 orig_padded[:] = np.nan
                 orig_padded[:, 0:orig_tensor.shape[1], :] = orig_tensor
-                df = _tensor_to_df(self.predictions - orig_padded, measure['value'])
+                df = _tensor_to_df(self.predictions - orig_padded, ['value'])
                 df['process'], df['state_element'], df['measure'] = 'residuals', 'residuals', measure
                 out.append(df)
 
@@ -309,30 +308,75 @@ class StateBeliefOverTime(NiceRepr):
                     out[(measure, process_name, state_element)] = (means[:, :, s], stds[:, :, s])
         return out
 
-    def plot(self,
-             df: 'DataFrame',
-             group_colname: str,
-             time_colname: str,
+    @staticmethod
+    def plot(df: 'DataFrame',
+             group_colname: str = None,
+             time_colname: str = None,
              multi: float = 1.96,
-             num_groups: int = 4) -> 'DataFrame':
+             num_groups: int = 1,
+             **kwargs) -> 'DataFrame':
+        """
+        :param df: The output of `.to_dataframe()`.
+        :param group_colname: The name of the group-column.
+        :param time_colname: The name of the time-column.
+        :param multi: Multiplier to convert std-devs to CIs, default 1.96.
+        :param num_groups: Max. number of groups to plot; if the number of groups in the dataframe is greater than this,
+         a random subset will be taken.
+        :param kwargs: Further keyword arguments to pass to `plotnine.theme` (e.g. `figure_size=(x,y)`)
+        :return: A plot of the predicted and actual values.
+        """
 
-        from plotnine import ggplot, aes, geom_line, geom_ribbon, facet_grid
+        from plotnine import ggplot, aes, geom_line, geom_ribbon, facet_grid, facet_wrap, theme_bw, theme
+
+        is_components = ('process' in df.columns and 'state_element' in df.columns)
+
+        if group_colname is None:
+            if 'group' in df.columns:
+                group_colname = 'group'
+            else:
+                raise TypeError("Please specify group_colname")
+        if time_colname is None:
+            if 'time' in df.columns:
+                time_colname = 'time'
+            else:
+                raise TypeError("Please specify time_colname")
+        if is_components:
+            value_colname = 'value'
+            std_colname = 'std'
+        else:
+            value_colname = 'predicted_mean'
+            std_colname = 'predicted_std'
 
         df = df.copy()
         if df[group_colname].nunique() > num_groups:
-            print(f"Subsetting to {num_groups} groups...")
-            df = df.loc[df[group_colname].isin(df[group_colname].sample(num_groups)), :]
-        df['lower'] = df['predicted_mean'] - multi * df['predicted_std']
-        df['upper'] = df['predicted_mean'] + multi * df['predicted_std']
+            print(f"Subsetting to {num_groups} group{'s' if num_groups > 1 else ''}...")
+            df = df.loc[df[group_colname].isin(df[group_colname].drop_duplicates().sample(num_groups)), :]
+
+        df['lower'] = df[value_colname] - multi * df[std_colname]
+        df['upper'] = df[value_colname] + multi * df[std_colname]
 
         plot = (
                 ggplot(df, aes(x=time_colname)) +
-                geom_line(aes(y='actual')) +
-                geom_line(aes(y='predicted_mean'), color='red', size=1.5, alpha=.75) +
+                geom_line(aes(y=value_colname), color='red', size=1.5, alpha=.75) +
                 geom_ribbon(aes(ymin='lower', ymax='upper'), color=None, alpha=.25)
         )
 
-        return plot + facet_grid(f"measure ~ {group_colname}", scales='free')
+        if is_components:
+            if num_groups > 1:
+                raise ValueError("Cannot plot components for > 1 group.")
+            plot = plot + facet_grid(f"measure ~ process", scales='free_y')
+        else:
+            if 'actual' in df.columns:
+                plot = plot + geom_line(aes(y='actual'))
+            if num_groups > 1:
+                plot = plot + facet_grid(f"measure ~ {group_colname}", scales='free_y')
+            else:
+                plot = plot + facet_wrap("~measure", scales='free_y')
+
+        if 'figure_size' not in kwargs:
+            kwargs['figure_size'] = (12, 5)
+
+        return plot + theme_bw() + theme(**kwargs)
 
     # Private utils ---------:
     def _restore_sb(self, indices: Iterable[Tuple[int, int]]) -> StateBelief:
