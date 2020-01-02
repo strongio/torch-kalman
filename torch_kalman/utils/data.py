@@ -317,8 +317,10 @@ class TimeSeriesDataLoader(DataLoader):
                        dataframe: 'DataFrame',
                        group_colname: str,
                        time_colname: str,
-                       measure_colnames: Sequence[str],
                        dt_unit: Optional[str],
+                       measure_colnames: Optional[Sequence[str]] = None,
+                       X_colnames: Optional[Sequence[str]] = None,
+                       y_colnames: Optional[Sequence[str]] = None,
                        **kwargs) -> 'TimeSeriesDataLoader':
         dataset = ConcatDataset(
             datasets=[
@@ -327,6 +329,8 @@ class TimeSeriesDataLoader(DataLoader):
                     group_colname=group_colname,
                     time_colname=time_colname,
                     measure_colnames=measure_colnames,
+                    X_colnames=X_colnames,
+                    y_colnames=y_colnames,
                     dt_unit=dt_unit
                 )
                 for g, df in dataframe.groupby(group_colname)
