@@ -18,7 +18,7 @@ class LinearModel(HasPredictors, Process):
                  init_variance: Union[bool, Collection[str]] = True,
                  inv_link: Optional[Callable] = None):
         if isinstance(covariates, str):
-            raise ValueError("`covariates` should be sequence of strings, not single string")
+            raise TypeError("`covariates` should be sequence of strings, not single string")
 
         self.inv_link = inv_link
 
@@ -66,10 +66,14 @@ class LinearModel(HasPredictors, Process):
                   num_timesteps: int,
                   predictors: Tensor,
                   allow_extra_timesteps: bool = False) -> 'LinearModel':
-        for_batch = super().for_batch(num_groups, num_timesteps,
-                                      expected_num_predictors=len(self.state_elements),
-                                      predictors = predictors,
-                                      allow_extra_timesteps=allow_extra_timesteps)
+        
+        for_batch = super().for_batch(
+            num_groups=num_groups,
+            num_timesteps=num_timesteps,
+            predictors=predictors,
+            expected_num_predictors=len(self.state_elements),
+            allow_extra_timesteps=allow_extra_timesteps
+        )
 
         if predictors.shape[1] > num_timesteps:
             predictors = predictors[:, 0:num_timesteps, :]
