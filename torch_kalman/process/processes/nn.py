@@ -65,7 +65,7 @@ class NN(HasPredictors, Process):
                   num_groups: int,
                   num_timesteps: int,
                   predictors: Tensor,
-                  allow_extra_timesteps: bool = False) -> 'NN':
+                  allow_extra_timesteps: bool = True) -> 'NN':
         for_batch = super().for_batch(
             num_groups=num_groups,
             num_timesteps=num_timesteps,
