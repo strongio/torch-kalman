@@ -33,7 +33,10 @@ def simulate_daily_series(num_groups: int, num_timesteps: int, noise: float = 1.
         'season_start': np.datetime64('2007-01-01'),  # arbitrary monday at midnight
         'dt_unit': 'D'
     }
+    # create realistic series:
     tensor = _simulate(num_groups, num_timesteps, season_spec, noise=noise)
+
+    # convert to dataset:
     dataset = TimeSeriesDataset(
         tensor,
         group_names=range(num_groups),
@@ -41,8 +44,20 @@ def simulate_daily_series(num_groups: int, num_timesteps: int, noise: float = 1.
         measures=[['y']],
         dt_unit=season_spec['dt_unit']
     )
+    # convert to dataframe:
     df = dataset.to_dataframe()
+
+    # add predictors:
     # TODO: meaningful predictors
     df['X1'] = np.random.normal(size=len(df.index))
     df['X2'] = np.random.normal(size=len(df.index))
+
+    # make number of timesteps per group non-uniform:
+    max_timestep_per_group = dict(zip(
+        range(num_groups),
+        np.random.choice(range(int(num_timesteps * .80), num_timesteps), size=num_groups, replace=True)
+    ))
+    df['_max_time'] = season_spec['season_start'] + df['group'].map(max_timestep_per_group)
+    df = df.loc[df['time'] <= df.pop('_max_time'), :].reset_index(drop=True)
+
     return df
