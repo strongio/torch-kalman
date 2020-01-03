@@ -52,7 +52,7 @@ class KalmanFilter(Module):
           process generates initial values.
         :param forecast_horizon: Number of timesteps past the end of the input to continue making predictions
         :param progress: Should progress-bar be generated?
-        :param kwargs: Other kwargs that will be passed to the `design_for_batch` method.
+        :param kwargs: Other kwargs that will be passed to the kf's `design.for_batch()` method.
         :return: A StateBeliefOverTime consisting of one-step-ahead predictions.
         """
 
