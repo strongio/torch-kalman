@@ -59,6 +59,15 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             offset *= 7
         return self.start_times[:, None] + offset
 
+    def last_measured_times(self) -> Tuple[np.ndarray, ...]:
+        times = self.times()
+        out = []
+        for last_measured_idx in self._last_measured_idx():
+            out.append(
+                np.array([t[idx] for t, idx in zip(times, last_measured_idx)], dtype=f'datetime64[{self.dt_unit}]')
+            )
+        return tuple(out)
+
     def datetimes(self) -> np.ndarray:
         return self.times()
 
@@ -71,16 +80,35 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         return [t.size() for t in self.tensors]
 
     # Subsetting ------------------------:
-    def __getitem__(self, item: Union[int, Sequence, slice]) -> 'TimeSeriesDataset':
-        if isinstance(item, int):
-            item = [item]
-        return type(self)(
-            *super(TimeSeriesDataset, self).__getitem__(item),
-            group_names=self.group_names[item],
-            start_times=self.start_times[item],
-            measures=self.measures,
-            dt_unit=self.dt_unit
-        )
+    def subset_for_training(self, train_frac: float = .75, which: int = 0) -> 'TimeSeriesDataset':
+        """
+        When training a forecasting model, we sometimes want to remove some proportion of the most recent data, then
+        see how our model performs on the held out data. This method creates a dataset
+
+        :param train_frac: The proportion of the data to keep for training. This is calculated on a per-group basis, by
+        taking the last observation for each group (i.e., the last observation that a non-nan value on any measure).
+        :param which: If the TimeSeriesDataset has multiple tensors, this subsetting is only done in one of them
+        (default the first) on the assumption that other tensor(s) contain predictors, which would be needed in a
+        validation period.
+        :return: A TimeSeriesDataset subsetted to `train_frac` of the data.
+        """
+        assert 0 < train_frac < 1
+
+        cloned_tensors = [t.data.clone() for t in self.tensors]
+
+        # for each group, find the last non-nan, take `frac` of that to find the train/val split point:
+        last_measured_idx = self._last_measured_idx()[which]
+        split_idx = np.array([int(idx * train_frac) for idx in last_measured_idx], dtype='int')
+
+        # remove excess padding:
+        max_time = split_idx.max()
+        cloned_tensors[which] = cloned_tensors[which][:, 0:max_time, :]
+
+        # remove data from validation period:
+        all_idx = np.broadcast_to(np.arange(0, max_time), shape=(len(split_idx), max_time))
+        cloned_tensors[which][np.where(all_idx > split_idx[:, None])] = float('nan')
+
+        return self.with_new_tensors(*cloned_tensors)
 
     def get_groups(self, groups: Sequence[Any]) -> 'TimeSeriesDataset':
         """
@@ -114,6 +142,17 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             start_times=self.start_times,
             group_names=self.group_names,
             measures=[tuple(self_measures[idx]) for idx in idxs],
+            dt_unit=self.dt_unit
+        )
+
+    def __getitem__(self, item: Union[int, Sequence, slice]) -> 'TimeSeriesDataset':
+        if isinstance(item, int):
+            item = [item]
+        return type(self)(
+            *super(TimeSeriesDataset, self).__getitem__(item),
+            group_names=self.group_names[item],
+            start_times=self.start_times[item],
+            measures=self.measures,
             dt_unit=self.dt_unit
         )
 
@@ -169,6 +208,10 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         from pandas import DataFrame, concat
 
         tensor = tensor.data.numpy()
+        assert tensor.shape[0] == len(group_names)
+        assert tensor.shape[0] == len(times)
+        assert tensor.shape[1] <= times.shape[1]
+        assert tensor.shape[2] == len(measures)
 
         dfs = []
         for g, group_name in enumerate(group_names):
@@ -182,6 +225,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             # convert to dataframe:
             df = DataFrame(data=values[:end_idx, :], columns=measures)
             df[group_colname] = group_name
+            df[time_colname] = np.nan
             df[time_colname] = times[g, 0:len(df.index)]
             dfs.append(df)
 
@@ -295,9 +339,20 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             if not start_times.dtype == np.int64:
                 raise ValueError("If `dt_unit` is None, expect start_times to be an array w/dtype of int64.")
         else:
-            raise ValueError(f"Time-unit of {dt_unit} not currently supported; please report to package maintainer.")
+            raise ValueError(f"Time-unit of {dt_unit} not currently supported.")
 
         return start_times
+
+    def _last_measured_idx(self) -> Tuple[np.ndarray, ...]:
+        out = []
+        for tens in self.tensors:
+            any_measured_bool = ~np.isnan(tens.numpy()).all(2)
+            last_measured_idx = np.array(
+                [np.max(np.where(any_measured_bool[g])[0], initial=0) for g in range(len(self.group_names))],
+                dtype='int'
+            )
+            out.append(last_measured_idx)
+        return tuple(out)
 
 
 class TimeSeriesDataLoader(DataLoader):
