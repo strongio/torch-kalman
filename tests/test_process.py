@@ -14,7 +14,7 @@ from torch_kalman.process.processes.season.fourier import TBATS
 class TestProcess(TestCase):
 
     def test_fourier_season(self):
-        season = FourierSeason(id='season', seasonal_period=24, K=2, decay=False, season_start=False)
+        season = FourierSeason(id='season', seasonal_period=24, K=2, decay=False, dt_unit=None)
         season.add_measure('measure')
         design = Design(processes=[season], measures=['measure'])
         for_batch = design.for_batch(1, 24 * 2)
@@ -29,7 +29,7 @@ class TestProcess(TestCase):
 
     def test_tbats_season(self):
         K = 3
-        season = TBATS(id='season', seasonal_period=24, K=K, decay=False, season_start=False)
+        season = TBATS(id='season', seasonal_period=24, K=K, decay=False, dt_unit=None)
         season.add_measure('measure')
         design = Design(processes=[season], measures=['measure'])
         for_batch = design.for_batch(1, 24 * 7)

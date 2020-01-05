@@ -19,11 +19,12 @@ class DatetimeProcess:
         season_start = kwargs.pop('season_start', None)
 
         # parse date information:
-        if season_start is None:
-            if dt_unit is not None:
-                season_start = '1970-01-05'  # first monday since epoch
-            else:
+        if dt_unit is None:
+            if season_start is not None:
                 raise ValueError("Must pass `dt_unit` if passing `season_start`.")
+        else:
+            if season_start is None:
+                season_start = '1970-01-05'  # first monday since epoch
 
         if dt_unit in self.supported_dt_units:
             self.start_datetime = np.datetime64(season_start, (dt_unit, 1))
