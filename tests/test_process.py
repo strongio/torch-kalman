@@ -6,7 +6,7 @@ from torch import Tensor
 import numpy as np
 
 from torch_kalman.design import Design
-from torch_kalman.process import Season, FourierSeasonDynamic, Process
+from torch_kalman.process import Season, FourierSeason, Process
 from torch_kalman.process.processes.local_trend import LocalTrend
 from torch_kalman.process.processes.season.fourier import TBATS
 
@@ -14,7 +14,7 @@ from torch_kalman.process.processes.season.fourier import TBATS
 class TestProcess(TestCase):
 
     def test_fourier_season(self):
-        season = FourierSeasonDynamic(id='season', seasonal_period=24, K=2, decay=False, season_start=False)
+        season = FourierSeason(id='season', seasonal_period=24, K=2, decay=False, dt_unit=None)
         season.add_measure('measure')
         design = Design(processes=[season], measures=['measure'])
         for_batch = design.for_batch(1, 24 * 2)
@@ -29,7 +29,7 @@ class TestProcess(TestCase):
 
     def test_tbats_season(self):
         K = 3
-        season = TBATS(id='season', seasonal_period=24, K=K, decay=False, season_start=False)
+        season = TBATS(id='season', seasonal_period=24, K=K, decay=False, dt_unit=None)
         season.add_measure('measure')
         design = Design(processes=[season], measures=['measure'])
         for_batch = design.for_batch(1, 24 * 7)

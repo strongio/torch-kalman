@@ -6,9 +6,10 @@ import torch
 from torch.optim import LBFGS
 
 from torch_kalman.kalman_filter import KalmanFilter
-from torch_kalman.process import FourierSeasonDynamic, LocalLevel, Season
-from tests.utils import simulate
+from torch_kalman.process import LocalLevel, Season
+
 from torch_kalman.state_belief import CensoredGaussian
+from torch_kalman.utils.simulate import _simulate
 
 
 class TestTraining(unittest.TestCase):
@@ -23,10 +24,7 @@ class TestTraining(unittest.TestCase):
             measures=['y'],
             processes=[
                 LocalLevel(id='local_level').add_measure('y'),
-                Season(id='day_in_week', seasonal_period=7, **self.config['season_spec']).add_measure('y'),
-                FourierSeasonDynamic(
-                    id='day_in_month', seasonal_period=30, K=2, **self.config['season_spec']
-                ).add_measure('y')
+                Season(id='day_in_week', seasonal_period=7, **self.config['season_spec']).add_measure('y')
             ]
         )
         kf.opt = LBFGS(kf.parameters())
@@ -52,7 +50,7 @@ class TestTraining(unittest.TestCase):
         return kf(data, start_datetimes=start_datetimes).predictions
 
     def test_training_from_sim(self):
-        sim_data = simulate(**self.config, noise=0.1)
+        sim_data = _simulate(**self.config, noise=0.1)
         predictions = self._train_kf(sim_data)
         se = (sim_data - predictions) ** 2
         self.assertLess(se.mean().item(), .4)
@@ -61,7 +59,7 @@ class TestTraining(unittest.TestCase):
         class TobitFilter(KalmanFilter):
             family = CensoredGaussian
 
-        sim_data = simulate(**self.config, noise=0.1)
+        sim_data = _simulate(**self.config, noise=0.1)
         predictions = self._train_kf(sim_data, cls=TobitFilter, num_epochs=5)
         se = (sim_data - predictions) ** 2
         self.assertLess(se.mean().item(), .4)

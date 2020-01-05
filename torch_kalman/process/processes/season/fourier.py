@@ -13,7 +13,7 @@ from torch_kalman.process.utils.fourier import fourier_tensor
 from torch_kalman.internals.utils import split_flat
 
 
-class FourierSeason(DatetimeProcess, Process):
+class _FourierSeason(DatetimeProcess, Process):
     def __init__(self,
                  id: str,
                  seasonal_period: Union[int, float],
@@ -81,11 +81,11 @@ class FourierSeason(DatetimeProcess, Process):
     def dynamic_state_elements(self) -> Sequence[str]:
         raise NotImplementedError
 
-    def add_measure(self, measure: str) -> 'FourierSeason':
+    def add_measure(self, measure: str) -> '_FourierSeason':
         raise NotImplementedError
 
 
-class FourierSeasonDynamic(FourierSeason):
+class FourierSeason(_FourierSeason):
     def _setup(self, decay: bool) -> Tuple[List[str], List[Dict]]:
         state_elements, transitions = super()._setup(decay=decay)
 
@@ -129,12 +129,12 @@ class FourierSeasonDynamic(FourierSeason):
     def dynamic_state_elements(self) -> Sequence[str]:
         return self.state_elements[:-1]
 
-    def add_measure(self, measure: str) -> 'FourierSeasonDynamic':
+    def add_measure(self, measure: str) -> 'FourierSeason':
         self._set_measure(measure=measure, state_element='position', value=1.0)
         return self
 
 
-class FourierSeasonFixed(FourierSeason):
+class FourierSeasonFixed(_FourierSeason):
     def for_batch(self,
                   num_groups: int,
                   num_timesteps: int,
@@ -172,7 +172,7 @@ class FourierSeasonFixed(FourierSeason):
         return self
 
 
-class TBATS(FourierSeason):
+class TBATS(_FourierSeason):
     """
     This implementation is not complete: (1) does not allow decay, (2) does not offset seasons according to group start
     date.

@@ -212,12 +212,12 @@ class StateBeliefOverTime(NiceRepr):
 
     # Exporting to other Formats ---------:
     def to_dataframe(self,
-                     batch: Union[TimeSeriesDataset, dict],
+                     dataset: Union[TimeSeriesDataset, dict],
                      type: str = 'predictions',
                      group_colname: str = 'group',
-                     time_colname: str = 'date_time') -> 'DataFrame':
+                     time_colname: str = 'time') -> 'DataFrame':
         """
-        :param batch: Either a TimeSeriesDataset, or a dictionary with 'start_times' and 'group_names'.
+        :param dataset: Either a TimeSeriesDataset, or a dictionary with 'start_times' and 'group_names'.
         :param type: Either 'predictions' or 'components'.
         :param group_colname: Column-name for 'group'
         :param time_colname: Column-name for 'time'
@@ -227,52 +227,72 @@ class StateBeliefOverTime(NiceRepr):
         """
         from pandas import concat
 
-        if isinstance(batch, TimeSeriesDataset):
-            batch = {'start_times': batch.start_times, 'group_names': batch.group_names}
+        if isinstance(dataset, TimeSeriesDataset):
+            batch_info = {'start_times': dataset.start_times, 'group_names': dataset.group_names, 'named_tensors': {}}
+            for measure_group, tensor in zip(dataset.measures, dataset.tensors):
+                for i, measure in enumerate(measure_group):
+                    if measure in self.design.measures:
+                        batch_info['named_tensors'][measure] = tensor[..., [i]]
+            batch_info['times'] = dataset.times()
+            missing = set(self.design.measures) - set(dataset.all_measures)
+            if missing:
+                raise ValueError(
+                    f"Some measures in the design aren't in the dataset.\n"
+                    f"Design: {missing}\nDataset: {dataset.all_measures}"
+                )
+        elif isinstance(dataset, dict):
+            batch_info = dataset
+        else:
+            raise TypeError(
+                "Expected `batch` to be a TimeSeriesDataset, or a dictionary with 'start_times' and 'group_names'."
+            )
 
-        times = batch['start_times'][:, None] + np.arange(0, self.num_timesteps)
+        def _tensor_to_df(tens, measures):
+            times = batch_info.get('times', batch_info['start_times'][:, None] + np.arange(0, self.num_timesteps))
+            return TimeSeriesDataset.tensor_to_dataframe(
+                tensor=tens,
+                times=times,
+                group_names=batch_info['group_names'],
+                group_colname=group_colname,
+                time_colname=time_colname,
+                measures=measures
+            )
 
         out = []
         if type == 'predictions':
+
             stds = torch.diagonal(self.prediction_uncertainty, dim1=-1, dim2=-2).sqrt()
             for i, measure in enumerate(self.design.measures):
-                # mean:
-                df_pred = TimeSeriesDataset.tensor_to_dataframe(
-                    tensor=self.predictions[..., [i]],
-                    times=times,
-                    group_names=batch['group_names'],
-                    measures=['predicted_mean'],
-                    group_colname=group_colname,
-                    time_colname=time_colname
-                )
+                # predicted:
+                df_pred = _tensor_to_df(self.predictions[..., [i]], measures=['predicted_mean'])
+                df_std = _tensor_to_df(stds[..., [i]], measures=['predicted_std'])
+                df = df_pred.merge(df_std, on=[group_colname, time_colname])
 
-                # std:
-                df_std = TimeSeriesDataset.tensor_to_dataframe(
-                    tensor=stds[..., [i]],
-                    times=times,
-                    group_names=batch['group_names'],
-                    measures=['predicted_std'],
-                    group_colname=group_colname,
-                    time_colname=time_colname
-                )
+                # actual:
+                orig_tensor = batch_info.get('named_tensors', {}).get(measure, None)
+                if orig_tensor is not None:
+                    df_actual = _tensor_to_df(orig_tensor, measures=['actual'])
+                    df = df.merge(df_actual, on=[group_colname, time_colname], how='left')
 
-                out.append(df_pred.merge(df_std, on=[group_colname, time_colname]))
-                out[-1]['measure'] = measure
+                out.append(df.assign(measure=measure))
+
         elif type == 'components':
-
-            def _tensor_to_df(tens, measures):
-                return TimeSeriesDataset.tensor_to_dataframe(
-                    tensor=tens,
-                    times=times,
-                    group_names=batch['group_names'],
-                    group_colname=group_colname,
-                    time_colname=time_colname,
-                    measures=measures
-                )
-
+            # components:
             for (measure, process, state_element), (m, std) in self.components().items():
                 df = _tensor_to_df(torch.stack([m, std], 2), measures=['value', 'std'])
                 df['process'], df['state_element'], df['measure'] = process, state_element, measure
+                out.append(df)
+
+            # residuals:
+            for measure, orig_tensor in batch_info.get('named_tensors', {}).items():
+                if orig_tensor.shape[1] < self.predictions.shape[1]:
+                    orig_aligned = self.predictions.data.clone()
+                    orig_aligned[:] = float('nan')
+                    orig_aligned[:, 0:orig_tensor.shape[1], :] = orig_tensor
+                else:
+                    orig_aligned = orig_tensor[:, 0:self.predictions.shape[1], :]
+                df = _tensor_to_df(self.predictions - orig_aligned, ['value'])
+                df['process'], df['state_element'], df['measure'] = 'residuals', 'residuals', measure
                 out.append(df)
 
         else:
@@ -298,6 +318,95 @@ class StateBeliefOverTime(NiceRepr):
                 if ~torch.isclose(means[:, :, s].abs().max(), torch.zeros(1)):
                     out[(measure, process_name, state_element)] = (means[:, :, s], stds[:, :, s])
         return out
+
+    @staticmethod
+    def plot(df: 'DataFrame',
+             group_colname: str = None,
+             time_colname: str = None,
+             multi: float = 1.96,
+             max_num_groups: int = 1,
+             split_dt: Optional[np.datetime64] = None,
+             **kwargs) -> 'DataFrame':
+        """
+        :param df: The output of `.to_dataframe()`.
+        :param group_colname: The name of the group-column.
+        :param time_colname: The name of the time-column.
+        :param multi: Multiplier to convert std-devs to CIs, default 1.96.
+        :param max_num_groups: Max. number of groups to plot; if the number of groups in the dataframe is greater than
+        this, a random subset will be taken.
+        :param split_dt: If supplied, will draw a vertical line at this date (useful for showing pre/post validation).
+        :param kwargs: Further keyword arguments to pass to `plotnine.theme` (e.g. `figure_size=(x,y)`)
+        :return: A plot of the predicted and actual values.
+        """
+
+        from plotnine import (
+            ggplot, aes, geom_line, geom_ribbon, facet_grid, facet_wrap, theme_bw, theme, ylab, geom_vline
+        )
+
+        is_components = ('process' in df.columns and 'state_element' in df.columns)
+
+        if group_colname is None:
+            if 'group' in df.columns:
+                group_colname = 'group'
+            else:
+                raise TypeError("Please specify group_colname")
+        if time_colname is None:
+            if 'time' in df.columns:
+                time_colname = 'time'
+            else:
+                raise TypeError("Please specify time_colname")
+        if is_components:
+            value_colname = 'value'
+            std_colname = 'std'
+        else:
+            value_colname = 'predicted_mean'
+            std_colname = 'predicted_std'
+
+        df = df.copy()
+        if df[group_colname].nunique() > max_num_groups:
+            subset_groups = df[group_colname].drop_duplicates().sample(max_num_groups).tolist()
+            if len(subset_groups) < df[group_colname].nunique():
+                print("Subsetting to groups: {}".format(subset_groups))
+            df = df.loc[df[group_colname].isin(subset_groups), :]
+        num_groups = df[group_colname].nunique()
+
+        df['lower'] = df[value_colname] - multi * df[std_colname]
+        df['upper'] = df[value_colname] + multi * df[std_colname]
+
+        aes_kwargs = {'x': time_colname}
+        if is_components:
+            aes_kwargs['group'] = 'state_element'
+
+        plot = (
+                ggplot(df, aes(**aes_kwargs)) +
+                geom_line(aes(y=value_colname), color='#4C6FE7', size=1.5, alpha=.75) +
+                geom_ribbon(aes(ymin='lower', ymax='upper'), color=None, alpha=.25) +
+                ylab("")
+        )
+
+        if is_components:
+            if num_groups > 1:
+                raise ValueError("Cannot plot components for > 1 group.")
+            plot = plot + facet_grid(f"process ~ measure", scales='free_y', labeller='label_both')
+
+            if 'figure_size' not in kwargs:
+                kwargs['figure_size'] = (12, df['process'].nunique() * 2.5)
+
+        else:
+            if 'actual' in df.columns:
+                plot = plot + geom_line(aes(y='actual'))
+            if num_groups > 1:
+                plot = plot + facet_grid(f"{group_colname} ~ measure", scales='free_y', labeller='label_both')
+            else:
+                plot = plot + facet_wrap("~measure", scales='free_y', labeller='label_both')
+
+            if 'figure_size' not in kwargs:
+                kwargs['figure_size'] = (12, 5)
+
+        if split_dt:
+            plot = plot + geom_vline(xintercept=np.datetime64(split_dt), linetype='dashed')
+
+        return plot + theme_bw() + theme(**kwargs)
 
     # Private utils ---------:
     def _restore_sb(self, indices: Iterable[Tuple[int, int]]) -> StateBelief:
