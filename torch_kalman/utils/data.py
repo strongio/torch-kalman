@@ -1,4 +1,5 @@
 import itertools
+
 from typing import Sequence, Any, Union, Optional, Tuple
 from warnings import warn
 
@@ -65,21 +66,25 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         :param train_frac: The proportion of the data to keep for training. This is calculated on a per-group basis, by
         taking the last observation for each group (i.e., the last observation that a non-nan value on any measure). If
         neither `train_frac` nor `dt` are passed, `train_frac=.75` is used.
-        :param dt: A datetime to use in dividing train/validation.
+        :param dt: A datetime to use in dividing train/validation (first datetime for validation).
         :return:
         """
 
         split_times = self._get_split_times(train_frac, dt)
 
+        # val:
+        val_dataset = self.with_new_start_times(split_times)
+
+        # train:
         train_tensors = []
         for i, tens in enumerate(self.tensors):
             train = tens.data.clone()
-            train[np.where(self.times(i) > split_times[:, None])] = float('nan')
+            train[np.where(self.times(i) >= split_times[:, None])] = float('nan')
             is_all_nan = torch.isnan(train).sum((0, 2))
             train = train[:, :true1d_idx(is_all_nan).min(), :]
             train_tensors.append(train)
         train_dataset = self.with_new_tensors(*train_tensors)
-        val_dataset = self.with_new_start_times(split_times)  # TODO: make >= vs. > consistent
+
         return train_dataset, val_dataset
 
     def train_val_mask(self,
@@ -89,7 +94,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         :param train_frac: The proportion of the data to keep for training. This is calculated on a per-group basis, by
         taking the last observation for each group (i.e., the last observation that a non-nan value on any measure). If
         neither `train_frac` nor `dt` are passed, `train_frac=.75` is used.
-        :param dt: A datetime to use in dividing train/validation.
+        :param dt: A datetime to use in dividing train/validation (first datetime for validation).
         :return: XXX.
         """
 
@@ -99,8 +104,8 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         val_tensors = [t.data.clone() for t in self.tensors]
 
         # only change first tensor:
-        train_tensors[0][np.where(self.times(0) > split_times[:, None])] = float('nan')
-        val_tensors[0][np.where(self.times(0) <= split_times[:, None])] = float('nan')
+        train_tensors[0][np.where(self.times(0) >= split_times[:, None])] = float('nan')
+        val_tensors[0][np.where(self.times(0) < split_times[:, None])] = float('nan')
         return self.with_new_tensors(*train_tensors), self.with_new_tensors(*val_tensors)
 
     def _get_split_times(self, train_frac: float = None, dt: np.datetime64 = None):
@@ -112,6 +117,8 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             split_idx = np.array([int(idx * train_frac) for idx in self._last_measured_idx()], dtype='int')
             split_times = np.take(self.times(0), split_idx)
         else:
+            if train_frac is not None:
+                raise TypeError("Can pass only one of `train_frac`, `dt`.")
             if not isinstance(dt, np.datetime64):
                 dt = np.datetime64(dt, self.dt_unit)
             split_times = np.full(shape=len(self.group_names), fill_value=dt)
@@ -133,7 +140,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
                     raise ValueError(f"{new_time} is later than all the times for group {self.group_names[g]}")
                 elif (old_times > new_time).all():
                     raise ValueError(f"{new_time} is earlier than all the times for group {self.group_names[g]}")
-                new_tens.append(tens[[g], old_times >= new_time, :])
+                new_tens.append(tens[g, true1d_idx(old_times >= new_time), :].unsqueeze(0))
             new_tens = ragged_cat(new_tens, ragged_dim=1, cat_dim=0)
             new_tensors.append(new_tens)
         return type(self)(
