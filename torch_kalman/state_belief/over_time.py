@@ -234,6 +234,12 @@ class StateBeliefOverTime(NiceRepr):
                     if measure in self.design.measures:
                         batch_info['named_tensors'][measure] = tensor[..., [i]]
             batch_info['times'] = dataset.times()
+            missing = set(self.design.measures) - set(dataset.all_measures)
+            if missing:
+                raise ValueError(
+                    f"Some measures in the design aren't in the dataset.\n"
+                    f"Design: {missing}\nDataset: {dataset.all_measures}"
+                )
         elif isinstance(dataset, dict):
             batch_info = dataset
         else:
