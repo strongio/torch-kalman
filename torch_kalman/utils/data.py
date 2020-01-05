@@ -74,7 +74,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         train_tensors = []
         for i, tens in enumerate(self.tensors):
             train = tens.data.clone()
-            train[self.times(i) > split_times[:, None]] = float('nan')
+            train[np.where(self.times(i) > split_times[:, None])] = float('nan')
             is_all_nan = torch.isnan(train).sum((0, 2))
             train = train[:, :true1d_idx(is_all_nan).min(), :]
             train_tensors.append(train)
@@ -99,8 +99,8 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         val_tensors = [t.data.clone() for t in self.tensors]
 
         # only change first tensor:
-        train_tensors[0][self.times(0) > split_times[:, None]] = float('nan')
-        val_tensors[0][self.times(0) <= split_times[:, None]] = float('nan')
+        train_tensors[0][np.where(self.times(0) > split_times[:, None])] = float('nan')
+        val_tensors[0][np.where(self.times(0) <= split_times[:, None])] = float('nan')
         return self.with_new_tensors(*train_tensors), self.with_new_tensors(*val_tensors)
 
     def _get_split_times(self, train_frac: float = None, dt: np.datetime64 = None):
@@ -370,6 +370,13 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             offset *= 7
         return self.start_times[:, None] + offset
 
+    def datetimes(self) -> np.ndarray:
+        return self.times()
+
+    @property
+    def start_datetimes(self) -> np.ndarray:
+        return self.start_times
+
     def last_measured_times(self) -> np.ndarray:
         """
         :return: The datetimes (or integers if dt_unit is None) for the last measurement in the first tensor, where a
@@ -378,9 +385,6 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         times = self.times(which=0)
         last_measured_idx = self._last_measured_idx()
         return np.array([t[idx] for t, idx in zip(times, last_measured_idx)], dtype=f'datetime64[{self.dt_unit}]')
-
-    def datetimes(self) -> np.ndarray:
-        return self.times()
 
     def _validate_start_times(self, start_times: Union[np.ndarray, Sequence], dt_unit: Optional[str]) -> np.ndarray:
         if not isinstance(start_times, np.ndarray):
