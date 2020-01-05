@@ -44,7 +44,7 @@ class TestDataUtils(unittest.TestCase):
         tens[2, 8, :] = float('nan')
 
         d = TimeSeriesDataset(tens, group_names=range(3), start_times=[0] * 3, measures=[['x', 'y']], dt_unit=None)
-        last_measured = d._last_measured_idx()[0]
+        last_measured = d._last_measured_idx()
 
         self.assertEqual(last_measured[0], 4)
         self.assertEqual(last_measured[1], 7)
