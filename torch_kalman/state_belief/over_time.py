@@ -325,6 +325,7 @@ class StateBeliefOverTime(NiceRepr):
              time_colname: str = None,
              multi: float = 1.96,
              max_num_groups: int = 1,
+             split_dt: Optional[np.datetime64] = None,
              **kwargs) -> 'DataFrame':
         """
         :param df: The output of `.to_dataframe()`.
@@ -333,11 +334,14 @@ class StateBeliefOverTime(NiceRepr):
         :param multi: Multiplier to convert std-devs to CIs, default 1.96.
         :param max_num_groups: Max. number of groups to plot; if the number of groups in the dataframe is greater than
         this, a random subset will be taken.
+        :param split_dt: If supplied, will draw a vertical line at this date (useful for showing pre/post validation).
         :param kwargs: Further keyword arguments to pass to `plotnine.theme` (e.g. `figure_size=(x,y)`)
         :return: A plot of the predicted and actual values.
         """
 
-        from plotnine import ggplot, aes, geom_line, geom_ribbon, facet_grid, facet_wrap, theme_bw, theme, ylab
+        from plotnine import (
+            ggplot, aes, geom_line, geom_ribbon, facet_grid, facet_wrap, theme_bw, theme, ylab, geom_vline
+        )
 
         is_components = ('process' in df.columns and 'state_element' in df.columns)
 
@@ -398,6 +402,9 @@ class StateBeliefOverTime(NiceRepr):
 
             if 'figure_size' not in kwargs:
                 kwargs['figure_size'] = (12, 5)
+
+        if split_dt:
+            plot = plot + geom_vline(xintercept=np.datetime64(split_dt), linetype='dashed')
 
         return plot + theme_bw() + theme(**kwargs)
 
