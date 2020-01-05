@@ -1,4 +1,5 @@
 from typing import Optional, Union, Sequence, Any
+from warnings import warn
 
 import torch
 from torch.nn import Module
@@ -40,33 +41,53 @@ class KalmanFilter(Module):
 
     def forward(self,
                 input: Any,
-                initial_prediction: Optional[StateBelief] = None,
-                forecast_horizon: int = 0,
+                forecast_horizon: Optional[int] = None,
+                out_timesteps: Optional[int] = None,
                 progress: Union[tqdm, bool] = False,
+                initial_prediction: Optional[StateBelief] = None,
                 **kwargs) -> StateBeliefOverTime:
         """
+        Generate 1-step-ahead predictions.
+
         :param input: The multivariate time-series to be fit by the kalman-filter. The exact structure depends on the
-          kalman-filter `family`; for most, it is a tensor where the first dimension represents the groups, the second
-          dimension represents the time-points, and the third dimension represents the measures.
-        :param initial_prediction: If a StateBelief, this is used as the prediction for time=0; if None then each
-          process generates initial values.
-        :param forecast_horizon: Number of timesteps past the end of the input to continue making predictions
+        kalman-filter `family`; for most, it is a tensor where the first dimension represents the groups, the second
+        dimension represents the time-points, and the third dimension represents the measures.
+        :param forecast_horizon: Number of timesteps past the end of the input to continue making predictions. Defaults
+        to 0. Ignored if `out_timesteps` is specified.
+        :param out_timesteps: The number of timesteps to generate predictions for. Sometimes more convenient than
+        `forecast_horizon` if predictors are being used, since you can pass `out_timesteps=predictors.shape[1]`
+        rather than having to compare the dimensions of the input tensor and the predictor tensor.
         :param progress: Should progress-bar be generated?
+        :param initial_prediction: Usually left `None` so that initial predictions are made automatically; in some
+        cases case pass a StateBelief generated from a previous prediciton.
         :param kwargs: Other kwargs that will be passed to the kf's `design.for_batch()` method.
         :return: A StateBeliefOverTime consisting of one-step-ahead predictions.
         """
 
-        num_groups, num_timesteps, num_measures, *_ = self.family.get_input_dim(input)
+        num_groups, input_num_timesteps, num_measures, *_ = self.family.get_input_dim(input)
         if num_measures != len(self.design.measures):
             raise ValueError(
                 f"This KalmanFilter has {len(self.design.measures)} measures; but the input shape is "
-                f"{(num_groups, num_timesteps, num_measures)} (3rd dim should == measure-size)."
+                f"{(num_groups, input_num_timesteps, num_measures)} (3rd dim should == measure-size)."
             )
 
-        assert forecast_horizon >= 0
-        num_timesteps += forecast_horizon
+        # times
+        if out_timesteps is None:
+            if forecast_horizon is None:
+                out_timesteps = input_num_timesteps
+            else:
+                assert forecast_horizon >= 0
+                out_timesteps = input_num_timesteps + forecast_horizon
+        else:
+            if forecast_horizon is not None:
+                warn("`out_timesteps` was specified so `forecast_horizon` will be ignored.")
 
-        design_for_batch = self.design.for_batch(num_groups=num_groups, num_timesteps=num_timesteps, **kwargs)
+        progress = progress or identity
+        if progress is True:
+            progress = tqdm
+        times = progress(range(out_timesteps))
+
+        design_for_batch = self.design.for_batch(num_groups=num_groups, num_timesteps=out_timesteps, **kwargs)
 
         # initial state of the system:
         if initial_prediction is None:
@@ -74,12 +95,7 @@ class KalmanFilter(Module):
         else:
             state_prediction = initial_prediction.copy()
 
-        progress = progress or identity
-        if progress is True:
-            progress = tqdm
-        times = progress(range(num_timesteps))
-
-        # generate one-step-ahead predictions:
+        # generate predictions:
         state_predictions = []
         for t in times:
             if t > 0:
