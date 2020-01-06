@@ -30,7 +30,7 @@ from sklearn.preprocessing import StandardScaler
 
 import torch
 from torch_kalman.kalman_filter import KalmanFilter
-from torch_kalman.process import LocalLevel, LocalTrend, Season, FourierSeasonDynamic, FourierSeasonFixed, NN
+from torch_kalman.process import LocalLevel, LocalTrend, Season, FourierSeason, FourierSeasonFixed, NN
 from torch_kalman.utils.data import TimeSeriesDataset, TimeSeriesDataLoader
 
 from plotnine import *
@@ -45,16 +45,16 @@ from statsmodels.tsa.seasonal import seasonal_decompose, STL
 # For this example we will focus on 1 site (Tiantan). We will predict the amount of carbon monoxide pollutant present in the air (ug/m^3) at the end of each work day (5p.m. local time)
 
 # Read in data
-response = requests.get('http://archive.ics.uci.edu/ml/machine-learning-databases/00501/PRSA2017_Data_20130301-20170228.zip')
-zip_file = ZipFile(BytesIO(response.content))
-files = zip_file.namelist()
-
-# +
-df = pd.read_csv(zip_file.open(files[10]))
+try:
+    df = pd.read_csv("./PRSA2017_Data_20130301-20170228.csv")
+except FileNotFoundError:
+    response = requests.get('http://archive.ics.uci.edu/ml/machine-learning-databases/00501/PRSA2017_Data_20130301-20170228.zip')
+    zip_file = ZipFile(BytesIO(response.content))
+    files = zip_file.namelist()
+    df = pd.read_csv(zip_file.open(files[10]))
 
 # For now we're only interested in CO levels right at the end of the work day:
 df = df[df.hour == 17]
-# -
 
 # #### Understanding the data
 
@@ -85,9 +85,9 @@ for col in ['CO', 'TEMP', 'PRES', 'DEWP', 'RAIN', 'WSPM']:
 
 # Training data: pre- March 2016
 # Testing data: March 2016 - March 2017
-train_test_cutoff_date = datetime.date(2016,3,1)
-train_df = df[df['time'] < train_test_cutoff_date]
-test_df = df[df['time'] >= train_test_cutoff_date]
+train_test_cutoff_date = pd.Timestamp("2016-3-1")
+train_df = df[df['time'] < train_test_cutoff_date].reset_index(drop=True)
+test_df = df[df['time'] >= train_test_cutoff_date].reset_index(drop=True)
 
 # Standardize data: Fit and transform training data
 train_scaler = StandardScaler()
@@ -154,18 +154,13 @@ pyplot.show()
 
 # Let's build our Kalman filter. First let's define some global variables that will help us deinfe when seasonalities start and at what time granularity the data is at:
 
-season_config = {
-    'season_start': pd.Timestamp('2014-01-01'),  # Seasonality start date 
-    'dt_unit': 'D'  # data is at daily level
-}
-
 # In roder to create our Kalman Filter, we need *measures* and *processes*. Measures are simply our outcome(s) of interest. Processes are models we use to understand our system- i.e. what makes us go from one state to another. In time series applications, we often already have an intuitive understanding of such processes. There could be a trend, different seasonalities, exogneous factors, etc. `torch-kalman` allows you to specify these in an easy and clear way. For instance we can define a `LocalLevel` (random walk) process as well as `FourierSeasonFixed` a seasonality process using a fourier series:
 
 kf = KalmanFilter(
     measures=['CO'],
     processes=[
         LocalLevel(id='local_level').add_measure('CO'),
-        FourierSeasonFixed(id='day_in_year', seasonal_period=365, K=2, **season_config).add_measure('CO')
+        FourierSeasonFixed(id='day_in_year', seasonal_period=365, K=2, dt_unit='D').add_measure('CO')
     ]
 )
 
@@ -184,13 +179,13 @@ train_batch = TimeSeriesDataset.from_dataframe(dataframe=train_df,
                                                group_colname = 'station',
                                                time_colname = 'time',
                                                measure_colnames = ['CO'],
-                                               dt_unit=season_config['dt_unit'])
+                                               dt_unit='D')
 
 test_batch = TimeSeriesDataset.from_dataframe(dataframe=test_df, 
                                                group_colname = 'station',
                                                time_colname = 'time',
                                                measure_colnames = ['CO'],
-                                               dt_unit=season_config['dt_unit'])
+                                               dt_unit='D')
 
 
 # -
@@ -233,28 +228,31 @@ pyplot.show()
 # Let's view our performance. We'll pass our training data, and forecast out the length of our validation data. We then merge our predictions with all data and plot.
 
 # +
-# get validation forecasts
-with torch.no_grad():
-
-    trainy = train_batch.tensors[0]
-
-    preds = kf(trainy, 
-              start_datetimes = train_batch.start_datetimes,
-              forecast_horizon = test_df.shape[0])
-
-# join validation predictions with all data
 all_df = pd.concat([train_df,test_df])
 all_batch = TimeSeriesDataset.from_dataframe(dataframe=all_df, 
                                                group_colname = 'station',
                                                time_colname = 'time',
                                                measure_colnames = ['CO'],
-                                               dt_unit=season_config['dt_unit'])
+                                               dt_unit='D')
+
+# get validation forecasts
+with torch.no_grad():
+
+    trainy = train_batch.tensors[0]
+    ally = all_batch.tensors[0]
+
+    preds = kf(trainy, 
+               start_datetimes = train_batch.start_datetimes,
+               out_timesteps = ally.shape[1])
+
+# join validation predictions with all data
+
 
 
 pred_df = preds.to_dataframe(all_batch) \
-.merge(all_df[['time','CO']], how='right', left_on='date_time', right_on='time') \
 .assign(predicted_min = lambda x: x['predicted_mean'] - x['predicted_std'],
-        predicted_max = lambda x: x['predicted_mean'] + x['predicted_std'])
+        predicted_max = lambda x: x['predicted_mean'] + x['predicted_std']).\
+rename(columns={'actual':'CO'})
 # -
 
 # Our average predictions appear to follow the yearly trend, and our uncertainty increase the farther out we make forecasts:
@@ -262,7 +260,7 @@ pred_df = preds.to_dataframe(all_batch) \
 # plot
 print(
     ggplot(pred_df,
-           aes(x='date_time')) +
+           aes(x='time')) +
     geom_line(aes(y='CO'), color='blue', size=1) +
     geom_line(aes(y='predicted_mean'), color='red', size=1, linetype = 'dashed') +
     geom_ribbon(aes(ymin='predicted_min', ymax='predicted_max'), alpha=.20) +
@@ -274,7 +272,7 @@ print(
 
 # Accuracy statistics:
 
-test_pred_df = pred_df[pred_df['date_time'] >= pd.Timestamp(train_test_cutoff_date)]
+test_pred_df = pred_df[pred_df['time'] >= pd.Timestamp(train_test_cutoff_date)]
 rmse = np.sqrt(((test_pred_df['CO'] - test_pred_df['predicted_mean']) ** 2).mean())
 mae = np.mean(np.abs((test_pred_df['CO'] - test_pred_df['predicted_mean'])))
 print(f"VALIDATION RMSE {rmse}, VALIDATION MAE {mae}")
@@ -301,7 +299,7 @@ kf_exo = KalmanFilter(
     measures=['CO'],
     processes=[
         LocalLevel(id='local_level').add_measure('CO'),
-        FourierSeasonFixed(id='day_in_year', seasonal_period=365, K=2, **season_config).add_measure('CO'),
+        FourierSeasonFixed(id='day_in_year', seasonal_period=365, K=2, dt_unit='D').add_measure('CO'),
         NN(id='predictors',
            input_dim=input_dim,
            state_dim=output_dim,
@@ -319,17 +317,16 @@ kf_exo.opt = torch.optim.Adam([{'params': kf_exo.parameters(), 'lr': 0.1},
 train_batch = TimeSeriesDataset.from_dataframe(dataframe=train_df, 
                                                group_colname = 'station',
                                                time_colname = 'time',
-                                               measure_colnames = ['CO'] + predictors,
-                                               dt_unit=season_config['dt_unit'])
-train_batch = train_batch.split_measures(['CO'], predictors)
+                                               y_colnames=['CO'],
+                                               X_colnames=predictors,
+                                               dt_unit='D')
 
 test_batch = TimeSeriesDataset.from_dataframe(dataframe=test_df, 
                                                group_colname = 'station',
                                                time_colname = 'time',
-                                               measure_colnames = ['CO'] + predictors,
-                                               dt_unit=season_config['dt_unit'])
-
-test_batch = test_batch.split_measures(['CO'], predictors)
+                                               y_colnames=['CO'],
+                                               X_colnames=predictors,
+                                               dt_unit='D')
 
 
 def closure():
@@ -373,25 +370,26 @@ all_df = pd.concat([train_df,test_df])
 all_batch = TimeSeriesDataset.from_dataframe(dataframe=all_df, 
                                                group_colname = 'station',
                                                time_colname = 'time',
-                                               measure_colnames = ['CO'] + predictors,
-                                               dt_unit=season_config['dt_unit'])
-all_batch = all_batch.split_measures(['CO'], predictors)
+                                               y_colnames=['CO'],
+                                               X_colnames=predictors,
+                                               dt_unit='D')
 
 with torch.no_grad():
-    trainy, trainX = train_batch.tensors
-    ally, allX = all_batch.tensors
+    trainy, _ = train_batch.tensors
+    _, allX = all_batch.tensors
     preds = kf_exo(trainy, 
                    start_datetimes = train_batch.start_datetimes,
                    predictors = allX,
-                   forecast_horizon = test_df.shape[0])
+                   out_timesteps = allX.shape[1])
 
 pred_df = preds.to_dataframe(all_batch) \
-.merge(all_df[['time','CO']], how='right', left_on='date_time', right_on='time') \
 .assign(predicted_min = lambda x: x['predicted_mean'] - x['predicted_std'],
-        predicted_max = lambda x: x['predicted_mean'] + x['predicted_std'])
+        predicted_max = lambda x: x['predicted_mean'] + x['predicted_std']).\
+rename(columns={'actual':'CO'})
+
 print(
     ggplot(pred_df,
-           aes(x='date_time')) +
+           aes(x='time')) +
     geom_line(aes(y='CO'), color='blue', size=1) +
     geom_line(aes(y='predicted_mean'), color='red', size=1, linetype = 'dashed') +
     geom_ribbon(aes(ymin='predicted_min', ymax='predicted_max'), alpha=.20) +
@@ -404,13 +402,14 @@ print(
 
 # It did!
 
-test_pred_df = pred_df[pred_df['date_time'] >= pd.Timestamp(train_test_cutoff_date)]
+test_pred_df = pred_df[pred_df['time'] >= pd.Timestamp(train_test_cutoff_date)]
 rmse = np.sqrt(((test_pred_df['CO'] - test_pred_df['predicted_mean']) ** 2).mean())
 mae = np.mean(np.abs((test_pred_df['CO'] - test_pred_df['predicted_mean'])))
 print(f"VALIDATION RMSE {rmse}, VALIDATION MAE {mae}")
 
 # #### possible improvements
 #
+# - log transform
 # - train in cross validated way
 # - use more predictors / create fourier terms of predictors
 
