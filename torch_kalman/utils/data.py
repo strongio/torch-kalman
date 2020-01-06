@@ -62,15 +62,27 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
                         train_frac: float = None,
                         dt: np.datetime64 = None) -> Tuple['TimeSeriesDataset', 'TimeSeriesDataset']:
         """
-
         :param train_frac: The proportion of the data to keep for training. This is calculated on a per-group basis, by
         taking the last observation for each group (i.e., the last observation that a non-nan value on any measure). If
         neither `train_frac` nor `dt` are passed, `train_frac=.75` is used.
         :param dt: A datetime to use in dividing train/validation (first datetime for validation).
-        :return:
+        :return: Two TimeSeriesDatasets, one with data before the split, the other with >= the split.
         """
 
-        split_times = self._get_split_times(train_frac, dt)
+        # get split times:
+        if dt is None:
+            if train_frac is None:
+                train_frac = .75
+            assert 0 < train_frac < 1
+            # for each group, find the last non-nan, take `frac` of that to find the train/val split point:
+            split_idx = np.array([int(idx * train_frac) for idx in self._last_measured_idx()], dtype='int')
+            split_times = np.take(self.times(0), split_idx)
+        else:
+            if train_frac is not None:
+                raise TypeError("Can pass only one of `train_frac`, `dt`.")
+            if not isinstance(dt, np.datetime64):
+                dt = np.datetime64(dt, self.dt_unit)
+            split_times = np.full(shape=len(self.group_names), fill_value=dt)
 
         # val:
         val_dataset = self.with_new_start_times(split_times)
@@ -86,43 +98,6 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         train_dataset = self.with_new_tensors(*train_tensors)
 
         return train_dataset, val_dataset
-
-    def train_val_mask(self,
-                       train_frac: float = None,
-                       dt: np.datetime64 = None) -> Tuple['TimeSeriesDataset', 'TimeSeriesDataset']:
-        """
-        :param train_frac: The proportion of the data to keep for training. This is calculated on a per-group basis, by
-        taking the last observation for each group (i.e., the last observation that a non-nan value on any measure). If
-        neither `train_frac` nor `dt` are passed, `train_frac=.75` is used.
-        :param dt: A datetime to use in dividing train/validation (first datetime for validation).
-        :return: XXX.
-        """
-
-        split_times = self._get_split_times(train_frac, dt)
-
-        train_tensors = [t.data.clone() for t in self.tensors]
-        val_tensors = [t.data.clone() for t in self.tensors]
-
-        # only change first tensor:
-        train_tensors[0][np.where(self.times(0) >= split_times[:, None])] = float('nan')
-        val_tensors[0][np.where(self.times(0) < split_times[:, None])] = float('nan')
-        return self.with_new_tensors(*train_tensors), self.with_new_tensors(*val_tensors)
-
-    def _get_split_times(self, train_frac: float = None, dt: np.datetime64 = None):
-        if dt is None:
-            if train_frac is None:
-                train_frac = .75
-            assert 0 < train_frac < 1
-            # for each group, find the last non-nan, take `frac` of that to find the train/val split point:
-            split_idx = np.array([int(idx * train_frac) for idx in self._last_measured_idx()], dtype='int')
-            split_times = np.take(self.times(0), split_idx)
-        else:
-            if train_frac is not None:
-                raise TypeError("Can pass only one of `train_frac`, `dt`.")
-            if not isinstance(dt, np.datetime64):
-                dt = np.datetime64(dt, self.dt_unit)
-            split_times = np.full(shape=len(self.group_names), fill_value=dt)
-        return split_times
 
     def with_new_start_times(self, start_times: Union[np.ndarray, Sequence]) -> 'TimeSeriesDataset':
         """
