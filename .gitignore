@@ -102,4 +102,3 @@ ENV/
 .idea/*
 .coveragerc
 *.ipynb
-examples/*
