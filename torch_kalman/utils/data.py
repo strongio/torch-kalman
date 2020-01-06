@@ -1,3 +1,4 @@
+import datetime
 import itertools
 
 from typing import Sequence, Any, Union, Optional, Tuple
@@ -92,8 +93,9 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         for i, tens in enumerate(self.tensors):
             train = tens.data.clone()
             train[np.where(self.times(i) >= split_times[:, None])] = float('nan')
-            is_all_nan = torch.isnan(train).sum((0, 2))
-            train = train[:, :true1d_idx(is_all_nan).min(), :]
+            not_all_nan = (~torch.isnan(train)).sum((0, 2))
+            last_good_idx = true1d_idx(not_all_nan).max()
+            train = train[:, :(last_good_idx + 1), :]
             train_tensors.append(train)
         train_dataset = self.with_new_tensors(*train_tensors)
 
@@ -369,11 +371,16 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         return np.array([t[idx] for t, idx in zip(times, last_measured_idx)], dtype=f'datetime64[{self.dt_unit}]')
 
     def _validate_start_times(self, start_times: Union[np.ndarray, Sequence], dt_unit: Optional[str]) -> np.ndarray:
-        if not isinstance(start_times, np.ndarray):
+        if not isinstance(start_times, np.ndarray) or not isinstance(start_times[0], np.datetime64):
             if isinstance(start_times[0], np.datetime64):
                 start_times = np.array(start_times, dtype='datetime64')
+            elif isinstance(start_times[0], (datetime.date, datetime.datetime)):
+                start_times = np.array(start_times, dtype='datetime64')
             else:
-                start_times_int = np.array(start_times, dtype=np.int64)
+                try:
+                    start_times_int = np.array(start_times, dtype=np.int64)
+                except TypeError as e:
+                    raise TypeError("Expected start_times to be sequence of datetimes or ints.") from e
                 if not np.isclose(start_times_int - start_times, 0.).all():
                     raise ValueError("`start_times` should be a datetime64 array or an array of whole numbers")
                 start_times = start_times_int
