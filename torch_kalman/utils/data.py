@@ -1,3 +1,4 @@
+import datetime
 import itertools
 
 from typing import Sequence, Any, Union, Optional, Tuple
@@ -62,53 +63,14 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
                         train_frac: float = None,
                         dt: np.datetime64 = None) -> Tuple['TimeSeriesDataset', 'TimeSeriesDataset']:
         """
-
         :param train_frac: The proportion of the data to keep for training. This is calculated on a per-group basis, by
         taking the last observation for each group (i.e., the last observation that a non-nan value on any measure). If
         neither `train_frac` nor `dt` are passed, `train_frac=.75` is used.
         :param dt: A datetime to use in dividing train/validation (first datetime for validation).
-        :return:
+        :return: Two TimeSeriesDatasets, one with data before the split, the other with >= the split.
         """
 
-        split_times = self._get_split_times(train_frac, dt)
-
-        # val:
-        val_dataset = self.with_new_start_times(split_times)
-
-        # train:
-        train_tensors = []
-        for i, tens in enumerate(self.tensors):
-            train = tens.data.clone()
-            train[np.where(self.times(i) >= split_times[:, None])] = float('nan')
-            is_all_nan = torch.isnan(train).sum((0, 2))
-            train = train[:, :true1d_idx(is_all_nan).min(), :]
-            train_tensors.append(train)
-        train_dataset = self.with_new_tensors(*train_tensors)
-
-        return train_dataset, val_dataset
-
-    def train_val_mask(self,
-                       train_frac: float = None,
-                       dt: np.datetime64 = None) -> Tuple['TimeSeriesDataset', 'TimeSeriesDataset']:
-        """
-        :param train_frac: The proportion of the data to keep for training. This is calculated on a per-group basis, by
-        taking the last observation for each group (i.e., the last observation that a non-nan value on any measure). If
-        neither `train_frac` nor `dt` are passed, `train_frac=.75` is used.
-        :param dt: A datetime to use in dividing train/validation (first datetime for validation).
-        :return: XXX.
-        """
-
-        split_times = self._get_split_times(train_frac, dt)
-
-        train_tensors = [t.data.clone() for t in self.tensors]
-        val_tensors = [t.data.clone() for t in self.tensors]
-
-        # only change first tensor:
-        train_tensors[0][np.where(self.times(0) >= split_times[:, None])] = float('nan')
-        val_tensors[0][np.where(self.times(0) < split_times[:, None])] = float('nan')
-        return self.with_new_tensors(*train_tensors), self.with_new_tensors(*val_tensors)
-
-    def _get_split_times(self, train_frac: float = None, dt: np.datetime64 = None):
+        # get split times:
         if dt is None:
             if train_frac is None:
                 train_frac = .75
@@ -122,7 +84,22 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             if not isinstance(dt, np.datetime64):
                 dt = np.datetime64(dt, self.dt_unit)
             split_times = np.full(shape=len(self.group_names), fill_value=dt)
-        return split_times
+
+        # val:
+        val_dataset = self.with_new_start_times(split_times)
+
+        # train:
+        train_tensors = []
+        for i, tens in enumerate(self.tensors):
+            train = tens.data.clone()
+            train[np.where(self.times(i) >= split_times[:, None])] = float('nan')
+            not_all_nan = (~torch.isnan(train)).sum((0, 2))
+            last_good_idx = true1d_idx(not_all_nan).max()
+            train = train[:, :(last_good_idx + 1), :]
+            train_tensors.append(train)
+        train_dataset = self.with_new_tensors(*train_tensors)
+
+        return train_dataset, val_dataset
 
     def with_new_start_times(self, start_times: Union[np.ndarray, Sequence]) -> 'TimeSeriesDataset':
         """
@@ -394,11 +371,16 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         return np.array([t[idx] for t, idx in zip(times, last_measured_idx)], dtype=f'datetime64[{self.dt_unit}]')
 
     def _validate_start_times(self, start_times: Union[np.ndarray, Sequence], dt_unit: Optional[str]) -> np.ndarray:
-        if not isinstance(start_times, np.ndarray):
+        if not isinstance(start_times, np.ndarray) or not isinstance(start_times[0], np.datetime64):
             if isinstance(start_times[0], np.datetime64):
                 start_times = np.array(start_times, dtype='datetime64')
+            elif isinstance(start_times[0], (datetime.date, datetime.datetime)):
+                start_times = np.array(start_times, dtype='datetime64')
             else:
-                start_times_int = np.array(start_times, dtype=np.int64)
+                try:
+                    start_times_int = np.array(start_times, dtype=np.int64)
+                except TypeError as e:
+                    raise TypeError("Expected start_times to be sequence of datetimes or ints.") from e
                 if not np.isclose(start_times_int - start_times, 0.).all():
                     raise ValueError("`start_times` should be a datetime64 array or an array of whole numbers")
                 start_times = start_times_int
