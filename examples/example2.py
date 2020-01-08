@@ -5,12 +5,12 @@
 #     text_representation:
 #       extension: .py
 #       format_name: light
-#       format_version: '1.4'
-#       jupytext_version: 1.1.1
+#       format_version: '1.5'
+#       jupytext_version: 1.3.1
 #   kernelspec:
-#     display_name: Python 3
+#     display_name: Python [conda env:kf]
 #     language: python
-#     name: python3
+#     name: conda-env-kf-py
 # ---
 
 # ## Dependencies
@@ -26,6 +26,8 @@ from zipfile import ZipFile
 import math
 from numpy.random import normal
 import datetime
+from scipy.stats import boxcox
+from scipy.special import inv_boxcox
 from sklearn.preprocessing import StandardScaler
 
 import torch
@@ -58,15 +60,32 @@ df = df[df.hour == 17]
 
 # #### Understanding the data
 
-df.dtypes
+# It appears our target variable has an annual seasonality:
 
-df.describe()
+# +
+tempdf = df.copy()
+tempdf['time'] = pd.to_datetime(tempdf[['year','month','day']])
 
-df.isnull().sum()
+print(
+    ggplot(tempdf, aes(x='time', y='CO')) + \
+                geom_line() + \
+                ylab("CO") + xlab("Time") + \
+                theme_minimal() + theme(figure_size=(12, 6))
+)
+# -
 
-np.unique(df['station'], return_counts=True)
+# `CO` Variance appears to be seasonal as well:
 
-np.unique(df['wd'].astype(str), return_counts=True)
+var_df = tempdf.groupby(['year','month'])['CO'].var().reset_index().assign(day=1)
+var_df['time'] = pd.to_datetime(var_df[['year','month','day']])
+print(
+    ggplot(var_df, aes(x='time', y='CO')) + \
+                geom_line() + \
+                ylab("CO Variance") + xlab("Time") + \
+                theme_minimal() + theme(figure_size=(12, 6))
+)
+
+# We should transform it to make it [stationary](https://en.wikipedia.org/wiki/Stationary_process), and we'll use the BoxCox transformation to do so.
 
 # #### Data transformations
 
@@ -89,64 +108,66 @@ train_test_cutoff_date = pd.Timestamp("2016-3-1")
 train_df = df[df['time'] < train_test_cutoff_date].reset_index(drop=True)
 test_df = df[df['time'] >= train_test_cutoff_date].reset_index(drop=True)
 
+# transform outcome
+train_df['transformed_CO'], lam = boxcox(train_df['CO'])
+test_df['transformed_CO'] = boxcox(test_df['CO'], lam)
+
 # Standardize data: Fit and transform training data
 train_scaler = StandardScaler()
-train_df[['CO', 'TEMP', 'PRES', 'DEWP', 'RAIN', 'WSPM',
+train_df[['transformed_CO', 'TEMP', 'PRES', 'DEWP', 'RAIN', 'WSPM',
        'E', 'ENE', 'ESE', 'N', 'NE', 'NNE', 'NNW', 'NW', 'S', 'SE', 'SSE',
        'SSW', 'SW', 'W', 'WNW', 'WSW', 'E', 'ENE', 'ESE', 'N', 'NE', 'NNE',
        'NNW', 'NW', 'S', 'SE', 'SSE', 'SSW', 'SW', 'W', 'WNW', 'WSW']] = train_scaler. \
-fit_transform(train_df[['CO', 'TEMP', 'PRES', 'DEWP', 'RAIN', 'WSPM',
+fit_transform(train_df[['transformed_CO', 'TEMP', 'PRES', 'DEWP', 'RAIN', 'WSPM',
        'E', 'ENE', 'ESE', 'N', 'NE', 'NNE', 'NNW', 'NW', 'S', 'SE', 'SSE',
        'SSW', 'SW', 'W', 'WNW', 'WSW', 'E', 'ENE', 'ESE', 'N', 'NE', 'NNE',
        'NNW', 'NW', 'S', 'SE', 'SSE', 'SSW', 'SW', 'W', 'WNW', 'WSW']].to_numpy())
 
 # Standardize data: Transform testing data using train_scaler
-test_df[['CO', 'TEMP', 'PRES', 'DEWP', 'RAIN', 'WSPM',
+test_df[['transformed_CO', 'TEMP', 'PRES', 'DEWP', 'RAIN', 'WSPM',
        'E', 'ENE', 'ESE', 'N', 'NE', 'NNE', 'NNW', 'NW', 'S', 'SE', 'SSE',
        'SSW', 'SW', 'W', 'WNW', 'WSW', 'E', 'ENE', 'ESE', 'N', 'NE', 'NNE',
        'NNW', 'NW', 'S', 'SE', 'SSE', 'SSW', 'SW', 'W', 'WNW', 'WSW']] = train_scaler. \
-transform(test_df[['CO', 'TEMP', 'PRES', 'DEWP', 'RAIN', 'WSPM',
+transform(test_df[['transformed_CO', 'TEMP', 'PRES', 'DEWP', 'RAIN', 'WSPM',
        'E', 'ENE', 'ESE', 'N', 'NE', 'NNE', 'NNW', 'NW', 'S', 'SE', 'SSE',
        'SSW', 'SW', 'W', 'WNW', 'WSW', 'E', 'ENE', 'ESE', 'N', 'NE', 'NNE',
        'NNW', 'NW', 'S', 'SE', 'SSE', 'SSW', 'SW', 'W', 'WNW', 'WSW']].to_numpy())
 # -
 
-# It appears our target variable has an annual seasonality:
+# Here's what our training data looks like after these transformations:
 
 print(
-    ggplot(train_df, aes(x='time', y='CO')) + \
+    ggplot(train_df, aes(x='time', y='transformed_CO')) + \
                 geom_line() + \
-                ylab("Scaled CO") + xlab("Time") + \
+                ylab("Scaled & Transformed CO") + xlab("Time") + \
                 theme_minimal() + theme(figure_size=(12, 6))
 )
 
-# `CO` Variance appears to be seasonal as well:
-
-var_df = train_df.groupby(['year','month'])['CO'].var().reset_index().assign(day=1)
+var_df = train_df.groupby(['year','month'])['transformed_CO'].var().reset_index().assign(day=1)
 var_df['time'] = pd.to_datetime(var_df[['year','month','day']])
 print(
-    ggplot(var_df, aes(x='time', y='CO')) + \
+    ggplot(var_df, aes(x='time', y='transformed_CO')) + \
                 geom_line() + \
-                ylab("Scaled CO Variance") + xlab("Time") + \
+                ylab("Scaled & Transformed CO Variance") + xlab("Time") + \
                 theme_minimal() + theme(figure_size=(12, 6))
 )
 
 # The meteorological data (potential predictors) also appear to have an annual seasonality:
 
 # +
-tempdf = train_df[['time','CO','TEMP','PRES','RAIN']].melt(id_vars=['time'])
+tempdf = train_df[['time','TEMP','PRES','RAIN']].melt(id_vars=['time'])
 
 print(
     ggplot(tempdf, aes(x='time', y='value', color='variable')) + \
                 geom_line() + \
                 ylab("Amount") + xlab("Time") + \
-                theme_minimal() + ggtitle('Scaled CO & predictors') + theme(figure_size=(12, 6))
+                theme_minimal() + ggtitle('Scaled predictors') + theme(figure_size=(12, 6))
 )
 # -
 
 # #### Time series decomposition
 
-result = seasonal_decompose(df['CO'], model="additive", period=365)
+result = seasonal_decompose(train_df['transformed_CO'], model="additive", period=365)
 result.plot()
 pyplot.show()
 
@@ -157,10 +178,10 @@ pyplot.show()
 # In roder to create our Kalman Filter, we need *measures* and *processes*. Measures are simply our outcome(s) of interest. Processes are models we use to understand our system- i.e. what makes us go from one state to another. In time series applications, we often already have an intuitive understanding of such processes. There could be a trend, different seasonalities, exogneous factors, etc. `torch-kalman` allows you to specify these in an easy and clear way. For instance we can define a `LocalLevel` (random walk) process as well as `FourierSeasonFixed` a seasonality process using a fourier series:
 
 kf = KalmanFilter(
-    measures=['CO'],
+    measures=['transformed_CO'],
     processes=[
-        LocalLevel(id='local_level').add_measure('CO'),
-        FourierSeasonFixed(id='day_in_year', seasonal_period=365, K=2, dt_unit='D').add_measure('CO')
+        LocalLevel(id='local_level').add_measure('transformed_CO'),
+        FourierSeasonFixed(id='day_in_year', seasonal_period=365, K=2, dt_unit='D').add_measure('transformed_CO')
     ]
 )
 
@@ -178,13 +199,13 @@ kf.opt = torch.optim.Adam(kf.parameters(), lr=0.1)
 train_batch = TimeSeriesDataset.from_dataframe(dataframe=train_df, 
                                                group_colname = 'station',
                                                time_colname = 'time',
-                                               measure_colnames = ['CO'],
+                                               measure_colnames = ['transformed_CO'],
                                                dt_unit='D')
 
 test_batch = TimeSeriesDataset.from_dataframe(dataframe=test_df, 
                                                group_colname = 'station',
                                                time_colname = 'time',
-                                               measure_colnames = ['CO'],
+                                               measure_colnames = ['transformed_CO'],
                                                dt_unit='D')
 
 
@@ -232,7 +253,7 @@ all_df = pd.concat([train_df,test_df])
 all_batch = TimeSeriesDataset.from_dataframe(dataframe=all_df, 
                                                group_colname = 'station',
                                                time_colname = 'time',
-                                               measure_colnames = ['CO'],
+                                               measure_colnames = ['transformed_CO'],
                                                dt_unit='D')
 
 # get validation forecasts
@@ -244,37 +265,24 @@ with torch.no_grad():
     preds = kf(trainy, 
                start_datetimes = train_batch.start_datetimes,
                out_timesteps = ally.shape[1])
-
-# join validation predictions with all data
-
-
-
-pred_df = preds.to_dataframe(all_batch) \
-.assign(predicted_min = lambda x: x['predicted_mean'] - x['predicted_std'],
-        predicted_max = lambda x: x['predicted_mean'] + x['predicted_std']).\
-rename(columns={'actual':'CO'})
 # -
 
 # Our average predictions appear to follow the yearly trend, and our uncertainty increase the farther out we make forecasts:
 
 # plot
-print(
-    ggplot(pred_df,
-           aes(x='time')) +
-    geom_line(aes(y='CO'), color='blue', size=1) +
-    geom_line(aes(y='predicted_mean'), color='red', size=1, linetype = 'dashed') +
-    geom_ribbon(aes(ymin='predicted_min', ymax='predicted_max'), alpha=.20) +
-    theme_minimal() +
-    theme(figure_size=(12, 6)) +
-    geom_vline(xintercept=train_test_cutoff_date) +
-    scale_x_date(name="") + scale_y_continuous(name="Scaled CO")
-)
+preds.plot(df=preds.to_dataframe(all_batch), 
+           group_colname='group', 
+           time_colname='time', 
+           multi=1.96, 
+           max_num_groups=1, 
+           split_dt=train_test_cutoff_date)
 
 # Accuracy statistics:
 
+pred_df = preds.to_dataframe(all_batch)
 test_pred_df = pred_df[pred_df['time'] >= pd.Timestamp(train_test_cutoff_date)]
-rmse = np.sqrt(((test_pred_df['CO'] - test_pred_df['predicted_mean']) ** 2).mean())
-mae = np.mean(np.abs((test_pred_df['CO'] - test_pred_df['predicted_mean'])))
+rmse = np.sqrt(((test_pred_df['actual'] - test_pred_df['predicted_mean']) ** 2).mean())
+mae = np.mean(np.abs((test_pred_df['actual'] - test_pred_df['predicted_mean'])))
 print(f"VALIDATION RMSE {rmse}, VALIDATION MAE {mae}")
 
 # ## Train with exogenous predictors that are embedded in a single state value using NN
@@ -296,15 +304,15 @@ state_emb_model = torch.nn.Sequential(
 # We can specify these exogenous predictors as simply another process:
 
 kf_exo = KalmanFilter(
-    measures=['CO'],
+    measures=['transformed_CO'],
     processes=[
-        LocalLevel(id='local_level').add_measure('CO'),
-        FourierSeasonFixed(id='day_in_year', seasonal_period=365, K=2, dt_unit='D').add_measure('CO'),
+        LocalLevel(id='local_level').add_measure('transformed_CO'),
+        FourierSeasonFixed(id='day_in_year', seasonal_period=365, K=2, dt_unit='D').add_measure('transformed_CO'),
         NN(id='predictors',
            input_dim=input_dim,
            state_dim=output_dim,
            nn_module=state_emb_model,
-           add_module_params_to_process=False).add_measure('CO')
+           add_module_params_to_process=False).add_measure('transformed_CO')
     ]
 )
 
@@ -317,14 +325,14 @@ kf_exo.opt = torch.optim.Adam([{'params': kf_exo.parameters(), 'lr': 0.1},
 train_batch = TimeSeriesDataset.from_dataframe(dataframe=train_df, 
                                                group_colname = 'station',
                                                time_colname = 'time',
-                                               y_colnames=['CO'],
+                                               y_colnames=['transformed_CO'],
                                                X_colnames=predictors,
                                                dt_unit='D')
 
 test_batch = TimeSeriesDataset.from_dataframe(dataframe=test_df, 
                                                group_colname = 'station',
                                                time_colname = 'time',
-                                               y_colnames=['CO'],
+                                               y_colnames=['transformed_CO'],
                                                X_colnames=predictors,
                                                dt_unit='D')
 
@@ -370,7 +378,7 @@ all_df = pd.concat([train_df,test_df])
 all_batch = TimeSeriesDataset.from_dataframe(dataframe=all_df, 
                                                group_colname = 'station',
                                                time_colname = 'time',
-                                               y_colnames=['CO'],
+                                               y_colnames=['transformed_CO'],
                                                X_colnames=predictors,
                                                dt_unit='D')
 
@@ -382,38 +390,27 @@ with torch.no_grad():
                    predictors = allX,
                    out_timesteps = allX.shape[1])
 
-pred_df = preds.to_dataframe(all_batch) \
-.assign(predicted_min = lambda x: x['predicted_mean'] - x['predicted_std'],
-        predicted_max = lambda x: x['predicted_mean'] + x['predicted_std']).\
-rename(columns={'actual':'CO'})
-
-print(
-    ggplot(pred_df,
-           aes(x='time')) +
-    geom_line(aes(y='CO'), color='blue', size=1) +
-    geom_line(aes(y='predicted_mean'), color='red', size=1, linetype = 'dashed') +
-    geom_ribbon(aes(ymin='predicted_min', ymax='predicted_max'), alpha=.20) +
-    theme_minimal() +
-    theme(figure_size=(12, 6)) +
-    geom_vline(xintercept=train_test_cutoff_date) +
-    scale_x_date(name="") + scale_y_continuous(name="Scaled CO")
-)
+preds.plot(df=preds.to_dataframe(all_batch), 
+           group_colname='group', 
+           time_colname='time', 
+           multi=1.96, 
+           max_num_groups=1, 
+           split_dt=train_test_cutoff_date)
 # -
 
 # It did!
 
+pred_df = preds.to_dataframe(all_batch)
 test_pred_df = pred_df[pred_df['time'] >= pd.Timestamp(train_test_cutoff_date)]
-rmse = np.sqrt(((test_pred_df['CO'] - test_pred_df['predicted_mean']) ** 2).mean())
-mae = np.mean(np.abs((test_pred_df['CO'] - test_pred_df['predicted_mean'])))
+rmse = np.sqrt(((test_pred_df['actual'] - test_pred_df['predicted_mean']) ** 2).mean())
+mae = np.mean(np.abs((test_pred_df['actual'] - test_pred_df['predicted_mean'])))
 print(f"VALIDATION RMSE {rmse}, VALIDATION MAE {mae}")
 
 # #### possible improvements
 #
-# - log transform
 # - train in cross validated way
-# - use more predictors / create fourier terms of predictors
 
 # #### next example ideas:
 #
 # - multiple groups / measures
-# - analyze uncertainty further, plot many forecasted series based on sampling gaussin at each point
+# - analyze uncertainty further, plot many forecasted series based on sampling gaussian at each point
