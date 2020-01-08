@@ -1,6 +1,7 @@
 from collections import OrderedDict
 from copy import copy
 from typing import Tuple, Sequence, Dict
+from warnings import warn
 
 import torch
 
@@ -111,6 +112,7 @@ class Design(NiceRepr, Batchable):
         out.batch_info = (num_groups, num_timesteps)
         out._initial_mean = torch.zeros(num_groups, len(self.state_elements))
 
+        unused_kwargs = set(kwargs.keys())
         for process_name, process in self.processes.items():
             # get kwargs for this process using sklearn-style disambiguation:
             proc_kwargs = {}
@@ -118,8 +120,12 @@ class Design(NiceRepr, Batchable):
                 specific_key = "{}__{}".format(process.id, k)
                 if specific_key in kwargs:
                     proc_kwargs[k] = kwargs[specific_key]
+                    if specific_key in unused_kwargs:
+                        unused_kwargs.remove(specific_key)
                 elif k in kwargs:
                     proc_kwargs[k] = kwargs[k]
+                    if k in unused_kwargs:
+                        unused_kwargs.remove(k)
 
             # wrap calls w/process-name for easier tracebacks:
             try:
@@ -139,6 +145,9 @@ class Design(NiceRepr, Batchable):
 
             if out.processes[process_name] is None:
                 raise RuntimeError(f"{process_name}'s `for_batch` call did not return anything.")
+
+        if unused_kwargs:
+            warn("Unexpected keyword arguments: {}".format(unused_kwargs))
 
         return out
 

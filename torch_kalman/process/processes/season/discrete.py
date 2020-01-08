@@ -47,6 +47,10 @@ class Season(DatetimeProcess, Process):
         self.season_duration = season_duration
         self.fixed = fixed
 
+        if dt_unit is None:
+            # optional for some seasonal processes, but not for this one
+            raise TypeError(f"Must pass `dt_unit` to {type(self).__name__}")
+
         # state-elements:
         pad_n = len(str(seasonal_period))
         super().__init__(id=id,

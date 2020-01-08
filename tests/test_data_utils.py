@@ -29,3 +29,23 @@ class TestDataUtils(unittest.TestCase):
             for i, group in enumerate(batch.group_names)
         ])
         self.assertTrue((df1 == df2).all().all())
+
+    def test_last_measured_idx(self):
+        tens = torch.zeros((3, 10, 2))
+
+        # first group 4
+        tens[0, 5:, :] = float('nan')
+
+        # second group 7:
+        tens[1, 5:, 0] = float('nan')
+        tens[1, 8:, 1] = float('nan')
+
+        # third group end:
+        tens[2, 8, :] = float('nan')
+
+        d = TimeSeriesDataset(tens, group_names=range(3), start_times=[0] * 3, measures=[['x', 'y']], dt_unit=None)
+        last_measured = d._last_measured_idx()
+
+        self.assertEqual(last_measured[0], 4)
+        self.assertEqual(last_measured[1], 7)
+        self.assertEqual(last_measured[2], 9)

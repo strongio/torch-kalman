@@ -2,6 +2,8 @@ from typing import Dict, Union, Any, Callable, Iterable, Tuple, Sequence
 
 import torch
 
+import numpy as np
+
 
 def bifurcate(x: Iterable, lhs: Callable[[Any], bool]) -> Tuple[list, list]:
     """
@@ -74,3 +76,12 @@ def ragged_cat(tensors: Sequence[torch.Tensor], ragged_dim: int, cat_dim: int = 
         padded[idx] = tensor
         out.append(padded)
     return torch.cat(out, cat_dim)
+
+
+def true1d_idx(arr: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
+    if isinstance(arr, torch.Tensor):
+        arr = arr.detach().numpy()
+    arr = arr.astype('bool')
+    if len(arr.shape) > 1:
+        raise ValueError("Expected 1d array.")
+    return np.where(arr)[0]

@@ -1,5 +1,7 @@
+import datetime
 import itertools
-from typing import Sequence, Any, Union, Optional, Tuple, Iterable
+
+from typing import Sequence, Any, Union, Optional, Tuple
 from warnings import warn
 
 import numpy as np
@@ -8,7 +10,7 @@ from torch import Tensor
 from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
 
 from torch_kalman.internals.repr import NiceRepr
-from torch_kalman.internals.utils import ragged_cat
+from torch_kalman.internals.utils import ragged_cat, true1d_idx
 
 
 class TimeSeriesDataset(NiceRepr, TensorDataset):
@@ -52,67 +54,94 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         self.dt_unit = dt_unit
         super().__init__(*tensors)
 
-    def times(self) -> np.ndarray:
-        num_timesteps = max(tensor.shape[1] for tensor in self.tensors)
-        offset = np.arange(0, num_timesteps)
-        if self.dt_unit == 'W':
-            offset *= 7
-        return self.start_times[:, None] + offset
-
-    def datetimes(self) -> np.ndarray:
-        return self.times()
-
-    @property
-    def start_datetimes(self) -> np.ndarray:
-        return self.start_times
-
     @property
     def sizes(self) -> Sequence:
         return [t.size() for t in self.tensors]
 
     # Subsetting ------------------------:
-    def __getitem__(self, item: Union[int, Sequence, slice]) -> 'TimeSeriesDataset':
-        if isinstance(item, int):
-            item = [item]
+    def train_val_split(self,
+                        train_frac: float = None,
+                        dt: np.datetime64 = None) -> Tuple['TimeSeriesDataset', 'TimeSeriesDataset']:
+        """
+        :param train_frac: The proportion of the data to keep for training. This is calculated on a per-group basis, by
+        taking the last observation for each group (i.e., the last observation that a non-nan value on any measure). If
+        neither `train_frac` nor `dt` are passed, `train_frac=.75` is used.
+        :param dt: A datetime to use in dividing train/validation (first datetime for validation).
+        :return: Two TimeSeriesDatasets, one with data before the split, the other with >= the split.
+        """
+
+        # get split times:
+        if dt is None:
+            if train_frac is None:
+                train_frac = .75
+            assert 0 < train_frac < 1
+            # for each group, find the last non-nan, take `frac` of that to find the train/val split point:
+            split_idx = np.array([int(idx * train_frac) for idx in self._last_measured_idx()], dtype='int')
+            split_times = np.take(self.times(0), split_idx)
+        else:
+            if train_frac is not None:
+                raise TypeError("Can pass only one of `train_frac`, `dt`.")
+            if not isinstance(dt, np.datetime64):
+                dt = np.datetime64(dt, self.dt_unit)
+            split_times = np.full(shape=len(self.group_names), fill_value=dt)
+
+        # val:
+        val_dataset = self.with_new_start_times(split_times)
+
+        # train:
+        train_tensors = []
+        for i, tens in enumerate(self.tensors):
+            train = tens.data.clone()
+            train[np.where(self.times(i) >= split_times[:, None])] = float('nan')
+            not_all_nan = (~torch.isnan(train)).sum((0, 2))
+            last_good_idx = true1d_idx(not_all_nan).max()
+            train = train[:, :(last_good_idx + 1), :]
+            train_tensors.append(train)
+        train_dataset = self.with_new_tensors(*train_tensors)
+
+        return train_dataset, val_dataset
+
+    def with_new_start_times(self, start_times: Union[np.ndarray, Sequence]) -> 'TimeSeriesDataset':
+        """
+        Subset a TimeSeriesDataset so that some/all of the groups have later start times.
+
+        :param start_times: An array/list of new datetimes.
+        :return: A new TimeSeriesDataset.
+        """
+        new_tensors = []
+        for i, tens in enumerate(self.tensors):
+            times = self.times(i)
+            new_tens = []
+            for g, (new_time, old_times) in enumerate(zip(start_times, times)):
+                if (old_times <= new_time).all():
+                    raise ValueError(f"{new_time} is later than all the times for group {self.group_names[g]}")
+                elif (old_times > new_time).all():
+                    raise ValueError(f"{new_time} is earlier than all the times for group {self.group_names[g]}")
+                new_tens.append(tens[g, true1d_idx(old_times >= new_time), :].unsqueeze(0))
+            new_tens = ragged_cat(new_tens, ragged_dim=1, cat_dim=0)
+            new_tensors.append(new_tens)
         return type(self)(
-            *super(TimeSeriesDataset, self).__getitem__(item),
-            group_names=self.group_names[item],
-            start_times=self.start_times[item],
+            *new_tensors,
+            group_names=self.group_names,
+            start_times=start_times,
             measures=self.measures,
             dt_unit=self.dt_unit
         )
 
     def get_groups(self, groups: Sequence[Any]) -> 'TimeSeriesDataset':
         """
-        Get the subset of the batch corresponding to groups. Note that the ordering in the output will match the original
-        ordering (not that of `group`), and that duplicates will be dropped.
+        Get the subset of the batch corresponding to groups. Note that the ordering in the output will match the
+        original ordering (not that of `group`), and that duplicates will be dropped.
         """
-        group_idx = np.where(np.isin(self.group_names, groups))[0]
+        group_idx = true1d_idx(np.isin(self.group_names, groups))
         return self[group_idx]
-
-    def split_times(self, split_frac: float) -> Tuple['TimeSeriesDataset', 'TimeSeriesDataset']:
-        """
-        Split data along a pre-post (typically: train/validation).
-        """
-        assert 0. < split_frac < 1.
-
-        num_timesteps = max(tensor.shape[1] for tensor in self.tensors)
-        idx = round(num_timesteps * split_frac)
-        if 1 < idx < num_timesteps:
-            train_batch = self.with_new_tensors(*(tensor[:, :idx, :] for tensor in self.tensors))
-            val_batch = type(self)(*(tensor[:, idx:, :] for tensor in self.tensors),
-                                   self.group_names,
-                                   self.times()[:, idx],
-                                   self.measures,
-                                   dt_unit=self.dt_unit)
-        else:
-            raise ValueError("`split_frac` too extreme, results in empty tensor.")
-        return train_batch, val_batch
 
     def split_measures(self, *measure_groups) -> 'TimeSeriesDataset':
         """
-        :param measure_groups: Each argument should be an indexer (i.e. list of ints or a slice), or should be a list
-        of measure-names.
+        Take a dataset with one tensor, split it into a dataset with multiple tensors.
+
+        :param measure_groups: Each argument should be be a list of measure-names, or an indexer (i.e. list of ints or
+        a slice).
         :return: A TimeSeriesDataset, now with multiple tensors for the measure-groups
         """
         if len(self.measures) > 1:
@@ -133,6 +162,17 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             start_times=self.start_times,
             group_names=self.group_names,
             measures=[tuple(self_measures[idx]) for idx in idxs],
+            dt_unit=self.dt_unit
+        )
+
+    def __getitem__(self, item: Union[int, Sequence, slice]) -> 'TimeSeriesDataset':
+        if isinstance(item, int):
+            item = [item]
+        return type(self)(
+            *super(TimeSeriesDataset, self).__getitem__(item),
+            group_names=self.group_names[item],
+            start_times=self.start_times[item],
+            measures=self.measures,
             dt_unit=self.dt_unit
         )
 
@@ -188,6 +228,10 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         from pandas import DataFrame, concat
 
         tensor = tensor.data.numpy()
+        assert tensor.shape[0] == len(group_names)
+        assert tensor.shape[0] == len(times)
+        assert tensor.shape[1] <= times.shape[1]
+        assert tensor.shape[2] == len(measures)
 
         dfs = []
         for g, group_name in enumerate(group_names):
@@ -197,10 +241,11 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             if all_nan_per_row.all():
                 warn(f"Group {group_name} has only missing values.")
                 continue
-            end_idx = np.max(np.where(~all_nan_per_row)[0]) + 1
+            end_idx = true1d_idx(~all_nan_per_row).max() + 1
             # convert to dataframe:
             df = DataFrame(data=values[:end_idx, :], columns=measures)
             df[group_colname] = group_name
+            df[time_colname] = np.nan
             df[time_colname] = times[g, 0:len(df.index)]
             dfs.append(df)
 
@@ -211,11 +256,21 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
                        dataframe: 'DataFrame',
                        group_colname: str,
                        time_colname: str,
-                       measure_colnames: Sequence[str],
-                       dt_unit: Optional[str]) -> 'TimeSeriesDataset':
+                       dt_unit: Optional[str],
+                       measure_colnames: Optional[Sequence[str]] = None,
+                       X_colnames: Optional[Sequence[str]] = None,
+                       y_colnames: Optional[Sequence[str]] = None) -> 'TimeSeriesDataset':
+
+        if measure_colnames is None:
+            if X_colnames is None or y_colnames is None:
+                raise ValueError("Must pass either `measure_colnames` or `X_colnames` & `y_colnames`")
+            measure_colnames = list(y_colnames) + list(X_colnames)
+        else:
+            if X_colnames is not None or y_colnames is not None:
+                raise ValueError("If passing `measure_colnames` do not pass `X_colnames` or `y_colnames`.")
+
         assert isinstance(group_colname, str)
         assert isinstance(time_colname, str)
-        assert isinstance(measure_colnames, (list, tuple))
         assert len(measure_colnames) == len(set(measure_colnames))
 
         # sort by time:
@@ -252,13 +307,22 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         for i, (array, time_idx) in enumerate(zip(arrays, time_idxs)):
             tens[i, time_idx, :] = Tensor(array)
 
-        return cls(
+        dataset = cls(
             tens,
             group_names=group_names,
             start_times=start_times,
             measures=[measure_colnames],
             dt_unit=dt_unit
         )
+
+        if X_colnames is not None:
+            dataset = dataset.split_measures(y_colnames, X_colnames)
+            y, X = dataset.tensors
+            # don't use nan-padding on the predictor tensor:
+            for i, time_idx in enumerate(time_idxs):
+                X[:, time_idx.max():, :] = 0.0
+
+        return dataset
 
     def with_new_tensors(self, *tensors: Tensor) -> 'TimeSeriesDataset':
         """
@@ -272,13 +336,51 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             dt_unit=self.dt_unit
         )
 
-    # Private ------------------------
+    # Util/Private ------------------------
+    def times(self, which: Optional[int] = None) -> np.ndarray:
+        """
+        A 2D array of datetimes (or integers if dt_unit is None) for this dataset.
+
+        :param which: If this dataset has multiple tensors of different number of timesteps, which should be used for
+        constructing the `times` array? Defaults to the one with the most timesteps.
+        :return: A 2D numpy array of datetimes (or integers if dt_unit is None).
+        """
+        if which is None:
+            num_timesteps = max(tensor.shape[1] for tensor in self.tensors)
+        else:
+            num_timesteps = self.tensors[which].shape[1]
+        offset = np.arange(0, num_timesteps)
+        if self.dt_unit == 'W':
+            offset *= 7
+        return self.start_times[:, None] + offset
+
+    def datetimes(self) -> np.ndarray:
+        return self.times()
+
+    @property
+    def start_datetimes(self) -> np.ndarray:
+        return self.start_times
+
+    def last_measured_times(self) -> np.ndarray:
+        """
+        :return: The datetimes (or integers if dt_unit is None) for the last measurement in the first tensor, where a
+        measurement is any non-nan value in at least one dimension.
+        """
+        times = self.times(which=0)
+        last_measured_idx = self._last_measured_idx()
+        return np.array([t[idx] for t, idx in zip(times, last_measured_idx)], dtype=f'datetime64[{self.dt_unit}]')
+
     def _validate_start_times(self, start_times: Union[np.ndarray, Sequence], dt_unit: Optional[str]) -> np.ndarray:
-        if not isinstance(start_times, np.ndarray):
+        if not isinstance(start_times, np.ndarray) or not isinstance(start_times[0], np.datetime64):
             if isinstance(start_times[0], np.datetime64):
                 start_times = np.array(start_times, dtype='datetime64')
+            elif isinstance(start_times[0], (datetime.date, datetime.datetime)):
+                start_times = np.array(start_times, dtype='datetime64')
             else:
-                start_times_int = np.array(start_times, dtype=np.int64)
+                try:
+                    start_times_int = np.array(start_times, dtype=np.int64)
+                except TypeError as e:
+                    raise TypeError("Expected start_times to be sequence of datetimes or ints.") from e
                 if not np.isclose(start_times_int - start_times, 0.).all():
                     raise ValueError("`start_times` should be a datetime64 array or an array of whole numbers")
                 start_times = start_times_int
@@ -295,9 +397,22 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             if not start_times.dtype == np.int64:
                 raise ValueError("If `dt_unit` is None, expect start_times to be an array w/dtype of int64.")
         else:
-            raise ValueError(f"Time-unit of {dt_unit} not currently supported; please report to package maintainer.")
+            raise ValueError(f"Time-unit of {dt_unit} not currently supported.")
 
         return start_times
+
+    def _last_measured_idx(self) -> np.ndarray:
+        """
+        :return: The indices of the last measurement in the first tensor, where a measurement is any non-nan value in at
+         least on dimension.
+        """
+        tens, *_ = self.tensors
+        any_measured_bool = ~np.isnan(tens.numpy()).all(2)
+        last_measured_idx = np.array(
+            [np.max(true1d_idx(any_measured_bool[g]), initial=0) for g in range(len(self.group_names))],
+            dtype='int'
+        )
+        return last_measured_idx
 
 
 class TimeSeriesDataLoader(DataLoader):
@@ -317,8 +432,10 @@ class TimeSeriesDataLoader(DataLoader):
                        dataframe: 'DataFrame',
                        group_colname: str,
                        time_colname: str,
-                       measure_colnames: Sequence[str],
                        dt_unit: Optional[str],
+                       measure_colnames: Optional[Sequence[str]] = None,
+                       X_colnames: Optional[Sequence[str]] = None,
+                       y_colnames: Optional[Sequence[str]] = None,
                        **kwargs) -> 'TimeSeriesDataLoader':
         dataset = ConcatDataset(
             datasets=[
@@ -327,6 +444,8 @@ class TimeSeriesDataLoader(DataLoader):
                     group_colname=group_colname,
                     time_colname=time_colname,
                     measure_colnames=measure_colnames,
+                    X_colnames=X_colnames,
+                    y_colnames=y_colnames,
                     dt_unit=dt_unit
                 )
                 for g, df in dataframe.groupby(group_colname)

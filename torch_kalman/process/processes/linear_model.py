@@ -64,9 +64,9 @@ class LinearModel(HasPredictors, Process):
     def for_batch(self,
                   num_groups: int,
                   num_timesteps: int,
-                  predictors: Tensor,
-                  allow_extra_timesteps: bool = False) -> 'LinearModel':
-        
+                  predictors: Tensor,        
+                  allow_extra_timesteps: bool = True) -> 'LinearModel':
+    
         for_batch = super().for_batch(
             num_groups=num_groups,
             num_timesteps=num_timesteps,

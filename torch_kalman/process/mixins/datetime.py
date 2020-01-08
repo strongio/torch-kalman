@@ -9,30 +9,33 @@ class DatetimeProcess:
 
     def __init__(self, *args, **kwargs):
         """
-        :param season_start: A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
+        :param season_start: A `numpy.datetime64` (or string that can be parsed into one). This is when the season
         starts, which is useful to specify if season boundaries are meaningful. It is important to specify if different
         groups in your dataset start on different dates; when calling the kalman-filter you'll pass an array of
         `start_datetimes` for group in the input, and this will be used to align the seasons for each group.
         :param dt_unit: Currently supports {'Y', 'D', 'h', 'm', 's'}. 'W' is experimentally supported.
         """
-        season_start = kwargs.pop('season_start', None)
         dt_unit = kwargs.pop('dt_unit', None)
+        season_start = kwargs.pop('season_start', None)
 
         # parse date information:
-        self.dt_unit = dt_unit
-        if season_start is None:
-            warn("`season_start` was not passed; will assume all groups start in same season.")
-            self.start_datetime = None
-        elif season_start is False:
-            self.start_datetime = None
+        if dt_unit is None:
+            if season_start is not None:
+                raise ValueError("Must pass `dt_unit` if passing `season_start`.")
         else:
-            if dt_unit in self.supported_dt_units:
-                self.start_datetime = np.datetime64(season_start, (dt_unit, 1))
-            elif dt_unit == 'W':
-                self.start_datetime = np.datetime64(season_start, ('D', 1))
-            else:
-                raise ValueError(f"dt_unit {dt_unit} not currently supported")
-            assert dt_unit is not None, "If passing `season_start` must also pass `dt_unit`."
+            if season_start is None:
+                season_start = '1970-01-05'  # first monday since epoch
+
+        if dt_unit in self.supported_dt_units:
+            self.start_datetime = np.datetime64(season_start, (dt_unit, 1))
+        elif dt_unit == 'W':
+            self.start_datetime = np.datetime64(season_start, ('D', 1))
+        elif dt_unit is not None:
+            raise ValueError(f"dt_unit {dt_unit} not currently supported")
+        else:
+            self.start_datetime = None
+
+        self.dt_unit = dt_unit
 
         super().__init__(*args, **kwargs)
 
@@ -45,7 +48,8 @@ class DatetimeProcess:
 
             act = start_datetimes.dtype
             exp = self.start_datetime.dtype
-            assert act == exp, f"Expected datetimes with dtype {exp}, got {act}."
+            if act != exp:
+                raise ValueError(f"Expected datetimes with dtype {exp}, got {act}.")
 
             offset = (start_datetimes - self.start_datetime).view('int64')
             if self.dt_unit == 'W':
