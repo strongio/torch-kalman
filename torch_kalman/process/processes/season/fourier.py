@@ -21,21 +21,6 @@ class _FourierSeason(DatetimeProcess, Process):
                  decay: Union[bool, Tuple[float, float]] = False,
                  season_start: Optional[str] = None,
                  dt_unit: Optional[str] = None):
-        """
-        :param id: Unique name for this instance.
-        :param seasonal_period: The seasonal period (e.g. 24 for daily season in hourly data, 365.25 for yearly season
-        in daily data)
-        :param K: The "K" parameter of the fourier series, see `fourier_tensor`.
-        :param decay: Optional (float,float) boundaries for decay (between 0 and 1). Analogous to dampening a trend --
-        the state will revert to zero as we get further from the last observation. This can be useful if two processes
-        are capturing the same seasonal pattern: one can be more flexible, but with decay have a tendency to revert to
-        zero, while the other is less variable but extrapolates into the future.
-        :param season_start:  A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
-        starts, which is useful to specify if season boundaries are meaningful. It is important to specify if different
-        groups in your dataset start on different dates; when calling the kalman-filter you'll pass an array of
-        `start_datetimes` for group in the input, and this will be used to align the seasons for each group.
-        :param dt_unit: Currently supports {'Y', 'D', 'h', 'm', 's'}. 'W' is experimentally supported.
-        """
 
         # season structure:
         self.seasonal_period = seasonal_period
@@ -86,6 +71,72 @@ class _FourierSeason(DatetimeProcess, Process):
 
 
 class FourierSeason(_FourierSeason):
+    def __init__(self,
+                 id: str,
+                 seasonal_period: Union[int, float],
+                 K: Union[int, float],
+                 fixed: bool = False,
+                 decay: Union[bool, Tuple[float, float]] = False,
+                 season_start: Optional[str] = None,
+                 dt_unit: Optional[str] = None):
+        """
+        :param id: Unique name for this instance.
+        :param seasonal_period: The seasonal period (e.g. 24 for daily season in hourly data, 365.25 for yearly season
+        in daily data)
+        :param K: The "K" parameter of the fourier series, see `fourier_tensor`.
+        :param decay: Optional (float,float) boundaries for decay (between 0 and 1). Analogous to dampening a trend --
+        the state will revert to zero as we get further from the last observation. This can be useful if two processes
+        are capturing the same seasonal pattern: one can be more flexible, but with decay have a tendency to revert to
+        zero, while the other is less variable but extrapolates into the future.
+        :param season_start:  A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
+        starts, which is useful to specify if season boundaries are meaningful. It is important to specify if different
+        groups in your dataset start on different dates; when calling the kalman-filter you'll pass an array of
+        `start_datetimes` for group in the input, and this will be used to align the seasons for each group.
+        :param dt_unit: Currently supports {'Y', 'D', 'h', 'm', 's'}. 'W' is experimentally supported.
+        """
+        self.fixed = fixed
+        super().__init__(
+            id=id, seasonal_period=seasonal_period, K=K, decay=decay, season_start=season_start, dt_unit=dt_unit
+        )
+
+    def for_batch(self,
+                  num_groups: int,
+                  num_timesteps: int,
+                  start_datetimes: Optional[np.ndarray] = None):
+
+        for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
+
+        # determine the delta (integer time accounting for different groups having different start datetimes)
+        delta = self._get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
+
+        # determine season:
+        season = delta % self.seasonal_period
+
+        # generate the fourier tensor:
+        fourier_tens = fourier_tensor(time=Tensor(season), seasonal_period=self.seasonal_period, K=self.K)
+
+        for measure in self.measures:
+            for state_element in self.state_elements:
+                r, c = (int(x) for x in state_element.split(sep=","))
+                for_batch._adjust_measure(
+                    measure=measure,
+                    state_element=state_element,
+                    adjustment=split_flat(fourier_tens[:, :, r, c], dim=1)
+                )
+
+        return for_batch
+
+    @property
+    def dynamic_state_elements(self) -> Sequence[str]:
+        return [] if self.fixed else self.state_elements
+
+    def add_measure(self, measure: str) -> 'FourierSeasonFixed':
+        for state_element in self.state_elements:
+            self._set_measure(measure=measure, state_element=state_element, value=0.)
+        return self
+
+
+class FourierSeason2(_FourierSeason):
     def _setup(self, decay: bool) -> Tuple[List[str], List[Dict]]:
         state_elements, transitions = super()._setup(decay=decay)
 
@@ -129,46 +180,8 @@ class FourierSeason(_FourierSeason):
     def dynamic_state_elements(self) -> Sequence[str]:
         return self.state_elements[:-1]
 
-    def add_measure(self, measure: str) -> 'FourierSeason':
+    def add_measure(self, measure: str) -> 'FourierSeason2':
         self._set_measure(measure=measure, state_element='position', value=1.0)
-        return self
-
-
-class FourierSeasonFixed(_FourierSeason):
-    def for_batch(self,
-                  num_groups: int,
-                  num_timesteps: int,
-                  start_datetimes: Optional[np.ndarray] = None):
-
-        for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
-
-        # determine the delta (integer time accounting for different groups having different start datetimes)
-        delta = self._get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
-
-        # determine season:
-        season = delta % self.seasonal_period
-
-        # generate the fourier tensor:
-        fourier_tens = fourier_tensor(time=Tensor(season), seasonal_period=self.seasonal_period, K=self.K)
-
-        for measure in self.measures:
-            for state_element in self.state_elements:
-                r, c = (int(x) for x in state_element.split(sep=","))
-                for_batch._adjust_measure(
-                    measure=measure,
-                    state_element=state_element,
-                    adjustment=split_flat(fourier_tens[:, :, r, c], dim=1)
-                )
-
-        return for_batch
-
-    @property
-    def dynamic_state_elements(self) -> Sequence[str]:
-        return []
-
-    def add_measure(self, measure: str) -> 'FourierSeasonFixed':
-        for state_element in self.state_elements:
-            self._set_measure(measure=measure, state_element=state_element, value=0.)
         return self
 
 

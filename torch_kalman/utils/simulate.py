@@ -1,7 +1,7 @@
 import torch
 
 from torch_kalman.kalman_filter import KalmanFilter
-from torch_kalman.process import LocalLevel, Season, FourierSeasonFixed
+from torch_kalman.process import LocalLevel, Season, FourierSeason
 
 import numpy as np
 
@@ -13,7 +13,7 @@ def _simulate(num_groups: int, num_timesteps: int, season_spec: dict, noise: flo
     processes = [
         LocalLevel(id='local_level').add_measure('y'),
         Season(id='day_in_week', seasonal_period=7, fixed=True, **season_spec).add_measure('y'),
-        FourierSeasonFixed(id='day_in_year', seasonal_period=365.25, K=2, **season_spec).add_measure('y')
+        FourierSeason(id='day_in_year', seasonal_period=365.25, K=2, fixed=True, **season_spec).add_measure('y')
     ]
     kf = KalmanFilter(measures=['y'], processes=processes)
 
