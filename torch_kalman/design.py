@@ -43,7 +43,7 @@ class Design(NiceRepr, Batchable):
 
         # params:
         self._initial_mean = None
-        self.init_mean_params = Parameter(torch.randn(len(self.state_elements)))
+        self.init_mean_params = Parameter(.1 * torch.randn(len(self.state_elements)))
         self.init_covariance = PartialCovarianceFromLogCholesky(
             full_dim_names=self.state_elements,
             partial_dim_names=self.unfixed_state_elements
