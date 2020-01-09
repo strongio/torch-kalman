@@ -6,15 +6,15 @@ from torch import Tensor
 import numpy as np
 
 from torch_kalman.design import Design
-from torch_kalman.process import Season, FourierSeason, Process
+from torch_kalman.process import Season, Process
 from torch_kalman.process.processes.local_trend import LocalTrend
-from torch_kalman.process.processes.season.fourier import TBATS
+from torch_kalman.process.processes.season.fourier import TBATS, FourierSeason2
 
 
 class TestProcess(TestCase):
 
-    def test_fourier_season(self):
-        season = FourierSeason(id='season', seasonal_period=24, K=2, decay=False, dt_unit=None)
+    def test_fourier_season2(self):
+        season = FourierSeason2(id='season', seasonal_period=24, K=2, decay=False, dt_unit=None)
         season.add_measure('measure')
         design = Design(processes=[season], measures=['measure'])
         for_batch = design.for_batch(1, 24 * 2)
