@@ -268,12 +268,11 @@ pred = kf_pred(
 
 print(pred.plot(pred.to_dataframe(dataset_pred).query("group=='Aotizhongxin'"), split_dt=SPLIT_DT))
 
-df_components = pred.to_dataframe(dataset_pred, type='components').query("group=='Aotizhongxin'")
+df_components = pred.to_dataframe(dataset_pred, type='components')
 
-print(pred.plot(df_components, split_dt=SPLIT_DT))
+print(pred.plot(df_components.query("group=='Aotizhongxin'"), split_dt=SPLIT_DT))
 
 # if we filter to a single process, we get a legend:
-print(pred.plot(df_components.query("process == 'predictors'"), split_dt=SPLIT_DT))
+print(pred.plot(df_components.query("process == 'predictors'"), max_num_groups=2, split_dt=SPLIT_DT))
 # -
-
 

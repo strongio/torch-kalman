@@ -385,15 +385,20 @@ class StateBeliefOverTime(NiceRepr):
         )
 
         if is_components:
-            if num_groups > 1:
-                raise ValueError("Cannot plot components for > 1 group.")
+            num_processes = df['process'].nunique()
+            if num_groups > 1 and num_processes > 1:
+                raise ValueError("Cannot plot components for > 1 group and > 1 processes.")
+            elif num_groups == 1:
+                plot = plot + facet_grid(f"process ~ measure", scales='free_y', labeller='label_both')
+                if 'figure_size' not in kwargs:
+                    kwargs['figure_size'] = (12, num_processes * 2.5)
+            else:
+                plot = plot + facet_grid(f"{group_colname} ~ measure", scales='free_y', labeller='label_both')
+                if 'figure_size' not in kwargs:
+                    kwargs['figure_size'] = (12, num_groups * 2.5)
 
-            plot = plot + facet_grid(f"process ~ measure", scales='free_y', labeller='label_both')
-            if df['process'].nunique() == 1:
+            if num_processes == 1:
                 plot = plot + geom_line(aes(y=value_colname, color='state_element'), size=1.5)
-
-            if 'figure_size' not in kwargs:
-                kwargs['figure_size'] = (12, df['process'].nunique() * 2.5)
 
         else:
             if 'actual' in df.columns:
