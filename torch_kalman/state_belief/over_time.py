@@ -215,16 +215,19 @@ class StateBeliefOverTime(NiceRepr):
                      dataset: Union[TimeSeriesDataset, dict],
                      type: str = 'predictions',
                      group_colname: str = 'group',
-                     time_colname: str = 'time') -> 'DataFrame':
+                     time_colname: str = 'time',
+                     multi: float = 1.96) -> 'DataFrame':
         """
         :param dataset: Either a TimeSeriesDataset, or a dictionary with 'start_times' and 'group_names'.
         :param type: Either 'predictions' or 'components'.
         :param group_colname: Column-name for 'group'
         :param time_colname: Column-name for 'time'
+        :param multi: Multiplier on std-dev for lower/upper CIs. Default 1.96.
         :return: A pandas DataFrame with group, time, measure, plus:
-            - For type='predictions': predicted_mean, predicted_std
-            - For type='components': process, state_element, value, std
+            - For type='predictions': mean, lower, upper
+            - For type='components': process, state_element, mean, lower, upper
         """
+
         from pandas import concat
 
         if isinstance(dataset, TimeSeriesDataset):
@@ -258,15 +261,20 @@ class StateBeliefOverTime(NiceRepr):
                 measures=measures
             )
 
+        assert group_colname not in {'mean', 'lower', 'upper'}
+        assert time_colname not in {'mean', 'lower', 'upper'}
+
         out = []
         if type == 'predictions':
 
             stds = torch.diagonal(self.prediction_uncertainty, dim1=-1, dim2=-2).sqrt()
             for i, measure in enumerate(self.design.measures):
                 # predicted:
-                df_pred = _tensor_to_df(self.predictions[..., [i]], measures=['predicted_mean'])
-                df_std = _tensor_to_df(stds[..., [i]], measures=['predicted_std'])
+                df_pred = _tensor_to_df(self.predictions[..., [i]], measures=['mean'])
+                df_std = _tensor_to_df(stds[..., [i]], measures=['_std'])
                 df = df_pred.merge(df_std, on=[group_colname, time_colname])
+                df['lower'] = df['mean'] - multi * df['_std']
+                df['upper'] = df['mean'] + multi * df.pop('_std')
 
                 # actual:
                 orig_tensor = batch_info.get('named_tensors', {}).get(measure, None)
@@ -279,7 +287,9 @@ class StateBeliefOverTime(NiceRepr):
         elif type == 'components':
             # components:
             for (measure, process, state_element), (m, std) in self.components().items():
-                df = _tensor_to_df(torch.stack([m, std], 2), measures=['value', 'std'])
+                df = _tensor_to_df(torch.stack([m, std], 2), measures=['mean', '_std'])
+                df['lower'] = df['mean'] - multi * df['_std']
+                df['upper'] = df['mean'] + multi * df.pop('_std')
                 df['process'], df['state_element'], df['measure'] = process, state_element, measure
                 out.append(df)
 
@@ -291,7 +301,7 @@ class StateBeliefOverTime(NiceRepr):
                     orig_aligned[:, 0:orig_tensor.shape[1], :] = orig_tensor
                 else:
                     orig_aligned = orig_tensor[:, 0:self.predictions.shape[1], :]
-                df = _tensor_to_df(self.predictions - orig_aligned, ['value'])
+                df = _tensor_to_df(self.predictions - orig_aligned, ['mean'])
                 df['process'], df['state_element'], df['measure'] = 'residuals', 'residuals', measure
                 out.append(df)
 
@@ -323,7 +333,6 @@ class StateBeliefOverTime(NiceRepr):
     def plot(df: 'DataFrame',
              group_colname: str = None,
              time_colname: str = None,
-             multi: float = 1.96,
              max_num_groups: int = 1,
              split_dt: Optional[np.datetime64] = None,
              **kwargs) -> 'DataFrame':
@@ -331,7 +340,6 @@ class StateBeliefOverTime(NiceRepr):
         :param df: The output of `.to_dataframe()`.
         :param group_colname: The name of the group-column.
         :param time_colname: The name of the time-column.
-        :param multi: Multiplier to convert std-devs to CIs, default 1.96.
         :param max_num_groups: Max. number of groups to plot; if the number of groups in the dataframe is greater than
         this, a random subset will be taken.
         :param split_dt: If supplied, will draw a vertical line at this date (useful for showing pre/post validation).
@@ -346,21 +354,13 @@ class StateBeliefOverTime(NiceRepr):
         is_components = ('process' in df.columns and 'state_element' in df.columns)
 
         if group_colname is None:
-            if 'group' in df.columns:
-                group_colname = 'group'
-            else:
+            group_colname = 'group'
+            if group_colname not in df.columns:
                 raise TypeError("Please specify group_colname")
         if time_colname is None:
-            if 'time' in df.columns:
-                time_colname = 'time'
-            else:
+            time_colname = 'time'
+            if 'time' not in df.columns:
                 raise TypeError("Please specify time_colname")
-        if is_components:
-            value_colname = 'value'
-            std_colname = 'std'
-        else:
-            value_colname = 'predicted_mean'
-            std_colname = 'predicted_std'
 
         df = df.copy()
         if df[group_colname].nunique() > max_num_groups:
@@ -370,16 +370,13 @@ class StateBeliefOverTime(NiceRepr):
             df = df.loc[df[group_colname].isin(subset_groups), :]
         num_groups = df[group_colname].nunique()
 
-        df['lower'] = df[value_colname] - multi * df[std_colname]
-        df['upper'] = df[value_colname] + multi * df[std_colname]
-
         aes_kwargs = {'x': time_colname}
         if is_components:
             aes_kwargs['group'] = 'state_element'
 
         plot = (
                 ggplot(df, aes(**aes_kwargs)) +
-                geom_line(aes(y=value_colname), color='#4C6FE7', size=1.5, alpha=.75) +
+                geom_line(aes(y='mean'), color='#4C6FE7', size=1.5, alpha=.75) +
                 geom_ribbon(aes(ymin='lower', ymax='upper'), color=None, alpha=.25) +
                 ylab("")
         )
@@ -398,7 +395,7 @@ class StateBeliefOverTime(NiceRepr):
                     kwargs['figure_size'] = (12, num_groups * 2.5)
 
             if num_processes == 1:
-                plot = plot + geom_line(aes(y=value_colname, color='state_element'), size=1.5)
+                plot = plot + geom_line(aes(y='mean', color='state_element'), size=1.5)
 
         else:
             if 'actual' in df.columns:
