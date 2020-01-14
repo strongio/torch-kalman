@@ -103,7 +103,7 @@ class KalmanFilter(Module):
         # generate predictions:
         state_predictions = []
         for t in times:
-            if t > 0:
+            if (t > 0) and (input is not None):
                 # take state-pred of previous t (now t-1), correct it according to what was actually measured at t-1
                 state_belief = state_prediction.update_from_input(input, time=t - 1)
 
