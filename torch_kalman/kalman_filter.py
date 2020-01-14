@@ -63,13 +63,18 @@ class KalmanFilter(Module):
         :param kwargs: Other kwargs that will be passed to the kf's `design.for_batch()` method.
         :return: A StateBeliefOverTime consisting of one-step-ahead predictions.
         """
-
-        num_groups, input_num_timesteps, num_measures, *_ = self.family.get_input_dim(input)
-        if num_measures != len(self.design.measures):
-            raise ValueError(
-                f"This KalmanFilter has {len(self.design.measures)} measures; but the input shape is "
-                f"{(num_groups, input_num_timesteps, num_measures)} (3rd dim should == measure-size)."
-            )
+        if input is None:
+            if initial_prediction is None:
+                raise ValueError("Can only pass input=None if `initial_prediction` is passed.")
+            num_groups = initial_prediction.num_groups
+            input_num_timesteps = 0
+        else:
+            num_groups, input_num_timesteps, num_measures, *_ = self.family.get_input_dim(input)
+            if num_measures != len(self.design.measures):
+                raise ValueError(
+                    f"This KalmanFilter has {len(self.design.measures)} measures; but the input shape is "
+                    f"{(num_groups, input_num_timesteps, num_measures)} (3rd dim should == measure-size)."
+                )
 
         # times
         if out_timesteps is None:
