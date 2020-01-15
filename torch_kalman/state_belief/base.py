@@ -54,6 +54,10 @@ class StateBelief(NiceRepr):
         return input.shape
 
     def update_from_input(self, input: Tensor, time: int):
+        """
+        Call `update` on the state-belief given the expected input for this family (usually: a tensor). Handles the
+        case when the current time is outside the range of the input (i.e. a forecast).
+        """
         if time >= input.shape[1]:
             return self.copy()
         else:
