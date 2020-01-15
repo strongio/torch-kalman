@@ -114,6 +114,8 @@ class StateBeliefOverTime(NiceRepr):
         return self._restore_sb(enumerate(self.last_predict_idx.tolist()))
 
     def state_belief_for_time(self, times: Sequence[int]) -> StateBelief:
+        if len(times) != self.num_groups:
+            raise ValueError("Expected len(times) to == num_groups.")
         return self._restore_sb(enumerate(times))
 
     # Distribution-Methods -----------:
@@ -251,7 +253,7 @@ class StateBeliefOverTime(NiceRepr):
             )
 
         def _tensor_to_df(tens, measures):
-            times = batch_info.get('times', batch_info['start_times'][:, None] + np.arange(0, self.num_timesteps))
+            times = batch_info.get('times', batch_info['start_times'][:, None] + np.arange(0, tens.shape[1]))
             return TimeSeriesDataset.tensor_to_dataframe(
                 tensor=tens,
                 times=times,
