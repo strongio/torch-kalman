@@ -210,6 +210,9 @@ def _F1F2(mean: Tensor,
           cov: Tensor,
           lower: Tensor,
           upper: Tensor) -> Tuple[Tensor, Tensor]:
+    """
+    See https://github.com/cossio/TruncatedNormal.jl/blob/5e72b6abc8f2ce7aed8147e629b4c8dd5040a8bd/notes/normal.pdf
+    """
     is_cens_up = torch.isfinite(upper)
     is_cens_lo = torch.isfinite(lower)
 
