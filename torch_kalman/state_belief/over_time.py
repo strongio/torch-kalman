@@ -113,10 +113,10 @@ class StateBeliefOverTime(NiceRepr):
             )
         return self._restore_sb(enumerate(self.last_predict_idx.tolist()))
 
-    def state_belief_for_time(self, times: Sequence[int]) -> StateBelief:
-        if len(times) != self.num_groups:
-            raise ValueError("Expected len(times) to == num_groups.")
-        return self._restore_sb(enumerate(times))
+    def state_belief_for_time(self, time_idx: Sequence[int]) -> StateBelief:
+        if len(time_idx) != self.num_groups:
+            raise ValueError("Expected len(time_idx) to == num_groups.")
+        return self._restore_sb(enumerate(time_idx))
 
     # Distribution-Methods -----------:
     def log_prob(self, obs: Tensor, **kwargs) -> Tensor:
