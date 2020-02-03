@@ -1,8 +1,6 @@
-from typing import Generator, Optional, Callable
+from typing import Generator, Optional, Callable, Iterable
 
 import torch
-
-from torch import Tensor
 from torch.nn import Parameter, ParameterDict
 
 from torch_kalman.process import Process
@@ -19,16 +17,28 @@ class NN(HasPredictors, Process):
                  id: str,
                  input_dim: int,
                  state_dim: int,
-                 nn_module: torch.nn.Module,
+                 nn: torch.nn.Module,
                  process_variance: bool = False,
                  init_variance: bool = True,
                  add_module_params_to_process: bool = True,
                  inv_link: Optional[Callable] = None):
+        """
+
+        :param id:
+        :param input_dim:
+        :param state_dim:
+        :param nn:
+        :param process_variance:
+        :param init_variance:
+        :param add_module_params_to_process:
+        :param inv_link:
+        """
         self.inv_link = inv_link
 
         self.add_module_params_to_process = add_module_params_to_process
         self.input_dim = input_dim
-        self.nn_module = nn_module
+        self.batch_kwarg = getattr(nn, 'batch_kwarg', 'predictors')
+        self.nn = nn
 
         #
         self._has_process_variance = process_variance
@@ -51,12 +61,12 @@ class NN(HasPredictors, Process):
 
     def parameters(self) -> Generator[Parameter, None, None]:
         if self.add_module_params_to_process:
-            yield from self.nn_module.parameters()
+            yield from self.nn.parameters()
 
     def param_dict(self) -> ParameterDict:
         p = ParameterDict()
         if self.add_module_params_to_process:
-            for nm, param in self.nn_module.named_parameters():
+            for nm, param in self.nn.named_parameters():
                 nm = 'module_' + nm.replace('.', '_')
                 p[nm] = param
         return p
@@ -64,27 +74,45 @@ class NN(HasPredictors, Process):
     def for_batch(self,
                   num_groups: int,
                   num_timesteps: int,
-                  predictors: Tensor,
-                  allow_extra_timesteps: bool = True) -> 'NN':
+                  allow_extra_timesteps: bool = True,
+                  **kwargs) -> 'NN':
+
+        predictor_mat = kwargs.pop(self.batch_kwarg, None)
+        if predictor_mat is None:
+            raise TypeError("Missing argument: {}".format(self.batch_kwarg))
+        if kwargs:
+            raise TypeError("Unexpected arguments:{}".format(set(kwargs.keys())))
+
         for_batch = super().for_batch(
             num_groups=num_groups,
+            num_timesteps=num_timesteps
+        )
+
+        self._validate_predictor_mat(
+            num_groups=num_groups,
             num_timesteps=num_timesteps,
-            predictors=predictors,
+            predictor_mat=predictor_mat,
             expected_num_predictors=self.input_dim,
             allow_extra_timesteps=allow_extra_timesteps
         )
 
-        if predictors.shape[1] > num_timesteps:
-            predictors = predictors[:, 0:num_timesteps, :]
+        # TODO: support broadcasting if output shape is (num_groups, 1) or (num_groups, num_times, 1)
 
-        # need to split nn-output by each output element and by time
-        # we don't want to call the nn once then slice it, because then autograd will be forced to keep track of large
-        # amounts of unnecessary zero-gradients. so instead, call multiple times.
-        nn_outputs = {el: [] for el in self.state_elements}
-        for t in range(num_timesteps):
-            nn_output = self.nn_module(predictors[:, t, :])
-            for i, state_element in enumerate(self.state_elements):
-                nn_outputs[state_element].append(nn_output[:, i])
+        if len(predictor_mat.shape) == 2:
+            nn_output = self.nn(predictor_mat)
+            nn_outputs = {el: nn_output[i] for i, el in enumerate(self.state_elements)}
+        else:
+            if predictor_mat.shape[1] > num_timesteps:
+                predictor_mat = predictor_mat[:, 0:num_timesteps, :]
+
+            # need to split nn-output by each output element and by time
+            # we don't want to call the nn once then slice it, because then autograd will be forced to keep track of
+            # large amounts of unnecessary zero-gradients. so instead, call multiple times.
+            nn_outputs = {el: [] for el in self.state_elements}
+            for t in range(num_timesteps):
+                nn_output = self.nn(predictor_mat[:, t, :])
+                for i, state_element in enumerate(self.state_elements):
+                    nn_outputs[state_element].append(nn_output[:, i])
 
         for measure in self.measures:
             for state_element in self.state_elements:
@@ -101,3 +129,6 @@ class NN(HasPredictors, Process):
         for se in self.state_elements:
             self._set_measure(measure=measure, state_element=se, value=0., ilink=self.inv_link)
         return self
+
+    def batch_kwargs(self, method: Optional[Callable] = None) -> Iterable[str]:
+        return [self.batch_kwarg]
