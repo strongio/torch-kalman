@@ -1,0 +1,2 @@
+class InputValidationError(ValueError):
+    pass

@@ -68,8 +68,12 @@ class LinearModel(HasPredictors, Process):
                   allow_extra_timesteps: bool = True) -> 'LinearModel':
         for_batch = super().for_batch(
             num_groups=num_groups,
+            num_timesteps=num_timesteps
+        )
+        self._validate_predictor_mat(
+            num_groups=num_groups,
             num_timesteps=num_timesteps,
-            predictors=predictors,
+            predictor_mat=predictors,
             expected_num_predictors=len(self.state_elements),
             allow_extra_timesteps=allow_extra_timesteps
         )

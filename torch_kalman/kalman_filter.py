@@ -7,6 +7,7 @@ from torch.nn import Module
 from tqdm import tqdm
 
 from torch_kalman.design import Design
+
 from torch_kalman.process import Process
 from torch_kalman.state_belief import Gaussian, StateBelief
 from torch_kalman.state_belief.over_time import StateBeliefOverTime
@@ -20,7 +21,16 @@ class KalmanFilter(Module):
     family = Gaussian
     design_cls = Design
 
-    def __init__(self, measures: Sequence[str], processes: Sequence[Process], **kwargs):
+    def __init__(self,
+                 measures: Sequence[str],
+                 processes: Sequence[Process],
+                 **kwargs):
+        """
+        :param processes: Processes
+        :param measures: Measure-names
+        :param measure_var_nn: TODO
+        :param process_var_nn: TODO
+        """
 
         super().__init__()
         self.design = self.design_cls(measures=measures, processes=processes, **kwargs)
