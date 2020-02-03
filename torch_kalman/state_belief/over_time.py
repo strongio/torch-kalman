@@ -294,14 +294,18 @@ class StateBeliefOverTime(NiceRepr):
                 out.append(df)
 
             # residuals:
-            for measure, orig_tensor in batch_info.get('named_tensors', {}).items():
-                if orig_tensor.shape[1] < self.predictions.shape[1]:
-                    orig_aligned = self.predictions.data.clone()
+            named_tensors = batch_info.get('named_tensors', {})
+            for i, measure in enumerate(self.design.measures):
+                orig_tensor = named_tensors.get(measure)
+                predictions = self.predictions[..., [i]]
+                if orig_tensor.shape[1] < predictions.shape[1]:
+                    orig_aligned = predictions.data.clone()
                     orig_aligned[:] = float('nan')
                     orig_aligned[:, 0:orig_tensor.shape[1], :] = orig_tensor
                 else:
-                    orig_aligned = orig_tensor[:, 0:self.predictions.shape[1], :]
-                df = _tensor_to_df(self.predictions - orig_aligned, ['mean'])
+                    orig_aligned = orig_tensor[:, 0:predictions.shape[1], :]
+
+                df = _tensor_to_df(predictions - orig_aligned, ['mean'])
                 df['process'], df['state_element'], df['measure'] = 'residuals', 'residuals', measure
                 out.append(df)
 
@@ -386,9 +390,11 @@ class StateBeliefOverTime(NiceRepr):
             if num_groups > 1 and num_processes > 1:
                 raise ValueError("Cannot plot components for > 1 group and > 1 processes.")
             elif num_groups == 1:
-                plot = plot + facet_grid(f"process ~ measure", scales='free_y', labeller='label_both')
+                plot = plot + facet_wrap(f"~ measure + process", scales='free_y', labeller='label_both')
                 if 'figure_size' not in kwargs:
-                    kwargs['figure_size'] = (12, num_processes * 2.5)
+                    from plotnine.facets.facet_wrap import n2mfrow
+                    nrow, _ = n2mfrow(len(df[['process', 'measure']].drop_duplicates().index))
+                    kwargs['figure_size'] = (12, nrow * 2.5)
             else:
                 plot = plot + facet_grid(f"{group_colname} ~ measure", scales='free_y', labeller='label_both')
                 if 'figure_size' not in kwargs:
