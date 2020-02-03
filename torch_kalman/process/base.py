@@ -7,8 +7,9 @@ from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.internals.batch import Batchable
+
 from torch_kalman.process.utils.design_matrix import (
-    TransitionMatrix, MeasureMatrix, VarianceMultiplierMatrix, DesignMatAssignment, DesignMatAdjustment
+    TransitionMatrix, MeasureMatrix, DesignMatAssignment, DesignMatAdjustment, ProcessVarianceMultiplierMatrix
 )
 from torch_kalman.internals.repr import NiceRepr
 
@@ -28,7 +29,7 @@ class Process(NiceRepr, Batchable):
         self.measure_mat = MeasureMatrix(dim1_names=None, dim2_names=self.state_elements)
 
         # variance of dynamic state elements:
-        self.variance_multi_mat = VarianceMultiplierMatrix(self.state_elements)
+        self.variance_multi_mat = ProcessVarianceMultiplierMatrix(self.state_elements, self.dynamic_state_elements)
 
         self._validate()
 
@@ -140,31 +141,36 @@ class Process(NiceRepr, Batchable):
             raise ValueError("Class has been misconfigured: some fixed state-elements are also dynamic-state-elements.")
 
     def __init_subclass__(cls, **kwargs):
-        for_batch_kwargs = set(cls.for_batch_kwargs(cls.for_batch))
-        init_mean_kwargs = set(cls.for_batch_kwargs(cls.initial_state_means_for_batch))
+        overrides_batch_kwargs = (cls.batch_kwargs.__code__ != Process.batch_kwargs.__code__)
+        if not overrides_batch_kwargs:
 
-        overrides_for_batch = (cls.for_batch != Process.for_batch)
-        overrides_init_mean = (cls.initial_state_means_for_batch != Process.initial_state_means_for_batch)
+            batch_kwargs = set(cls.batch_kwargs(cls.for_batch))
+            init_mean_kwargs = set(cls.batch_kwargs(cls.initial_state_means_for_batch))
 
-        if overrides_for_batch:
-            if 'kwargs' in for_batch_kwargs:
-                raise TypeError(
-                    f"Signature of `{cls.__name__}.for_batch` must define its keyword args explicitly."
-                )
-        if overrides_init_mean:
-            if 'kwargs' in init_mean_kwargs:
-                raise TypeError(
-                    f"Signature of `{cls.__name__}.initial_state_means_for_batch` must define keyword args explicitly."
-                )
-        if overrides_for_batch and overrides_init_mean:
-            if for_batch_kwargs != init_mean_kwargs:
-                raise TypeError(
-                    f"`{cls.__name__}.initial_state_means_for_batch()` must match signature of .for_batch()"
-                )
+            overrides_for_batch = (cls.for_batch.__code__ != Process.for_batch.__code__)
+            overrides_init_mean = (
+                    cls.initial_state_means_for_batch.__code__ != Process.initial_state_means_for_batch.__code__
+            )
+
+            if overrides_for_batch:
+                if 'kwargs' in batch_kwargs:
+                    raise TypeError(
+                        f"Signature of `{cls.__name__}.for_batch` must define its keyword args explicitly."
+                    )
+            if overrides_init_mean:
+                if 'kwargs' in init_mean_kwargs:
+                    raise TypeError(
+                        f"Signature of `{cls.__name__}.initial_state_means_for_batch` must define kwargs explicitly."
+                    )
+            if overrides_for_batch and overrides_init_mean:
+                if batch_kwargs != init_mean_kwargs:
+                    raise TypeError(
+                        f"`{cls.__name__}.initial_state_means_for_batch()` must match signature of .for_batch()"
+                    )
         super().__init_subclass__()
 
     @classmethod
-    def for_batch_kwargs(cls, method: Optional[Callable] = None) -> Iterable[str]:
+    def batch_kwargs(cls, method: Optional[Callable] = None) -> Iterable[str]:
         if method is None:
             method = cls.for_batch
         excluded = {'self', 'num_groups', 'num_timesteps', 'parameters'}
