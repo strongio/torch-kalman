@@ -1,7 +1,5 @@
-from typing import Optional, Union
-from warnings import warn
-
 import numpy as np
+from torch_kalman.config import DEFAULT_SEASON_START
 
 
 class DatetimeProcess:
@@ -24,7 +22,7 @@ class DatetimeProcess:
                 raise ValueError("Must pass `dt_unit` if passing `season_start`.")
         else:
             if season_start is None:
-                season_start = '1970-01-05'  # first monday since epoch
+                season_start = DEFAULT_SEASON_START
 
         if dt_unit in self.supported_dt_units:
             self.start_datetime = np.datetime64(season_start, (dt_unit, 1))
