@@ -11,6 +11,7 @@ from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
 
 from torch_kalman.internals.repr import NiceRepr
 from torch_kalman.internals.utils import ragged_cat, true1d_idx
+from torch_kalman.utils.datetime import DateTimeHelper
 
 
 class TimeSeriesDataset(NiceRepr, TensorDataset):
@@ -50,7 +51,8 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         self.measures = tuple(tuple(m) for m in measures)
         self.all_measures = tuple(itertools.chain.from_iterable(self.measures))
         self.group_names = group_names
-        self.start_times = self._validate_start_times(start_times, dt_unit)
+        self._dt_helper = DateTimeHelper(dt_unit=dt_unit, start_datetime=None)
+        self.start_times = self._dt_helper.validate_datetimes(start_times)
         self.dt_unit = dt_unit
         super().__init__(*tensors)
 
@@ -349,10 +351,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             num_timesteps = max(tensor.shape[1] for tensor in self.tensors)
         else:
             num_timesteps = self.tensors[which].shape[1]
-        offset = np.arange(0, num_timesteps)
-        if self.dt_unit == 'W':
-            offset *= 7
-        return self.start_times[:, None] + offset
+        return self._dt_helper.make_grid(self.start_times, num_timesteps)
 
     def datetimes(self) -> np.ndarray:
         return self.times()
@@ -369,37 +368,6 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         times = self.times(which=0)
         last_measured_idx = self._last_measured_idx()
         return np.array([t[idx] for t, idx in zip(times, last_measured_idx)], dtype=f'datetime64[{self.dt_unit}]')
-
-    def _validate_start_times(self, start_times: Union[np.ndarray, Sequence], dt_unit: Optional[str]) -> np.ndarray:
-        if not isinstance(start_times, np.ndarray) or not isinstance(start_times[0], np.datetime64):
-            if isinstance(start_times[0], np.datetime64):
-                start_times = np.array(start_times, dtype='datetime64')
-            elif isinstance(start_times[0], (datetime.date, datetime.datetime)):
-                start_times = np.array(start_times, dtype='datetime64')
-            else:
-                try:
-                    start_times_int = np.array(start_times, dtype=np.int64)
-                except TypeError as e:
-                    raise TypeError("Expected start_times to be sequence of datetimes or ints.") from e
-                if not np.isclose(start_times_int - start_times, 0.).all():
-                    raise ValueError("`start_times` should be a datetime64 array or an array of whole numbers")
-                start_times = start_times_int
-
-        if dt_unit in self.supported_dt_units:
-            start_times = start_times.astype(f"datetime64[{dt_unit}]")
-        elif dt_unit == 'W':
-            weekdays = set(day_of_week_num(start_times))
-            if len(weekdays) > 1:
-                raise ValueError(f"For weekly data, all start_times must be same day-of-week. Got:\n{weekdays}")
-            # need to keep daily due how numpy does rounding: https://github.com/numpy/numpy/issues/12404
-            start_times = start_times.astype('datetime64[D]')
-        elif dt_unit is None:
-            if not start_times.dtype == np.int64:
-                raise ValueError("If `dt_unit` is None, expect start_times to be an array w/dtype of int64.")
-        else:
-            raise ValueError(f"Time-unit of {dt_unit} not currently supported.")
-
-        return start_times
 
     def _last_measured_idx(self) -> np.ndarray:
         """
@@ -452,11 +420,3 @@ class TimeSeriesDataLoader(DataLoader):
             ]
         )
         return cls(dataset=dataset, **kwargs)
-
-
-# assumed by `day_of_week_num`:
-assert np.zeros(1).astype('datetime64[D]') == np.datetime64('1970-01-01', 'D')
-
-
-def day_of_week_num(dts: np.ndarray) -> np.ndarray:
-    return (dts.astype('datetime64[D]').view('int64') - 4) % 7

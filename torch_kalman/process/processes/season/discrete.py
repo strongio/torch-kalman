@@ -8,11 +8,11 @@ from torch.nn import Parameter, ParameterDict
 
 from torch_kalman.process import Process
 from torch_kalman.process.utils.bounded import Bounded
-from torch_kalman.process.mixins.datetime import DatetimeProcess
 from torch_kalman.internals.utils import split_flat, zpad
+from torch_kalman.utils.datetime import DateTimeHelper
 
 
-class Season(DatetimeProcess, Process):
+class Season(Process):
     measured_name = 'measured'
 
     def __init__(self,
@@ -50,13 +50,14 @@ class Season(DatetimeProcess, Process):
         if dt_unit is None:
             # optional for some seasonal processes, but not for this one
             raise TypeError(f"Must pass `dt_unit` to {type(self).__name__}")
+        self._dt_helper = DateTimeHelper(dt_unit=dt_unit, start_datetime=season_start)
 
         # state-elements:
         pad_n = len(str(seasonal_period))
-        super().__init__(id=id,
-                         state_elements=[self.measured_name] + [zpad(i, pad_n) for i in range(1, seasonal_period)],
-                         season_start=season_start,
-                         dt_unit=dt_unit)
+        super().__init__(
+            id=id,
+            state_elements=[self.measured_name] + [zpad(i, pad_n) for i in range(1, seasonal_period)]
+        )
 
         # transitions are placeholders, filled in w/batch
         for i, current in enumerate(self.state_elements):
@@ -94,12 +95,16 @@ class Season(DatetimeProcess, Process):
                   start_datetimes: Optional[np.ndarray] = None):
 
         if start_datetimes is not None:
-            if len(start_datetimes.shape) != 1 or len(start_datetimes) != num_groups:
+            if len(start_datetimes) != num_groups or len(start_datetimes.shape) != 1:
                 raise ValueError(f"Expected `start_datetimes` to be 1D array of length {num_groups}.")
 
         for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
 
-        delta = self._get_delta(num_groups, num_timesteps, start_datetimes=start_datetimes)
+        if start_datetimes is None:
+            if self._dt_helper.start_datetime:
+                raise TypeError("Missing argument `start_datetimes`.")
+            start_datetimes = np.zeros(num_groups)
+        delta = self._dt_helper.make_delta_grid(start_datetimes, num_timesteps)
 
         in_transition = (delta % self.season_duration) == (self.season_duration - 1)
 
@@ -139,8 +144,9 @@ class Season(DatetimeProcess, Process):
                                       parameters: Parameter,
                                       num_groups: int,
                                       start_datetimes: Optional[np.ndarray] = None) -> Tensor:
-
-        delta = self._get_delta(num_groups, 1, start_datetimes=start_datetimes).squeeze(1)
+        if start_datetimes is None:
+            start_datetimes = np.zeros(num_groups)
+        delta = self._dt_helper.make_delta_grid(start_datetimes, num_timesteps=1).squeeze(1)
         season_shift = (np.floor(delta / self.season_duration) % self.seasonal_period).astype('int')
         means = [torch.cat([parameters[-shift:], parameters[:-shift]]) for shift in season_shift]
         return torch.stack(means, 0)

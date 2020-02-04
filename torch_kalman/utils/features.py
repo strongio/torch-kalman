@@ -1,6 +1,7 @@
 from typing import Union, Optional
 import numpy as np
-from torch_kalman.config import DEFAULT_SEASON_START
+
+from torch_kalman.utils.datetime import DateTimeHelper
 
 
 def fourier_model_mat(datetimes: np.ndarray,
@@ -30,34 +31,28 @@ def fourier_model_mat(datetimes: np.ndarray,
         else:
             raise ValueError("Unrecognized `period`.")
 
-    # convert datetimes and period into ints:
-    if hasattr(datetimes, 'values'):
-        datetimes = datetimes.values
-    time_unit = np.datetime_data(period)[0]
-    if hasattr(datetimes, 'to_datetime64'):
-        datetimes = datetimes.to_datetime64()
-    if start_datetime is None:
-        start_datetime = DEFAULT_SEASON_START
-    if isinstance(start_datetime, str):
-        start_datetime = np.datetime64(start_datetime)
-    time = (datetimes - start_datetime).astype(f'timedelta64[{time_unit}]').view('int64')
     period_int = period.view('int64')
+    dt_helper = DateTimeHelper(dt_unit=np.datetime_data(period)[0], start_datetime=start_datetime)
+    time = dt_helper.validate_datetimes(datetimes).view('int64')
 
     output_dataframe = (output_fmt.lower() == 'dataframe')
     if output_dataframe:
         output_fmt = 'float64'
 
     # fourier matrix:
-    out = np.empty((len(datetimes), K * 2), dtype=output_fmt)
+    out_shape = tuple(datetimes.shape) + (K * 2,)
+    out = np.empty(out_shape, dtype=output_fmt)
     columns = []
     for idx in range(K):
         k = idx + 1
         for is_cos in range(2):
             val = 2. * np.pi * k * time / period_int
-            out[:, idx * 2 + is_cos] = np.sin(val) if is_cos == 0 else np.cos(val)
+            out[..., idx * 2 + is_cos] = np.sin(val) if is_cos == 0 else np.cos(val)
             columns.append(f"{name}_K{k}_{'cos' if is_cos else 'sin'}")
 
     if output_dataframe:
+        if len(out_shape) > 2:
+            raise ValueError("Cannot output dataframe when input is 2+D array.")
         from pandas import DataFrame
         out = DataFrame(out, columns=columns)
 
