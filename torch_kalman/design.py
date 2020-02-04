@@ -1,6 +1,6 @@
 from collections import OrderedDict
 from copy import copy
-from typing import Tuple, Sequence, Dict, Iterable, Optional, Union
+from typing import Tuple, Sequence, Dict, Iterable, Union
 from warnings import warn
 
 import torch
@@ -9,6 +9,7 @@ from torch.nn import Parameter, ModuleDict, ParameterDict
 
 from torch_kalman.internals.batch import Batchable
 from torch_kalman.covariance import CovarianceFromLogCholesky, PartialCovarianceFromLogCholesky
+from torch_kalman.internals.utils import infer_forward_kwargs
 
 from torch_kalman.process import Process
 from lazy_object_proxy.utils import cached_property
@@ -21,7 +22,9 @@ from torch_kalman.process.utils.design_matrix import (
     MeasureVarianceMultiplierMatrix
 )
 from torch_kalman.internals.repr import NiceRepr
+from torch_kalman.process.utils.design_matrix.utils import adjustments_from_nn
 from torch_kalman.utils.nn import NamedEmbedding
+from torch_kalman.utils.nn.fourier_season import FourierSeasonNN
 
 
 class Design(NiceRepr, Batchable):
@@ -136,23 +139,24 @@ class Design(NiceRepr, Batchable):
         for_batch.batch_info = (num_groups, num_timesteps)
         for_batch._initial_mean = torch.zeros(num_groups, len(self.state_elements))
 
+        batch_dim_kwargs = {'num_groups': num_groups, 'num_timesteps': num_timesteps}
+
         unused_kwargs = set(kwargs.keys())
 
         # processes:
         for process_name, process in self.processes.items():
-            proc_kwargs = self._parse_kwargs(
-                batch_kwargs=process.batch_kwargs(), prefix=process.id, all_kwargs=kwargs
+            proc_kwargs, used = self._parse_kwargs(
+                batch_kwargs=process.batch_kwargs(),
+                prefix=process.id,
+                all_kwargs=kwargs,
+                aliases=getattr(process, 'batch_kwargs_aliases', {})
             )
-            for k in proc_kwargs:
+            for k in used:
                 unused_kwargs.discard(k)
 
             # wrap calls w/process-name for easier tracebacks:
             try:
-                for_batch.processes[process_name] = process.for_batch(
-                    num_groups=num_groups,
-                    num_timesteps=num_timesteps,
-                    **proc_kwargs
-                )
+                for_batch.processes[process_name] = process.for_batch(**batch_dim_kwargs, **proc_kwargs)
                 for_batch._initial_mean[:, self.process_slices[process_name]] = process.initial_state_means_for_batch(
                     parameters=self.init_mean_params[self.process_slices[process_name]],
                     num_groups=num_groups,
@@ -166,24 +170,28 @@ class Design(NiceRepr, Batchable):
                 raise RuntimeError(f"{process_name}'s `for_batch` call did not return anything.")
 
         # var adjustments:
-        for_batch._measure_var_adjustments = self._measure_var_adjustments.for_batch(
-            num_groups=num_groups, num_timesteps=num_timesteps
-        )
+        for_batch._measure_var_adjustments = self._measure_var_adjustments.for_batch(**batch_dim_kwargs)
         for var_type, nn_list in {'measure': self._measure_var_nn, 'process': self._process_var_nn}.items():
-            for nn_module in nn_list:
-                kwarg_name = getattr(nn_module, 'batch_kwarg', 'predictors')
-                nn_kwargs = self._parse_kwargs(
-                    prefix=f'{var_type}_var_nn',
-                    batch_kwargs=[kwarg_name],
-                    all_kwargs=kwargs
+            for i, nn in enumerate(nn_list):
+                nn_kwargs, used = self._parse_kwargs(
+                    prefix=f'{var_type}_var_nn{i}',
+                    batch_kwargs=nn._forward_kwargs,
+                    all_kwargs={**kwargs, **batch_dim_kwargs},
+                    aliases=getattr(nn, '_forward_kwargs_aliases', {})
                 )
-                if not nn_kwargs:
-                    raise TypeError(f"Missing argument for {var_type}_nn_module: {kwarg_name}")
-                for kwarg_name in nn_kwargs:
-                    unused_kwargs.discard(kwarg_name)
-                nn_outputs = self._get_var_adjustments(nn_module=nn_module, var_type=var_type, nn_kwargs=nn_kwargs)
-                for el, adj in nn_outputs.items():
-                    for_batch._adjust_variance(el, adjustment=adj)
+                for k in used:
+                    unused_kwargs.discard(k)
+
+                adjustments = adjustments_from_nn(
+                    nn=nn,
+                    **batch_dim_kwargs,
+                    nn_kwargs=nn_kwargs,
+                    output_names=self.measures if var_type == 'measure' else self.dynamic_state_elements,
+                    time_split_kwargs=getattr(nn, '_time_split_kwargs', ())
+                )
+
+                for el, adj in adjustments.items():
+                    for_batch._adjust_variance(el, adjustment=adj, check_slow_grad=False)
 
         if unused_kwargs:
             warn("Unexpected keyword arguments: {}".format(unused_kwargs))
@@ -299,17 +307,28 @@ class Design(NiceRepr, Batchable):
         return list(self.processes.values())
 
     # Private -----:
-    @staticmethod
-    def _parse_kwargs(prefix: str, all_kwargs: dict, batch_kwargs: Iterable[str]) -> dict:
+    def _parse_kwargs(self,
+                      prefix: str,
+                      all_kwargs: dict,
+                      batch_kwargs: Iterable[str],
+                      aliases: dict) -> Tuple[dict, set]:
         # use sklearn-style disambiguation:
+        used = set()
         out = {}
         for k in batch_kwargs:
             specific_key = "{}__{}".format(prefix, k)
             if specific_key in all_kwargs:
                 out[k] = all_kwargs[specific_key]
+                used.add(k)
             elif k in all_kwargs:
                 out[k] = all_kwargs[k]
-        return out
+                used.add(k)
+            else:
+                alias = aliases.get(k) or aliases.get(specific_key)
+                if alias in all_kwargs:
+                    out[k] = all_kwargs[alias]
+                    used.add(alias)
+        return out, used
 
     def _standardize_var_nn(self,
                             var_nn: Union[torch.nn.Module, Sequence],
@@ -330,20 +349,23 @@ class Design(NiceRepr, Batchable):
             return torch.nn.ModuleList([self._standardize_var_nn(sub_nn, var_type) for sub_nn in var_nn])
         else:
             if callable(var_nn):
-                out = var_nn
+                out_nn = var_nn
             elif isinstance(var_nn, (tuple, list)):
                 alias, args_or_kwargs = var_nn
+                num_outputs = len(self.measures if var_type == 'measure' else self.dynamic_state_elements)
+                if alias == 'per_group' and isinstance(args_or_kwargs, int):
+                    args_or_kwargs = (args_or_kwargs,)
+                if isinstance(args_or_kwargs, dict):
+                    args, kwargs = (), args_or_kwargs
+                else:
+                    args, kwargs = args_or_kwargs, {}
+
                 if alias == 'per_group':
-                    if isinstance(args_or_kwargs, int):
-                        args_or_kwargs = (args_or_kwargs,)
-                    output_dim = len(self.measures if var_type == 'measure' else self.dynamic_state_elements)
-                    if isinstance(args_or_kwargs, tuple):
-                        out = NamedEmbedding(*args_or_kwargs, embedding_dim=output_dim)
-                    else:
-                        out = NamedEmbedding(**args_or_kwargs, embedding_dim=output_dim)
-                    out.batch_kwarg = 'group_names'
+                    out_nn = NamedEmbedding(*args, **kwargs, embedding_dim=num_outputs)
+                    out_nn._forward_kwargs_aliases = {'input': 'group_names'}
                 elif alias == 'seasonal':
-                    raise NotImplementedError  # TODO
+                    out_nn = FourierSeasonNN(*args, **kwargs, num_outputs=num_outputs)
+                    out_nn._time_split_kwargs = ['datetimes']
                 else:
                     raise ValueError(f"Known aliases are 'per_group' and 'seasonal'; got '{alias}'")
             else:
@@ -351,7 +373,11 @@ class Design(NiceRepr, Batchable):
                     f"Expected `{var_type}_var_nn` to be a callable/torch.nn.Module, or a tuple with format "
                     f"`('alias',(arg1,arg2,...)`. Instead got `{type(var_nn)}`."
                 )
-            return out
+            if not hasattr(out_nn, '_forward_kwargs'):
+                out_nn._forward_kwargs = infer_forward_kwargs(out_nn)
+            if not hasattr(out_nn, '_forward_kwargs_aliases'):
+                out_nn._forward_kwargs_aliases = {}
+            return out_nn
 
     def _adjust_variance(self,
                          *args,
@@ -369,26 +395,3 @@ class Design(NiceRepr, Batchable):
             self.processes[process]._adjust_variance(
                 state_element=state_element, adjustment=adjustment, check_slow_grad=check_slow_grad
             )
-
-    def _get_var_adjustments(self,
-                             nn_module: torch.nn.Module,
-                             var_type: str,
-                             nn_kwargs: dict) -> Dict[str, 'DesignMatAdjustment']:
-        nn_input = list(nn_kwargs.values())
-        assert len(nn_input) == 1
-        nn_input = nn_input[0]
-        elements = self.measures if var_type == 'measure' else self.dynamic_state_elements
-        # TODO: support broadcasting if output shape is (num_groups, 1) or (num_groups, num_times, 1)
-        if isinstance(nn_input, torch.Tensor) and tuple(nn_input.shape)[0:2] == self.batch_info:
-            nn_outputs = {el: [] for el in self.state_elements}
-            for t in range(self.num_timesteps):
-                nn_output = nn_module(nn_input[:, t])
-                for i, el in enumerate(elements):
-                    try:
-                        nn_outputs[el].append(nn_output[:, i])
-                    except IndexError as e:
-                        raise e  # TODO: give helpful info
-        else:
-            nn_output = nn_module(nn_input)
-            nn_outputs = {el: nn_output[:, i] for i, el in enumerate(elements)}
-        return nn_outputs
