@@ -21,7 +21,7 @@ def _simulate(num_groups: int, num_timesteps: int, season_spec: dict, noise: flo
     start_datetimes = np.zeros(num_groups, dtype='timedelta64') + season_spec['season_start']
     with torch.no_grad():
         dfb = kf.design.for_batch(num_groups=num_groups, num_timesteps=num_timesteps, start_datetimes=start_datetimes)
-        initial_state = kf.predict_initial_state(dfb)
+        initial_state = kf._predict_initial_state(dfb)
         simulated_trajectories = initial_state.simulate_trajectories(dfb)
         sim_data = simulated_trajectories.sample_measurements(eps=noise)
 
