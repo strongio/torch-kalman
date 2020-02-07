@@ -402,7 +402,7 @@ class StateBeliefOverTime(NiceRepr):
                 if 'figure_size' not in kwargs:
                     kwargs['figure_size'] = (12, num_groups * 2.5)
 
-            if num_processes == 1:
+            if (df.groupby('measure')['process'].nunique() <= 1).all():
                 plot = plot + geom_line(aes(y='mean', color='state_element'), size=1.5)
 
         else:
