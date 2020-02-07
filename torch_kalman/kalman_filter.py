@@ -16,7 +16,7 @@ from torch_kalman.internals.utils import identity
 
 class KalmanFilter(Module):
     """
-    TODO
+    The base class for a KalmanFilter nn-module.
     """
     family = Gaussian
     design_cls = Design
@@ -24,16 +24,34 @@ class KalmanFilter(Module):
     def __init__(self,
                  measures: Sequence[str],
                  processes: Sequence[Process],
+                 measure_var_predict: Sequence[torch.nn.Module] = (),
+                 process_var_predict: Sequence[torch.nn.Module] = (),
                  **kwargs):
         """
         :param processes: Processes
         :param measures: Measure-names
-        :param measure_var_nn: TODO
-        :param process_var_nn: TODO
+        :param measure_var_predict: If a torch.nn.Module (or a list of these) is passed, this will be used to predict
+        the measure-variance. Then when calling your KalmanFilter, the input to this module can be passed using the
+        keyword-arguments to the measure-var-predictor's `forward()` method (e.g. if you pass a single module
+        `MyVarPredictModule`, with `forward()` that takes `input`, you would call your KalmanFilter with
+        `measure_var_nn0__input=[predictor-tensor]`). In addition to passing a torch.nn.Module, you can pass a tuple
+        with the format `('alias',alias_args)`. There are currently two supported aliases. The 'per_group' alias (e.g.
+        `('per_group',(number_of_groups,))`) allows a separate set of variance-adjustment parameters for each group
+        passed to the KalmanFilter. The 'seasonal' alias (e.g. `('seasonal',{'K':2,'period':'yearly','dt_unit':'W'})`)
+        allows the variance to vary in a seasonal pattern, as implemented by `FourierSeasonNN`. Multiple modules and
+        aliases can be passed as a list (e.g. `[('per_group',1), ('seasonal',yearly_args), ('seasonal',weekly_args)]`).
+        :param process_var_predict: See `measure_var_predict`.
+        :param kwargs: Other keyword arguments to pass to `KalmanFilter.design_cls`.
         """
 
         super().__init__()
-        self.design = self.design_cls(measures=measures, processes=processes, **kwargs)
+        self.design = self.design_cls(
+            measures=measures,
+            processes=processes,
+            measure_var_predict=measure_var_predict,
+            process_var_predict=process_var_predict,
+            **kwargs
+        )
 
         # parameters from design:
         self.design_parameters = self.design.param_dict()
@@ -69,8 +87,12 @@ class KalmanFilter(Module):
         rather than having to compare the dimensions of the input tensor and the predictor tensor.
         :param progress: Should progress-bar be generated?
         :param initial_prediction: Usually left `None` so that initial predictions are made automatically; in some
-        cases case pass a StateBelief generated from a previous prediciton.
-        :param kwargs: Other kwargs that will be passed to the kf's `design.for_batch()` method.
+        cases case you might pass a StateBelief generated from a previous prediciton.
+        :param kwargs: Other kwargs that will be passed to the kf's `design.for_batch()` method, which in turn passes
+        them to each process (or to the NNs specified in `*_var_predict`). Sometimes, processes might share keyword-
+        argument names but you want to pass different arguments to them -- for example, if you have two processes that
+        take `predictors` but you want to pass a different predictor matrix to each. In this case you can disambiguate
+        using sklearn-style double-underscoring: `process1__predictors` and `process2__predictors`.
         :return: A StateBeliefOverTime consisting of one-step-ahead predictions.
         """
         if input is None:

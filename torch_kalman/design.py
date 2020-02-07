@@ -36,14 +36,14 @@ class Design(NiceRepr, Batchable):
     def __init__(self,
                  processes: Sequence[Process],
                  measures: Sequence[str],
-                 measure_var_nn: Sequence[torch.nn.Module] = (),
-                 process_var_nn: Sequence[torch.nn.Module] = ()
+                 measure_var_predict: Sequence[torch.nn.Module] = (),
+                 process_var_predict: Sequence[torch.nn.Module] = ()
                  ):
         """
         :param processes: Processes
         :param measures: Measure-names
-        :param measure_var_nn: TODO
-        :param process_var_nn: TODO
+        :param measure_var_predict: See documentation for KalmanFilter.
+        :param process_var_predict: See documentation for KalmanFilter.
         """
         self.measures = tuple(measures)
 
@@ -56,10 +56,10 @@ class Design(NiceRepr, Batchable):
         self._validate()
 
         # process-variance predictions:
-        self._process_var_nn = self._standardize_var_nn(process_var_nn, var_type='process', top_level=True)
+        self._process_var_nn = self._standardize_var_nn(process_var_predict, var_type='process', top_level=True)
 
         # measure-variance predictions:
-        self._measure_var_nn = self._standardize_var_nn(measure_var_nn, var_type='measure', top_level=True)
+        self._measure_var_nn = self._standardize_var_nn(measure_var_predict, var_type='measure', top_level=True)
 
         # params:
 
@@ -179,6 +179,12 @@ class Design(NiceRepr, Batchable):
                     all_kwargs={**kwargs, **batch_dim_kwargs},
                     aliases=getattr(nn, '_forward_kwargs_aliases', {})
                 )
+
+                # a cheat that makes the `seasonal` alias more convenient:
+                if 'datetimes' in nn._forward_kwargs and 'datetimes' not in nn_kwargs and hasattr(nn, '_dt_helper'):
+                    if 'start_datetimes' in kwargs:
+                        nn_kwargs['datetimes'] = nn._dt_helper.make_grid(kwargs['start_datetimes'], num_timesteps)
+
                 for k in used:
                     unused_kwargs.discard(k)
 
@@ -312,6 +318,8 @@ class Design(NiceRepr, Batchable):
                       all_kwargs: dict,
                       batch_kwargs: Iterable[str],
                       aliases: dict) -> Tuple[dict, set]:
+        too_generic = {'input', 'x'}
+
         # use sklearn-style disambiguation:
         used = set()
         out = {}
@@ -321,6 +329,11 @@ class Design(NiceRepr, Batchable):
                 out[k] = all_kwargs[specific_key]
                 used.add(k)
             elif k in all_kwargs:
+                if k in too_generic:
+                    raise ValueError(
+                        f"The argument `{k}` is too generic, so it needs to be passed in a way that specifies which "
+                        f"process it should be handed off to (e.g. {specific_key})."
+                    )
                 out[k] = all_kwargs[k]
                 used.add(k)
             else:
