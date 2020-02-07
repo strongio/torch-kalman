@@ -8,12 +8,13 @@ from torch_kalman.process import Process
 import numpy as np
 
 from torch_kalman.process.utils.bounded import Bounded
-from torch_kalman.process.mixins.datetime import DatetimeProcess
+
 from torch_kalman.process.utils.fourier import fourier_tensor
 from torch_kalman.internals.utils import split_flat
+from torch_kalman.utils.datetime import DateTimeHelper
 
 
-class _FourierSeason(DatetimeProcess, Process):
+class _FourierSeason(Process):
     def __init__(self,
                  id: str,
                  seasonal_period: Union[int, float],
@@ -35,7 +36,9 @@ class _FourierSeason(DatetimeProcess, Process):
 
         state_elements, list_of_trans_kwargs = self._setup(decay=decay)
 
-        super().__init__(id=id, state_elements=state_elements, season_start=season_start, dt_unit=dt_unit)
+        super().__init__(id=id, state_elements=state_elements)
+
+        self._dt_helper = DateTimeHelper(dt_unit=dt_unit, start_datetime=season_start)
 
         for trans_kwargs in list_of_trans_kwargs:
             self._set_transition(**trans_kwargs)
@@ -107,7 +110,11 @@ class FourierSeason(_FourierSeason):
         for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
 
         # determine the delta (integer time accounting for different groups having different start datetimes)
-        delta = self._get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
+        if start_datetimes is None:
+            if self._dt_helper.start_datetime:
+                raise TypeError("Missing argument `start_datetimes`.")
+            start_datetimes = np.zeros(num_groups)
+        delta = self._dt_helper.make_delta_grid(start_datetimes, num_timesteps)
 
         # determine season:
         season = delta % self.seasonal_period
@@ -156,7 +163,9 @@ class FourierSeason2(_FourierSeason):
         for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
 
         # determine the delta (integer time accounting for different groups having different start datetimes)
-        delta = self._get_delta(for_batch.num_groups, for_batch.num_timesteps, start_datetimes=start_datetimes)
+        if start_datetimes is None:
+            start_datetimes = np.zeros(num_groups)
+        delta = self._dt_helper.make_delta_grid(start_datetimes, num_timesteps)
 
         # determine season:
         season = delta % self.seasonal_period

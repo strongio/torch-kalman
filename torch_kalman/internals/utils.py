@@ -1,3 +1,4 @@
+import inspect
 from typing import Dict, Union, Any, Callable, Iterable, Tuple, Sequence
 
 import torch
@@ -85,3 +86,27 @@ def true1d_idx(arr: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
     if len(arr.shape) > 1:
         raise ValueError("Expected 1d array.")
     return np.where(arr)[0]
+
+
+def infer_forward_kwargs(nn: Union[torch.nn.Module, Callable], method_name: 'str' = 'forward') -> Sequence[str]:
+    if hasattr(nn, '_forward_kwargs'):
+        return nn._forward_kwargs
+    method = getattr(nn, method_name, None)
+    try:
+        params = [kwarg for kwarg in inspect.signature(method).parameters if kwarg not in {'self', 'kwargs'}]
+    except TypeError as e:
+        if e.args[0].endswith('None is not a callable object'):
+            params = []
+        else:
+            raise e
+    if not params:
+        if method_name == '__call__':
+            raise TypeError(
+                f"Unable to infer arguments for {nn}. Make sure the `forward` method uses named keyword-arguments."
+            )
+        return infer_forward_kwargs(nn, method_name='__call__')
+    if 'args' in params:
+        raise TypeError(
+            f"Unable to infer arguments for {nn}. Make sure it does not use `*args, **kwargs`"
+        )
+    return params

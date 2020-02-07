@@ -9,10 +9,7 @@ from torch_kalman.internals.batch import Batchable
 from torch_kalman.internals.exceptions import InputValidationError
 from torch_kalman.internals.utils import bifurcate, is_slow_grad, identity
 from torch_kalman.internals.repr import NiceRepr
-
-DesignMatAssignment = Union[float, Tensor, Callable]
-SeqOfTensors = Union[Tuple[Tensor], List[Tensor]]
-DesignMatAdjustment = Union[Tensor, SeqOfTensors]
+from torch_kalman.process.utils.design_matrix.utils import DesignMatAssignment, DesignMatAdjustment
 
 
 class DesignMatrix(NiceRepr, Batchable):
@@ -152,6 +149,8 @@ class DesignMatrix(NiceRepr, Batchable):
         Consolidate assignments then apply the link function. Some assignments can be "frozen" into a pre-computed
         matrix, while others must remain as lists to be evaluated in DesignForBatch as needed.
         """
+        from torch_kalman.process.utils.design_matrix.dynamic_matrix import DynamicMatrix
+
         base_mat = torch.zeros(self.num_groups, len(self.dim1_names), len(self.dim2_names))
         dynamic_assignments = {}
         for (dim1, dim2), values in self._assignments.items():
@@ -170,6 +169,7 @@ class DesignMatrix(NiceRepr, Batchable):
                 ]
             else:
                 base_mat[:, r, c] = ilink(torch.sum(torch.stack(broadcast_all(*base), dim=0), dim=0))
+
         return DynamicMatrix(base_mat, dynamic_assignments)
 
     # utils ------------------------------------------
@@ -262,108 +262,6 @@ class DesignMatrix(NiceRepr, Batchable):
                 "*then* do computations that require_grad on each element of the list. If this is a false-alarm, avoid "
                 "this error by passing check_slow_grad=False to the adjustment method."
             )
-
-
-class TransitionMatrix(DesignMatrix):
-    dim1_name = 'to_element'
-    dim2_name = 'from_element'
-
-    @property
-    def from_elements(self):
-        return self.dim1_names
-
-    @property
-    def to_elements(self):
-        return self.dim2_names
-
-
-class MeasureMatrix(DesignMatrix):
-    dim1_name = 'measure'
-    dim2_name = 'state_element'
-
-    @property
-    def measures(self):
-        return self.dim1_names
-
-    @property
-    def state_elements(self):
-        return self.dim2_names
-
-
-class VarianceMultiplierMatrix(DesignMatrix):
-    """
-    A diagonal-only matrix that can be multiplied by a covariance matrix.
-    """
-
-    def __init__(self, elements: Sequence[str], nonzero_elements: Optional[Sequence[str]] = None):
-        if nonzero_elements is None:
-            nonzero_elements = elements
-        super().__init__(dim1_names=elements, dim2_names=elements)
-        for element in nonzero_elements:
-            self.assign(**{self.dim1_name: element}, value=0.0)
-            self.set_ilink(**{self.dim1_name: element}, ilink=torch.exp)
-
-    @classmethod
-    def _from_attributes(cls,
-                         dim1_names: Sequence,
-                         dim2_names: Sequence,
-                         batch_info: Tuple,
-                         new_assignments: Dict,
-                         new_ilinks: Dict
-                         ) -> 'VarianceMultiplierMatrix':
-        """
-        Ignores nonzero_elements, but that gets overwritten by new_assignments and new_ilinks
-        """
-        assert dim1_names == dim2_names
-        out = cls(elements=dim1_names)
-        out._batch_info = batch_info
-        out._assignments = new_assignments
-        out._ilinks = new_ilinks
-        return out
-
-    def assign(self, value: DesignMatAssignment, **kwargs):
-        if value != 0.0:
-            raise ValueError(f"Cannot override assignment-value for {type(self).__name__}.")
-        super().assign(value=value, **kwargs)
-
-    def set_ilink(self, ilink: Optional[Callable], **kwargs):
-        if ilink is not torch.exp:
-            raise ValueError(f"Cannot override ilink for {type(self).__name__}.")
-        super().set_ilink(ilink=ilink, **kwargs)
-
-
-class ProcessVarianceMultiplierMatrix(VarianceMultiplierMatrix):
-    dim1_name = 'state_element'
-    dim2_name = 'state_element'
-
-    @property
-    def state_elements(self):
-        return self.dim1_names
-
-
-class MeasureVarianceMultiplierMatrix(VarianceMultiplierMatrix):
-    dim1_name = 'measure'
-    dim2_name = 'measure'
-
-    @property
-    def measures(self):
-        return self.dim1_names
-
-
-class DynamicMatrix(NiceRepr):
-    _repr_attrs = ()
-
-    def __init__(self, base_mat: Tensor, dynamic_assignments: Dict[Tuple[int, int], SeqOfTensors]):
-        self.base_mat = base_mat
-        self.dynamic_assignments = dynamic_assignments
-
-    def __call__(self, t: int) -> Tensor:
-        out = self.base_mat
-        if self.dynamic_assignments:
-            out = out.clone()
-        for (r, c), values in self.dynamic_assignments.items():
-            out[..., r, c] = values[t]
-        return out
 
 
 def _is_dynamic_assignment(x) -> bool:

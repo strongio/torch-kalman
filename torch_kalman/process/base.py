@@ -9,9 +9,10 @@ from torch.nn import Parameter
 from torch_kalman.internals.batch import Batchable
 
 from torch_kalman.process.utils.design_matrix import (
-    TransitionMatrix, MeasureMatrix, DesignMatAssignment, DesignMatAdjustment, ProcessVarianceMultiplierMatrix
+    TransitionMatrix, MeasureMatrix, ProcessVarianceMultiplierMatrix
 )
 from torch_kalman.internals.repr import NiceRepr
+from torch_kalman.process.utils.design_matrix.utils import DesignMatAssignment, DesignMatAdjustment
 
 
 class Process(NiceRepr, Batchable):

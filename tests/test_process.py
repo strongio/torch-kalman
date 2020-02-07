@@ -80,14 +80,15 @@ class TestProcess(TestCase):
 
     def test_discrete_seasons(self):
         # test seasons without durations
-        season = Season(id='day_of_week', seasonal_period=7, season_duration=1, season_start='2018-01-01',
-                        dt_unit='D')
+        season = Season(
+            id='day_of_week', seasonal_period=7, season_duration=1, season_start='2018-01-01', dt_unit='D'
+        )
         season.add_measure('measure')
 
         # need to include start_datetimes since included above
-        with self.assertRaises(ValueError) as cm:
+        with self.assertRaises(TypeError) as cm:
             season.for_batch(1, 1)
-        self.assertIn('Must pass `start_datetimes`', cm.exception.args[0])
+        self.assertIn('Missing argument `start_datetimes`', cm.exception.args[0])
 
         design = Design(processes=[season], measures=['measure'])
         batch_season = design.for_batch(1, 1, start_datetimes=np.array([np.datetime64('2018-01-01')]))
