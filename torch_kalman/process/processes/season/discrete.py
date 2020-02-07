@@ -13,6 +13,9 @@ from torch_kalman.utils.datetime import DateTimeHelper
 
 
 class Season(Process):
+    """
+    Process representing discrete seasons.
+    """
     measured_name = 'measured'
 
     def __init__(self,
@@ -24,8 +27,6 @@ class Season(Process):
                  dt_unit: Optional[str] = None,
                  fixed: bool = False):
         """
-        Process representing discrete seasons.
-
         :param id: Unique name for this process
         :param seasonal_period: The number of seasons (e.g. 7 for day_in_week).
         :param season_duration: The length of each season, default 1 time-step.

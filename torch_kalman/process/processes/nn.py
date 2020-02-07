@@ -11,7 +11,12 @@ from torch_kalman.process.utils.design_matrix.utils import adjustments_from_nn
 
 class NN(Process):
     """
-    Uses a torch.nn.module to map an input tensor into a lower-dimensional state representation.
+    Uses a torch.nn.Module to map an input tensor into a lower-dimensional state representation.
+
+    When calling your KalmanFilter, the input to this nn.Module can be passed using the keyword-arguments to its
+    `forward()` method. For example, if this NN process's id = 'nn_process', and you pass a single module
+    `MyVarPredictModule`, with `forward()` that takes  `input`, you would call your KalmanFilter with
+    `nn_process__input=[predictor-tensor]`. Alternatively, the NN process supports using the simpler alias `predictors`.
     """
     batch_kwargs_aliases = {'input': 'predictors'}
 
@@ -20,22 +25,30 @@ class NN(Process):
                  input_dim: int,
                  state_dim: int,
                  nn: torch.nn.Module,
-                 process_variance: bool = False,
                  init_variance: bool = True,
+                 process_variance: bool = False,
                  add_module_params_to_process: bool = True,
                  inv_link: Optional[Callable] = None,
                  time_split_kwargs: Sequence[str] = ()):
         """
-
-        :param id:
-        :param input_dim:
-        :param state_dim:
-        :param nn:
-        :param process_variance:
-        :param init_variance:
-        :param add_module_params_to_process:
-        :param inv_link:
-        :param time_split_kwargs:
+        :param id: A unique identifier for the process.
+        :param input_dim: The number of inputs to the nn.
+        :param state_dim: The number of outputs of the nn.
+        :param nn: A torch.nn.Module that takes a (num_groups, input_dim) Tensor, and outputs a (num_groups, state_dim)
+        Tensor.
+        :param init_variance: If True (the default), then there is initial uncertainty about the values of the states.
+        :param process_variance: If False (the default), then the uncertainty about the values of the states does not
+        grow at each timestep, so over time these eventually converge to a certain value. If True, then the latent-
+        states are allowed to 'drift' over time.
+        :param add_module_params_to_process: If `False`, then you need to pass your nn.Module's `.parameters()` to the
+        optimizer manually. This can be useful if you are using parameter-groups in your optimizer (e.g. for different
+        learning rates).
+        :param inv_link: An inverse link function that maps the linear-model to the prediction; default the identity.
+        :param time_split_kwargs: When calling the KalmanFilter, you will pass a prediction Tensor for your nn.Module
+        that is (num_groups, num_timesteps, input_dim). However, internally, this will be split up into multiple
+        tensors, and your nn.Module will take a (num_groups, input_dim) tensor. If your nn.Module's `forward()` method
+        takes just a single argument, then we can infer how to split this tensor. But if it takes multiple keyword
+        arguments, you need to specify which will be split in this fashion.
         """
         self.inv_link = inv_link
 

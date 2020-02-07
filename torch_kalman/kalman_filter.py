@@ -41,7 +41,7 @@ class KalmanFilter(Module):
         allows the variance to vary in a seasonal pattern, as implemented by `FourierSeasonNN`. Multiple modules and
         aliases can be passed as a list (e.g. `[('per_group',1), ('seasonal',yearly_args), ('seasonal',weekly_args)]`).
         :param process_var_predict: See `measure_var_predict`.
-        :param kwargs: Other keyword arguments to pass to `KalmanFilter.design_cls`.
+        :param kwargs: For child-classes; other keyword arguments to pass to `KalmanFilter.design_cls`.
         """
 
         super().__init__()

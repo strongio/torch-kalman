@@ -97,7 +97,24 @@ class StateBeliefOverTime(NiceRepr):
         Ht = self.H.permute(0, 1, 3, 2)
         return self.H.matmul(self.covs).matmul(Ht) + self.R
 
+    def state_belief_for_time(self, time_idx: Sequence[int]) -> StateBelief:
+        """
+        Get a StateBelief which captures the predictions at a set of timepoints, one for each group.
+
+        :param time_idx: A sequence of integers, one for each group, indexing the time (e.g. 0 would be the first
+        timepoint, 1 the 2nd timepoint...).
+        :return: A StateBelief for those times.
+        """
+        if len(time_idx) != self.num_groups:
+            raise ValueError("Expected len(time_idx) to == num_groups.")
+        return self._restore_sb(enumerate(time_idx))
+
     def last_update(self) -> StateBelief:
+        """
+        Get a StateBelief which captures the predictions at the timepoint, for each group, of the last observed
+        measurement.
+        :return: A StateBelief.
+        """
         no_updates = self.last_update_idx < 0
         if no_updates.any():
             raise ValueError(
@@ -105,23 +122,10 @@ class StateBeliefOverTime(NiceRepr):
             )
         return self._restore_sb(enumerate(self.last_update_idx.tolist()))
 
-    def last_prediction(self) -> StateBelief:
-        no_predicts = self.last_predict_idx < 0
-        if no_predicts.any():
-            raise ValueError(
-                f"The following groups have never been predicted:\n{no_predicts.nonzero().squeeze().tolist()}"
-            )
-        return self._restore_sb(enumerate(self.last_predict_idx.tolist()))
-
-    def state_belief_for_time(self, time_idx: Sequence[int]) -> StateBelief:
-        if len(time_idx) != self.num_groups:
-            raise ValueError("Expected len(time_idx) to == num_groups.")
-        return self._restore_sb(enumerate(time_idx))
-
     # Distribution-Methods -----------:
     def log_prob(self, obs: Tensor, **kwargs) -> Tensor:
         """
-        Compute the log-probability of data (e.g. data that was originally fed into the KalmanFilter.
+        Compute the log-probability of data (e.g. data that was originally fed into the KalmanFilter).
 
         :param obs: A Tensor that could be used in the KalmanFilter.forward pass.
         :param kwargs: Other keyword arguments needed to evaluate the log-prob (e.g. for a censored-kalman-filter, the
@@ -206,8 +210,7 @@ class StateBeliefOverTime(NiceRepr):
         Generate samples from the underlying torch.Distribution (usually a MultivariateNormal) on the measurement scale.
 
         :param eps: An optional float that will act as a multiplier on the noise in sampling. For advanced use-cases can
-          alternatively be a Tensor that will be used as uncorrelated white noise when generating samples (this can be
-          useful e.g. in generating laplace samples from a fitted model).
+          alternatively be a Tensor that will be used as uncorrelated white noise when generating samples.
         :return: A tensor of random samples.
         """
         raise NotImplementedError
@@ -225,9 +228,8 @@ class StateBeliefOverTime(NiceRepr):
         :param group_colname: Column-name for 'group'
         :param time_colname: Column-name for 'time'
         :param multi: Multiplier on std-dev for lower/upper CIs. Default 1.96.
-        :return: A pandas DataFrame with group, time, measure, plus:
-            - For type='predictions': mean, lower, upper
-            - For type='components': process, state_element, mean, lower, upper
+        :return: A pandas DataFrame with group, 'time', 'measure', 'mean', 'lower', 'upper'. For type='components'
+        additionally includes: 'process' and 'state_element'.
         """
 
         from pandas import concat
@@ -288,7 +290,7 @@ class StateBeliefOverTime(NiceRepr):
 
         elif type == 'components':
             # components:
-            for (measure, process, state_element), (m, std) in self.components().items():
+            for (measure, process, state_element), (m, std) in self._components().items():
                 df = _tensor_to_df(torch.stack([m, std], 2), measures=['mean', '_std'])
                 df['lower'] = df['mean'] - multi * df['_std']
                 df['upper'] = df['mean'] + multi * df.pop('_std')
@@ -316,7 +318,7 @@ class StateBeliefOverTime(NiceRepr):
 
         return concat(out, sort=True)
 
-    def components(self) -> Dict[Tuple[str, str, str], Tuple[Tensor, Tensor]]:
+    def _components(self) -> Dict[Tuple[str, str, str], Tuple[Tensor, Tensor]]:
         states_per_measure = defaultdict(list)
         for state_belief in self.state_beliefs:
             for m, measure in enumerate(self.design.measures):

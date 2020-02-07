@@ -8,9 +8,20 @@ from torch_kalman.process.utils.bounded import Bounded
 
 
 class LocalLevel(Process):
+    """
+    A simple random walk.
+    """
     def __init__(self,
                  id: str,
                  decay: Union[bool, Tuple[float, float]] = False):
+        """
+        :param id: A unique identifier for this process.
+        :param decay: If the process has decay, then the random walk will tend towards zero as we forecast out further
+        (note that this means you should center your time-series, or you should include another process that does not
+        have this property). Decay can be between 0 and 1, but values < .50 (or even .90) can often be too rapid and
+        you will run into trouble with vanishing gradients. When passing a pair of floats, the nn.Module will assign a
+        parameter representing the decay as a learned parameter somewhere between these bounds.
+        """
         super().__init__(id=id, state_elements=['position'])
 
         self.decay = None

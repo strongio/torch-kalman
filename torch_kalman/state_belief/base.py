@@ -13,6 +13,9 @@ from torch_kalman.internals.repr import NiceRepr
 
 
 class StateBelief(NiceRepr):
+    """
+    Belief in the state of the system at a particular timepoint, for a batch of time-serieses.
+    """
     _repr_attrs = ('means', 'covs', 'last_measured')
 
     def __init__(self,
@@ -20,8 +23,6 @@ class StateBelief(NiceRepr):
                  covs: Tensor,
                  last_measured: Optional[Tensor] = None):
         """
-        Belief in the state of the system at a particular timepoint, for a batch of time-series.
-
         :param means: The means (2D tensor)
         :param covs: The covariances (3D tensor).
         :param last_measured: 2D tensor indicating number of timesteps since mean/cov were updated with measurements;

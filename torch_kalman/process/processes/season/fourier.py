@@ -74,6 +74,9 @@ class _FourierSeason(Process):
 
 
 class FourierSeason(_FourierSeason):
+    """
+    Process representing seasons using a fourier-series.
+    """
     def __init__(self,
                  id: str,
                  seasonal_period: Union[int, float],

@@ -3,7 +3,7 @@ from typing import Union, Sequence, Optional
 import numpy as np
 import datetime
 
-from torch_kalman.config import DEFAULT_SEASON_START
+DEFAULT_START_DT = '1970-01-05'  # first monday since epoch
 
 
 class DateTimeHelper:
@@ -11,14 +11,14 @@ class DateTimeHelper:
 
     def __init__(self,
                  dt_unit: Optional[str] = None,
-                 start_datetime: Optional[np.datetime64] = None):
+                 start_datetime: Optional[np.datetime64] = DEFAULT_START_DT):
         self.dt_unit = dt_unit
         if self.dt_unit is None:
             assert start_datetime is None
             self.start_datetime = None
         else:
             if start_datetime is None:
-                start_datetime = DEFAULT_SEASON_START
+                start_datetime = DEFAULT_START_DT
             self.start_datetime = np.datetime64(start_datetime, 'D' if dt_unit == 'W' else dt_unit)
 
     def make_grid(self, start_datetimes: Union[np.ndarray, Sequence], num_timesteps: int) -> np.ndarray:

@@ -9,13 +9,36 @@ from torch_kalman.internals.utils import split_flat
 
 
 class LinearModel(Process):
+    """
+    A process that learns how external predictors map onto measurements.
+
+    In the most common use case, we want the coefficients to be learned for each time-series separately, but with an
+    initial estimate (with mean and covariance) that's shared across time-series. As more observations come in, the
+    coefficient-estimates for a particular series will converge.
+
+    If process_variance = True, then the coefficient estimates won't converge, but will be allowed to drift over time.
+
+    If init_variance = False, then all time-serieses will be fixed at the same initial estimates, with no uncertainty.
+    """
 
     def __init__(self,
                  id: str,
                  covariates: Sequence[str],
-                 process_variance: Union[bool, Collection[str]] = False,
                  init_variance: Union[bool, Collection[str]] = True,
+                 process_variance: Union[bool, Collection[str]] = False,
                  inv_link: Optional[Callable] = None):
+        """
+
+        :param id: A unique name for the process.
+        :param covariates: The names of the predictors.
+        :param init_variance: If True (the default), then there is initial uncertainty about the values of the
+        coefficients. Can also specify which covariates have uncertainty.
+        :param process_variance: If False (the default), then the uncertainty about the values of the coefficients does
+        not grow at each timestep, so over time these coefficients eventually converge to a certain value. If True, then
+         the coefficients are allowed to 'drift' over time.
+        :param inv_link: An inverse link function that maps the linear-model to the prediction; default the identity
+        link.
+        """
         if isinstance(covariates, str):
             raise TypeError("`covariates` should be sequence of strings, not single string")
 
