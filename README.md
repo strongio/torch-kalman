@@ -3,6 +3,15 @@
 
 Time-series forecasting models using Kalman-filters in PyTorch.
 
+## Table of Contents
+
+- [Installation](#Installation)
+- [Example: Beijing Multi-Site Air-Quality Dataset](#Example-Beijing-Multi-Site–Air-Quality-Dataset)
+  * [Prepare Our Dataset](#Prepare-our-Dataset)
+  * [Specify Our Model](#Specify-our-model)
+  * [Visualize the Results](#Visualize-the-results)
+  * [Using Predictors](#Using-predictors)
+
 ## Installation
 
 ```
