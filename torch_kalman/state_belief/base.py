@@ -50,20 +50,6 @@ class StateBelief(NiceRepr):
             pass
         return sb
 
-    @classmethod
-    def get_input_dim(cls, input: Tensor) -> Tuple[int, int, int]:
-        return input.shape
-
-    def update_from_input(self, input: Tensor, time: int):
-        """
-        Call `update` on the state-belief given the expected input for this family (usually: a tensor). Handles the
-        case when the current time is outside the range of the input (i.e. a forecast).
-        """
-        if time >= input.shape[1]:
-            return self.copy()
-        else:
-            return self.update(obs=input[:, time, :])
-
     def compute_measurement(self, H: Tensor, R: Tensor) -> None:
         assert H.ndimension() == 3
         assert R.ndimension() == 3
@@ -89,6 +75,13 @@ class StateBelief(NiceRepr):
         return type(self)(means=means, covs=covs, last_measured=self.last_measured + 1)
 
     def update(self, obs: Tensor, **kwargs) -> 'StateBelief':
+        if 'time' in kwargs:
+            time = kwargs.pop('time')
+            if time >= obs.shape[1]:
+                return self.copy()
+            else:
+                return self.update(obs=obs[:, time], **kwargs)
+
         if torch.isinf(obs).any():
             raise RuntimeError("Infs not allowed in `obs`")
         is_nan = torch.isnan(obs)

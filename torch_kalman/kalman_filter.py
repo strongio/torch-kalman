@@ -2,7 +2,7 @@
 Base class for torch.nn.Modules that generate predictions with the Kalman-filtering algorithm.
 """
 
-from typing import Optional, Union, Sequence, Any
+from typing import Optional, Union, Sequence
 from warnings import warn
 
 import torch
@@ -66,7 +66,7 @@ class KalmanFilter(Module):
         self.design.process_covariance.set(self.design.process_covariance.create().data / 10.)
 
     def forward(self,
-                input: Any,
+                *args,
                 forecast_horizon: Optional[int] = None,
                 out_timesteps: Optional[int] = None,
                 progress: Union[tqdm, bool] = False,
@@ -75,9 +75,10 @@ class KalmanFilter(Module):
         """
         Generate 1-step-ahead predictions.
 
-        :param input: The multivariate time-series to be fit by the kalman-filter. The exact structure depends on the
-        kalman-filter `family`. For most, it is a tensor where the first dimension represents the groups, the second
-        dimension represents the time-points, and the third dimension represents the measures.
+        :param args: For this base class, a single Tensor containing a batch of time-series with dims
+            (group, time, measure). Child classes using a different :code:`KalmanFilter.family` may accept additional
+            args (e.g. :code:`CensoredGaussian` requires three arguments: the time-series, the lower censoring limits,
+            and the upper-censoring limits).
         :param forecast_horizon: Number of timesteps past the end of the input to continue making predictions. Defaults
         to 0. Ignored if `out_timesteps` is specified.
         :param out_timesteps: The number of timesteps to generate predictions for. Sometimes more convenient than
@@ -93,13 +94,13 @@ class KalmanFilter(Module):
         using sklearn-style double-underscoring: `process1__predictors` and `process2__predictors`.
         :return: A StateBeliefOverTime consisting of one-step-ahead predictions.
         """
-        if input is None:
+        if not args:
             if initial_prediction is None:
-                raise ValueError("Can only pass input=None if `initial_prediction` is passed.")
+                raise ValueError("No input tensor was passed, so must pass `initial_prediction`.")
             num_groups = initial_prediction.num_groups
             input_num_timesteps = 0
         else:
-            num_groups, input_num_timesteps, num_measures, *_ = self.family.get_input_dim(input)
+            num_groups, input_num_timesteps, num_measures, *_ = args[0].shape
             if num_measures != len(self.design.measures):
                 raise ValueError(
                     f"This KalmanFilter has {len(self.design.measures)} measures; but the input shape is "
@@ -134,11 +135,11 @@ class KalmanFilter(Module):
         state_predictions = []
         for t in times:
             if t > 0:
-                if input is None:
+                if not args:
                     state_belief = state_prediction.copy()
                 else:
                     # take state-pred of previous t (now t-1), correct it according to what was actually measured at t-1
-                    state_belief = state_prediction.update_from_input(input, time=t - 1)
+                    state_belief = state_prediction.update(*args, time=t - 1)
 
                 # predict the state for t, from information from t-1
                 # F at t-1 is transition *from* t-1 *to* t

@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 
 np.random.seed(2020-2-7)
-torch.manual_seed(2020-2-7)
+torch.manual_seed(2020-2-7);
 # -
 
 # # Torch-Kalman

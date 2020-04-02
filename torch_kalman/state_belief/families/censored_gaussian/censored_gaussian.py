@@ -14,31 +14,22 @@ Selector = Union[Sequence[int], slice]
 
 class CensoredGaussian(Gaussian):
 
-    @classmethod
-    def get_input_dim(cls, input: Union[Tensor, Tuple[Tensor, ...]]) -> Tuple[int, int, int]:
-        if isinstance(input, Tensor):
-            return input.shape
-        elif isinstance(input, tuple):
-            shapes = set(x.shape for x in input if x is not None)
-            if len(shapes) != 1:
-                raise RuntimeError(f"If input is sequence of tensors, all shapes must be the same. Got:{shapes}")
-            return input[0].shape
-        else:
-            raise RuntimeError("Expected `input` to be either tuple of tensors or tensor.")
-
-    def update_from_input(self, input: Union[Tensor, Tuple[Tensor, ...]], time: int):
-        if isinstance(input, Tensor):
-            args = (input[:, time, :],)
-        elif isinstance(input, Sequence):
-            args = (x if isinstance(x, bool) else x[:, time, :] for x in input)
-        else:
-            raise RuntimeError("Expected `input` to be either a tuple or a tensor.")
-        return self.update(*args)
-
     def update(self,
                obs: Tensor,
                lower: Optional[Tensor] = None,
-               upper: Optional[Tensor] = None) -> 'StateBelief':
+               upper: Optional[Tensor] = None,
+               **kwargs) -> 'StateBelief':
+        if 'time' in kwargs:
+            time = kwargs.pop('time')
+            if time >= obs.shape[1]:
+                return self.copy()
+            return self.update(
+                obs=obs[:, time],
+                lower=lower[:, time] if lower is not None else None,
+                upper=upper[:, time] if upper is not None else None,
+                **kwargs
+            )
+
         return super().update(obs, lower=lower, upper=upper)
 
     def _update_group(self,
