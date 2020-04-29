@@ -327,7 +327,7 @@ class Design(NiceRepr, Batchable):
             specific_key = "{}__{}".format(prefix, k)
             if specific_key in all_kwargs:
                 out[k] = all_kwargs[specific_key]
-                used.add(k)
+                used.add(specific_key)
             elif k in all_kwargs:
                 if k in too_generic:
                     raise ValueError(
