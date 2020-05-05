@@ -374,7 +374,9 @@ class Design(NiceRepr, Batchable):
                     args, kwargs = args_or_kwargs, {}
 
                 if alias == 'per_group':
-                    out_nn = NamedEmbedding(*args, **kwargs, embedding_dim=num_outputs)
+                    if 'embedding_dim' not in kwargs:
+                        kwargs['embedding_dim'] = num_outputs
+                    out_nn = NamedEmbedding(*args, **kwargs)
                     out_nn._forward_kwargs_aliases = {'input': 'group_names'}
                 elif alias == 'seasonal':
                     out_nn = FourierSeasonNN(*args, **kwargs, num_outputs=num_outputs)
