@@ -24,20 +24,20 @@ class LinearModel(Process):
     def __init__(self,
                  id: str,
                  covariates: Sequence[str],
-                 init_variance: Union[bool, Collection[str]] = True,
                  process_variance: Union[bool, Collection[str]] = False,
-                 inv_link: Optional[Callable] = None):
+                 inv_link: Optional[Callable] = None,
+                 initial_state: Optional[torch.nn.Module] = None):
         """
 
         :param id: A unique name for the process.
         :param covariates: The names of the predictors.
-        :param init_variance: If True (the default), then there is initial uncertainty about the values of the
-        coefficients. Can also specify which covariates have uncertainty.
         :param process_variance: If False (the default), then the uncertainty about the values of the coefficients does
         not grow at each timestep, so over time these coefficients eventually converge to a certain value. If True, then
          the coefficients are allowed to 'drift' over time.
         :param inv_link: An inverse link function that maps the linear-model to the prediction; default the identity
         link.
+        :param initial_state: Optional, a callable (typically a torch.nn.Module). When the KalmanFilter is called,
+        keyword-arguments can be passed to initial_state in the format `{this_process}_initial_state__{kwarg}`.
         """
         if isinstance(covariates, str):
             raise TypeError("`covariates` should be sequence of strings, not single string")
@@ -52,17 +52,7 @@ class LinearModel(Process):
             if len(extras):
                 raise ValueError(f"`process_variance` includes items not in `covariates`:{extras}")
 
-        # initial covariance:
-        self._fixed_state_elements = []
-        if init_variance is False:
-            init_variance = []
-        if init_variance is not True:
-            extras = set(init_variance) - set(covariates)
-            if len(extras):
-                raise ValueError(f"`init_variance` includes items not in `covariates`:{extras}")
-            self._fixed_state_elements = [cov for cov in covariates if cov not in init_variance]
-
-        super().__init__(id=id, state_elements=covariates)
+        super().__init__(id=id, state_elements=covariates, initial_state=initial_state)
 
         for cov in covariates:
             self._set_transition(from_element=cov, to_element=cov, value=1.0)
@@ -70,13 +60,6 @@ class LinearModel(Process):
     @property
     def dynamic_state_elements(self) -> Sequence[str]:
         return self._dynamic_state_elements
-
-    @property
-    def fixed_state_elements(self):
-        return self._fixed_state_elements
-
-    def param_dict(self) -> torch.nn.ParameterDict:
-        return torch.nn.ParameterDict()  # no parameters
 
     def add_measure(self, measure: str) -> 'LinearModel':
         for cov in self.state_elements:

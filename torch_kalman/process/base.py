@@ -7,6 +7,7 @@ from torch import Tensor
 from torch.nn import Parameter
 
 from torch_kalman.internals.batch import Batchable
+from torch_kalman.internals.utils import infer_forward_kwargs
 
 from torch_kalman.process.utils.design_matrix import (
     TransitionMatrix, MeasureMatrix, ProcessVarianceMultiplierMatrix
@@ -18,7 +19,7 @@ from torch_kalman.process.utils.design_matrix.utils import DesignMatAssignment, 
 class Process(NiceRepr, Batchable):
     _repr_attrs = ('id',)
 
-    def __init__(self, id: str, state_elements: Sequence[str]):
+    def __init__(self, id: str, state_elements: Sequence[str], initial_state: Optional[torch.nn.Module] = None):
         self.id = str(id)
         self.state_elements = state_elements
 
@@ -31,6 +32,11 @@ class Process(NiceRepr, Batchable):
 
         # variance of dynamic state elements:
         self.variance_multi_mat = ProcessVarianceMultiplierMatrix(self.state_elements, self.dynamic_state_elements)
+
+        # a callable that predicts the initial state
+        self.initial_state = initial_state or InitialState(self.state_elements)
+        if not hasattr(self.initial_state, '_forward_kwargs'):
+            self.initial_state._forward_kwargs = infer_forward_kwargs(self.initial_state)
 
         self._validate()
 
@@ -50,13 +56,17 @@ class Process(NiceRepr, Batchable):
     def measures(self):
         return self.measure_mat.measures
 
-    # children should implement ----------------
     def param_dict(self) -> torch.nn.ParameterDict:
         """
         Any parameters that should be exposed to the owning nn.Module.
         """
-        raise NotImplementedError
+        p = torch.nn.ParameterDict()
+        if hasattr(self.initial_state, 'named_parameters'):
+            for nm, param in self.initial_state.named_parameters():
+                p['initial_state_' + nm.replace('.', '_')] = param
+        return p
 
+    # children should implement ----------------
     def add_measure(self, measure: str) -> 'Process':
         """
         Calls '_set_measure' with default state_element, value
@@ -77,12 +87,10 @@ class Process(NiceRepr, Batchable):
         """
         return []
 
-    def initial_state_means_for_batch(self, parameters: Parameter, num_groups: int, **kwargs) -> Tensor:
-        """
-        Most children should use default. Handles rearranging of state-means based on for_batch keyword args. E.g. a
-        discrete seasonal process w/ a state-element for each season would need to know on which season the batch starts
-        """
-        return parameters.expand(num_groups, -1)
+    def initial_state_means_for_batch(self, num_groups: int, **kwargs) -> Tensor:
+        if 'num_groups' in self.initial_state._forward_kwargs:
+            kwargs['num_groups'] = num_groups
+        return self.initial_state(**kwargs)
 
     # For specifying design -----------:
     def _set_measure(self,
@@ -141,41 +149,27 @@ class Process(NiceRepr, Batchable):
         if not set(self.dynamic_state_elements).isdisjoint(self.fixed_state_elements):
             raise ValueError("Class has been misconfigured: some fixed state-elements are also dynamic-state-elements.")
 
-    def __init_subclass__(cls, **kwargs):
-        overrides_batch_kwargs = (cls.batch_kwargs.__code__ != Process.batch_kwargs.__code__)
-        if not overrides_batch_kwargs:
-
-            batch_kwargs = set(cls.batch_kwargs(cls.for_batch))
-            init_mean_kwargs = set(cls.batch_kwargs(cls.initial_state_means_for_batch))
-
-            overrides_for_batch = (cls.for_batch.__code__ != Process.for_batch.__code__)
-            overrides_init_mean = (
-                    cls.initial_state_means_for_batch.__code__ != Process.initial_state_means_for_batch.__code__
-            )
-
-            if overrides_for_batch:
-                if 'kwargs' in batch_kwargs:
-                    raise TypeError(
-                        f"Signature of `{cls.__name__}.for_batch` must define its keyword args explicitly."
-                    )
-            if overrides_init_mean:
-                if 'kwargs' in init_mean_kwargs:
-                    raise TypeError(
-                        f"Signature of `{cls.__name__}.initial_state_means_for_batch` must define kwargs explicitly."
-                    )
-            if overrides_for_batch and overrides_init_mean:
-                if batch_kwargs != init_mean_kwargs:
-                    raise TypeError(
-                        f"`{cls.__name__}.initial_state_means_for_batch()` must match signature of .for_batch()"
-                    )
-        super().__init_subclass__()
-
-    @classmethod
-    def batch_kwargs(cls, method: Optional[Callable] = None) -> Iterable[str]:
-        if method is None:
-            method = cls.for_batch
-        excluded = {'self', 'num_groups', 'num_timesteps', 'parameters'}
-        for kwarg in inspect.signature(method).parameters:
+    def batch_kwargs(self) -> Iterable[str]:
+        excluded = {'self', 'num_groups', 'num_timesteps'}
+        for kwarg in inspect.signature(self.for_batch).parameters:
             if kwarg in excluded:
                 continue
+            if kwarg == 'kwargs':
+                raise TypeError(
+                    f"Signature of `{type(self).__name__}.for_batch` must define its keyword args explicitly."
+                )
             yield kwarg
+
+    def init_mean_kwargs(self) -> Iterable[str]:
+        return self.initial_state._forward_kwargs
+
+
+class InitialState(torch.nn.Module):
+    _forward_kwargs = ['num_groups']
+
+    def __init__(self, state_elements: Sequence[str]):
+        self.means = torch.nn.Parameter(.1 * torch.randn(len(state_elements)))
+        super().__init__()
+
+    def forward(self, num_groups: int) -> torch.Tensor:
+        return self.means.expand(num_groups, -1).clone()

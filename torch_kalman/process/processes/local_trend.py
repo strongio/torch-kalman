@@ -1,6 +1,6 @@
-from typing import Tuple, Union
+from typing import Tuple, Union, Optional
 
-from torch.nn import ParameterDict
+from torch.nn import ParameterDict, Module
 
 from torch_kalman.process import Process
 from torch_kalman.process.utils.bounded import Bounded
@@ -15,19 +15,21 @@ class LocalTrend(Process):
                  id: str,
                  decay_velocity: Union[bool, Tuple[float, float]] = (.95, 1.00),
                  decay_position: Union[bool, Tuple[float, float]] = False,
-                 multi: float = 1.0):
+                 multi: float = 1.0,
+                 initial_state: Optional[Module] = None):
         """
-            :param id: A unique identifier for this process.
-            :param decay_velocity: If set, then the trend will decay to zero as we forecast out further. The default is
-            to allow the trend to decay somewhere between .95 (moderate decay) and 1.00 (no decay), with the exact value
-             being a learned parameter in the nn.Module.
-            :param decay_position: See `decay` in `LocalLevel`.
-            :param multi: A multiplier on the trend, so that `next_position = position + multi * trend`. Reducing this
-            to .1 can be helpful since the trend has such a large effect on the prediction, so that large values can
-            lead to exploding gradients.
-            """
-
-        super().__init__(id=id, state_elements=['position', 'velocity'])
+        :param id: A unique identifier for this process.
+        :param decay_velocity: If set, then the trend will decay to zero as we forecast out further. The default is
+        to allow the trend to decay somewhere between .95 (moderate decay) and 1.00 (no decay), with the exact value
+         being a learned parameter in the nn.Module.
+        :param decay_position: See `decay` in `LocalLevel`.
+        :param multi: A multiplier on the trend, so that `next_position = position + multi * trend`. Reducing this
+        to .1 can be helpful since the trend has such a large effect on the prediction, so that large values can
+        lead to exploding gradients.
+        :param initial_state: Optional, a callable (typically a torch.nn.Module). When the KalmanFilter is called,
+        keyword-arguments can be passed to initial_state in the format `{this_process}_initial_state__{kwarg}`.
+        """
+        super().__init__(id=id, state_elements=['position', 'velocity'], initial_state=initial_state)
 
         self.decayed_transitions = {}
 
@@ -59,7 +61,7 @@ class LocalTrend(Process):
         self._set_transition(from_element='velocity', to_element='position', value=multi)
 
     def param_dict(self) -> ParameterDict:
-        p = ParameterDict()
+        p = super().param_dict()
         for k in ('position', 'velocity'):
             if k in self.decayed_transitions:
                 p[k] = self.decayed_transitions[k].parameter

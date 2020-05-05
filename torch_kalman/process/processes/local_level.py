@@ -1,4 +1,4 @@
-from typing import Union, Tuple, Sequence, Optional
+from typing import Union, Tuple, Sequence, Optional, Callable
 
 import torch
 
@@ -11,9 +11,11 @@ class LocalLevel(Process):
     """
     A simple random walk.
     """
+
     def __init__(self,
                  id: str,
-                 decay: Union[bool, Tuple[float, float]] = False):
+                 decay: Union[bool, Tuple[float, float]] = False,
+                 initial_state: Optional[torch.nn.Module] = None):
         """
         :param id: A unique identifier for this process.
         :param decay: If the process has decay, then the random walk will tend towards zero as we forecast out further
@@ -21,8 +23,11 @@ class LocalLevel(Process):
         have this property). Decay can be between 0 and 1, but values < .50 (or even .90) can often be too rapid and
         you will run into trouble with vanishing gradients. When passing a pair of floats, the nn.Module will assign a
         parameter representing the decay as a learned parameter somewhere between these bounds.
+        TODO: support {process}__decay__{kwarg}
+        :param initial_state: Optional, a callable (typically a torch.nn.Module). When the KalmanFilter is called,
+        keyword-arguments can be passed to initial_state in the format `{this_process}_initial_state__{kwarg}`.
         """
-        super().__init__(id=id, state_elements=['position'])
+        super().__init__(id=id, state_elements=['position'], initial_state=initial_state)
 
         self.decay = None
         if decay:
@@ -41,7 +46,7 @@ class LocalLevel(Process):
         return self
 
     def param_dict(self) -> torch.nn.ParameterDict:
-        p = torch.nn.ParameterDict()
+        p = super().param_dict()
         if self.decay is not None:
             p['decay'] = self.decay.parameter
         return p

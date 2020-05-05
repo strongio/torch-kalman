@@ -65,7 +65,6 @@ class Design(NiceRepr, Batchable):
 
         # initial:
         self._initial_mean = None
-        self.init_mean_params = Parameter(.1 * torch.randn(len(self.state_elements)))
         self.init_covariance = PartialCovarianceFromLogCholesky(
             full_dim_names=self.state_elements,
             partial_dim_names=self.unfixed_state_elements
@@ -145,22 +144,31 @@ class Design(NiceRepr, Batchable):
 
         # processes:
         for process_name, process in self.processes.items():
-            proc_kwargs, used = self._parse_kwargs(
-                batch_kwargs=process.batch_kwargs(),
-                prefix=process.id,
-                all_kwargs=kwargs,
-                aliases=getattr(process, 'batch_kwargs_aliases', {})
-            )
-            for k in used:
-                unused_kwargs.discard(k)
-
             # wrap calls w/process-name for easier tracebacks:
             try:
+                # for batch:
+                proc_kwargs, used = self._parse_kwargs(
+                    batch_kwargs=process.batch_kwargs(),
+                    prefix=process.id,
+                    all_kwargs=kwargs,
+                    aliases=getattr(process, 'batch_kwargs_aliases', {})
+                )
+                for k in used:
+                    unused_kwargs.discard(k)
                 for_batch.processes[process_name] = process.for_batch(**batch_dim_kwargs, **proc_kwargs)
+
+                # init mean:
+                init_mean_kwargs, used = self._parse_kwargs(
+                    batch_kwargs=process.init_mean_kwargs(),
+                    prefix=process.id + "_init_mean",
+                    all_kwargs=kwargs,
+                    aliases=getattr(process, 'init_mean_kwargs_aliases', {})
+                )
+                for k in used:
+                    unused_kwargs.discard(k)
                 for_batch._initial_mean[:, self.process_slices[process_name]] = process.initial_state_means_for_batch(
-                    parameters=self.init_mean_params[self.process_slices[process_name]],
                     num_groups=num_groups,
-                    **proc_kwargs
+                    **init_mean_kwargs
                 )
             except Exception as e:
                 # add process-name to traceback
@@ -222,8 +230,7 @@ class Design(NiceRepr, Batchable):
         p['measure_cov'] = self.measure_covariance.param_dict()
         p['measure_var_nn'] = self._measure_var_nn
 
-        p['init_state'] = ParameterDict([('mean', self.init_mean_params)])
-        p['init_state'].update(self.init_covariance.param_dict().items())
+        p['init_state'] = self.init_covariance.param_dict()
 
         p['process_cov'] = self.process_covariance.param_dict()
         p['process_var_nn'] = self._process_var_nn

@@ -19,40 +19,34 @@ class NN(Process):
     `nn_process__input=[predictor-tensor]`. Alternatively, the NN process supports using the simpler alias `predictors`.
     """
     batch_kwargs_aliases = {'input': 'predictors'}
+    inv_link = None
 
     def __init__(self,
                  id: str,
                  input_dim: int,
                  state_dim: int,
                  nn: torch.nn.Module,
-                 init_variance: bool = True,
                  process_variance: bool = False,
-                 add_module_params_to_process: bool = True,
-                 inv_link: Optional[Callable] = None,
-                 time_split_kwargs: Sequence[str] = ()):
+                 time_split_kwargs: Sequence[str] = (),
+                 initial_state: Optional[torch.nn.Module] = None):
         """
         :param id: A unique identifier for the process.
         :param input_dim: The number of inputs to the nn.
         :param state_dim: The number of outputs of the nn.
         :param nn: A torch.nn.Module that takes a (num_groups, input_dim) Tensor, and outputs a (num_groups, state_dim)
         Tensor.
-        :param init_variance: If True (the default), then there is initial uncertainty about the values of the states.
         :param process_variance: If False (the default), then the uncertainty about the values of the states does not
         grow at each timestep, so over time these eventually converge to a certain value. If True, then the latent-
         states are allowed to 'drift' over time.
-        :param add_module_params_to_process: If `False`, then you need to pass your nn.Module's `.parameters()` to the
-        optimizer manually. This can be useful if you are using parameter-groups in your optimizer (e.g. for different
-        learning rates).
-        :param inv_link: An inverse link function that maps the linear-model to the prediction; default the identity.
         :param time_split_kwargs: When calling the KalmanFilter, you will pass a prediction Tensor for your nn.Module
         that is (num_groups, num_timesteps, input_dim). However, internally, this will be split up into multiple
         tensors, and your nn.Module will take a (num_groups, input_dim) tensor. If your nn.Module's `forward()` method
         takes just a single argument, then we can infer how to split this tensor. But if it takes multiple keyword
         arguments, you need to specify which will be split in this fashion.
+        :param initial_state: Optional, a callable (typically a torch.nn.Module). When the KalmanFilter is called,
+        keyword-arguments can be passed to initial_state in the format `{this_process}_initial_state__{kwarg}`.
         """
-        self.inv_link = inv_link
 
-        self.add_module_params_to_process = add_module_params_to_process
         self.input_dim = input_dim
         self.nn = nn
         if not hasattr(self.nn, '_forward_kwargs'):
@@ -67,7 +61,7 @@ class NN(Process):
 
         #
         pad_n = len(str(state_dim))
-        super().__init__(id=id, state_elements=[zpad(i, pad_n) for i in range(state_dim)])
+        super().__init__(id=id, state_elements=[zpad(i, pad_n) for i in range(state_dim)], initial_state=initial_state)
 
         for se in self.state_elements:
             self._set_transition(from_element=se, to_element=se, value=1.0)
@@ -76,20 +70,11 @@ class NN(Process):
     def dynamic_state_elements(self):
         return self.state_elements if self._has_process_variance else []
 
-    @property
-    def fixed_state_elements(self):
-        return [] if self._has_init_variance else self.state_elements
-
-    def parameters(self) -> Generator[Parameter, None, None]:
-        if self.add_module_params_to_process:
-            yield from self.nn.parameters()
-
     def param_dict(self) -> ParameterDict:
-        p = ParameterDict()
-        if self.add_module_params_to_process:
-            for nm, param in self.nn.named_parameters():
-                nm = 'module_' + nm.replace('.', '_')
-                p[nm] = param
+        p = super().param_dict()
+        for nm, param in self.nn.named_parameters():
+            nm = 'module_' + nm.replace('.', '_')
+            p[nm] = param
         return p
 
     def for_batch(self,
@@ -129,5 +114,5 @@ class NN(Process):
             self._set_measure(measure=measure, state_element=se, value=0., ilink=self.inv_link)
         return self
 
-    def batch_kwargs(self, method: Optional[Callable] = None) -> Iterable[str]:
+    def batch_kwargs(self) -> Iterable[str]:
         return [k for k in self.nn._forward_kwargs if k not in {'num_groups', 'num_timesteps'}]
