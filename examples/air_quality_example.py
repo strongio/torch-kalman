@@ -105,7 +105,8 @@ dataset_all = TimeSeriesDataset.from_dataframe(
     dt_unit='W',
     measure_colnames=measures_pp,
     group_colname='station', 
-    time_colname='date'
+    time_colname='date',
+    pad_X=0.0
 )
 
 # Train/Val split:

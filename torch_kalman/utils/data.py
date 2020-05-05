@@ -266,7 +266,8 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
                        dt_unit: Optional[str],
                        measure_colnames: Optional[Sequence[str]] = None,
                        X_colnames: Optional[Sequence[str]] = None,
-                       y_colnames: Optional[Sequence[str]] = None) -> 'TimeSeriesDataset':
+                       y_colnames: Optional[Sequence[str]] = None,
+                       pad_X: Optional[float] = None) -> 'TimeSeriesDataset':
 
         if measure_colnames is None:
             if X_colnames is None or y_colnames is None:
@@ -326,8 +327,9 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             dataset = dataset.split_measures(y_colnames, X_colnames)
             y, X = dataset.tensors
             # don't use nan-padding on the predictor tensor:
-            for i, time_idx in enumerate(time_idxs):
-                X[:, time_idx.max():, :] = 0.0
+            if pad_X is not None:
+                for i, time_idx in enumerate(time_idxs):
+                    X[:, time_idx.max():, :] = pad_X
 
         return dataset
 
