@@ -51,10 +51,13 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         self.measures = tuple(tuple(m) for m in measures)
         self.all_measures = tuple(itertools.chain.from_iterable(self.measures))
         self.group_names = group_names
-        self._dt_helper = DateTimeHelper(dt_unit=dt_unit, start_datetime=None)
+        self._dt_helper = DateTimeHelper(dt_unit=dt_unit)
         self.start_times = self._dt_helper.validate_datetimes(start_times)
-        self.dt_unit = dt_unit
         super().__init__(*tensors)
+
+    @property
+    def dt_unit(self) -> str:
+        return self._dt_helper.dt_unit
 
     @property
     def sizes(self) -> Sequence:

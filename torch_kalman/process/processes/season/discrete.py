@@ -23,7 +23,6 @@ class Season(Process):
                  seasonal_period: int,
                  season_duration: int = 1,
                  decay: Union[bool, Tuple[float, float]] = False,
-                 season_start: Optional[str] = None,
                  dt_unit: Optional[str] = None,
                  fixed: bool = False):
         """
@@ -34,10 +33,6 @@ class Season(Process):
         the state will revert to zero as we get further from the last observation. This can be useful if two processes
         are capturing the same seasonal pattern: one can be more flexible, but with decay have a tendency to revert to
         zero, while the other is less variable but extrapolates into the future.
-        :param season_start:  A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
-        starts, which is useful to specify if season boundaries are meaningful. It is important to specify if different
-        groups in your dataset start on different dates; when calling the kalman-filter you'll pass an array of
-        `start_datetimes` for group in the input, and this will be used to align the seasons for each group.
         :param dt_unit: Currently supports {'Y', 'D', 'h', 'm', 's'}. 'W' is experimentally supported.
         :param fixed: If True, then the seasonality does not vary over time, and this amounts to one-hot-encoding the
         seasons. Default False.
@@ -51,7 +46,7 @@ class Season(Process):
         if dt_unit is None:
             # optional for some seasonal processes, but not for this one
             raise TypeError(f"Must pass `dt_unit` to {type(self).__name__}")
-        self._dt_helper = DateTimeHelper(dt_unit=dt_unit, start_datetime=season_start)
+        self._dt_helper = DateTimeHelper(dt_unit=dt_unit)
 
         # state-elements:
         pad_n = len(str(seasonal_period))
@@ -102,7 +97,7 @@ class Season(Process):
         for_batch = super().for_batch(num_groups=num_groups, num_timesteps=num_timesteps)
 
         if start_datetimes is None:
-            if self._dt_helper.start_datetime:
+            if self._dt_helper.dt_unit:
                 raise TypeError("Missing argument `start_datetimes`.")
             start_datetimes = np.zeros(num_groups)
         delta = self._dt_helper.make_delta_grid(start_datetimes, num_timesteps)

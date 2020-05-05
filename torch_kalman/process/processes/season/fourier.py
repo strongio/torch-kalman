@@ -20,7 +20,6 @@ class _FourierSeason(Process):
                  seasonal_period: Union[int, float],
                  K: Union[int, float],
                  decay: Union[bool, Tuple[float, float]] = False,
-                 season_start: Optional[str] = None,
                  dt_unit: Optional[str] = None):
 
         # season structure:
@@ -38,7 +37,7 @@ class _FourierSeason(Process):
 
         super().__init__(id=id, state_elements=state_elements)
 
-        self._dt_helper = DateTimeHelper(dt_unit=dt_unit, start_datetime=season_start)
+        self._dt_helper = DateTimeHelper(dt_unit=dt_unit)
 
         for trans_kwargs in list_of_trans_kwargs:
             self._set_transition(**trans_kwargs)
@@ -83,7 +82,6 @@ class FourierSeason(_FourierSeason):
                  K: Union[int, float],
                  fixed: bool = False,
                  decay: Union[bool, Tuple[float, float]] = False,
-                 season_start: Optional[str] = None,
                  dt_unit: Optional[str] = None):
         """
         :param id: Unique name for this instance.
@@ -94,15 +92,11 @@ class FourierSeason(_FourierSeason):
         the state will revert to zero as we get further from the last observation. This can be useful if two processes
         are capturing the same seasonal pattern: one can be more flexible, but with decay have a tendency to revert to
         zero, while the other is less variable but extrapolates into the future.
-        :param season_start:  A string that can be parsed into a datetime by `numpy.datetime64`. This is when the season
-        starts, which is useful to specify if season boundaries are meaningful. It is important to specify if different
-        groups in your dataset start on different dates; when calling the kalman-filter you'll pass an array of
-        `start_datetimes` for group in the input, and this will be used to align the seasons for each group.
         :param dt_unit: Currently supports {'Y', 'D', 'h', 'm', 's'}. 'W' is experimentally supported.
         """
         self.fixed = fixed
         super().__init__(
-            id=id, seasonal_period=seasonal_period, K=K, decay=decay, season_start=season_start, dt_unit=dt_unit
+            id=id, seasonal_period=seasonal_period, K=K, decay=decay, dt_unit=dt_unit
         )
 
     def for_batch(self,
@@ -114,7 +108,7 @@ class FourierSeason(_FourierSeason):
 
         # determine the delta (integer time accounting for different groups having different start datetimes)
         if start_datetimes is None:
-            if self._dt_helper.start_datetime:
+            if self._dt_helper.dt_unit:
                 raise TypeError("Missing argument `start_datetimes`.")
             start_datetimes = np.zeros(num_groups)
         delta = self._dt_helper.make_delta_grid(start_datetimes, num_timesteps)
@@ -208,12 +202,11 @@ class TBATS(_FourierSeason):
                  seasonal_period: Union[int, float],
                  K: Union[int, float],
                  decay: Union[bool, Tuple[float, float]] = False,
-                 season_start: Optional[str] = None,
                  dt_unit: Optional[str] = None):
 
         if decay:
             raise NotImplementedError(f"{type(self).__name__} does not yet support decay.")
-        if season_start or dt_unit:
+        if dt_unit:
             raise NotImplementedError(f"{type(self).__name__} does not yet support datetimes.")
 
         super().__init__(id=id,

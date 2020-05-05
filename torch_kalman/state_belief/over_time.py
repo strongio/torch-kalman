@@ -15,6 +15,7 @@ from torch_kalman.state_belief.base import UnmeasuredError
 import numpy as np
 
 from torch_kalman.internals.repr import NiceRepr
+from torch_kalman.utils.datetime import DateTimeHelper
 
 Selector = Union[Sequence[int], slice]
 
@@ -223,7 +224,7 @@ class StateBeliefOverTime(NiceRepr):
                      time_colname: str = 'time',
                      multi: float = 1.96) -> 'DataFrame':
         """
-        :param dataset: Either a TimeSeriesDataset, or a dictionary with 'start_times' and 'group_names'.
+        :param dataset: Either a TimeSeriesDataset, or a dictionary with 'start_times', 'group_names', & 'dt_unit'
         :param type: Either 'predictions' or 'components'.
         :param group_colname: Column-name for 'group'
         :param time_colname: Column-name for 'time'
@@ -235,7 +236,12 @@ class StateBeliefOverTime(NiceRepr):
         from pandas import concat
 
         if isinstance(dataset, TimeSeriesDataset):
-            batch_info = {'start_times': dataset.start_times, 'group_names': dataset.group_names, 'named_tensors': {}}
+            batch_info = {
+                'start_times': dataset.start_times,
+                'group_names': dataset.group_names,
+                'named_tensors': {},
+                'dt_unit': dataset.dt_unit
+            }
             for measure_group, tensor in zip(dataset.measures, dataset.tensors):
                 for i, measure in enumerate(measure_group):
                     if measure in self.design.measures:
@@ -253,8 +259,10 @@ class StateBeliefOverTime(NiceRepr):
                 "Expected `batch` to be a TimeSeriesDataset, or a dictionary with 'start_times' and 'group_names'."
             )
 
+        dt_helper = DateTimeHelper(dt_unit=batch_info['dt_unit'])
+
         def _tensor_to_df(tens, measures):
-            times = batch_info['start_times'][:, None] + np.arange(0, tens.shape[1])
+            times = dt_helper.make_grid(batch_info['start_times'], tens.shape[1])
             return TimeSeriesDataset.tensor_to_dataframe(
                 tensor=tens,
                 times=times,
