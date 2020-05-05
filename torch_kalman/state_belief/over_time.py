@@ -240,7 +240,6 @@ class StateBeliefOverTime(NiceRepr):
                 for i, measure in enumerate(measure_group):
                     if measure in self.design.measures:
                         batch_info['named_tensors'][measure] = tensor[..., [i]]
-            batch_info['times'] = dataset.times()
             missing = set(self.design.measures) - set(dataset.all_measures)
             if missing:
                 raise ValueError(
@@ -255,7 +254,7 @@ class StateBeliefOverTime(NiceRepr):
             )
 
         def _tensor_to_df(tens, measures):
-            times = batch_info.get('times', batch_info['start_times'][:, None] + np.arange(0, tens.shape[1]))
+            times = batch_info['start_times'][:, None] + np.arange(0, tens.shape[1])
             return TimeSeriesDataset.tensor_to_dataframe(
                 tensor=tens,
                 times=times,

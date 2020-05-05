@@ -25,7 +25,7 @@ class StateBelief(NiceRepr):
         """
         :param means: The means (2D tensor)
         :param covs: The covariances (3D tensor).
-        :param last_measured: 2D tensor indicating number of timesteps since mean/cov were updated with measurements;
+        :param last_measured: 1D tensor indicating number of timesteps since mean/cov were updated with measurements;
         defaults to 0s.
         """
         num_groups, state_size = means.shape
@@ -50,11 +50,12 @@ class StateBelief(NiceRepr):
             pass
         return sb
 
-    def compute_measurement(self, H: Tensor, R: Tensor) -> None:
+    def compute_measurement(self, H: Tensor, R: Tensor) -> 'StateBelief':
         assert H.ndimension() == 3
         assert R.ndimension() == 3
         self._H = H
         self._R = R
+        return self
 
     @property
     def H(self) -> Tensor:
