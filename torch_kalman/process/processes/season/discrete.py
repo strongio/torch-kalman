@@ -162,5 +162,5 @@ class SeasonInitialState(InitialState):
             start_datetimes = np.zeros(num_groups)
         delta = self._dt_helper.make_delta_grid(start_datetimes, num_timesteps=1).squeeze(1)
         season_shift = (np.floor(delta / self.season_duration) % self.seasonal_period).astype('int')
-        means = [torch.cat([self.means[-shift:], self.means[:-shift]]) for shift in season_shift]
+        means = [torch.cat([self.mean[-shift:], self.mean[:-shift]]) for shift in season_shift]
         return torch.stack(means, 0)

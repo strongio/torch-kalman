@@ -172,7 +172,7 @@ class InitialState(torch.nn.Module):
 
     def __init__(self, state_elements: Sequence[str]):
         super().__init__()
-        self.means = torch.nn.Parameter(.1 * torch.randn(len(state_elements)))
+        self.mean = torch.nn.Parameter(.1 * torch.randn(len(state_elements)))
 
     def forward(self, num_groups: int) -> torch.Tensor:
-        return self.means.expand(num_groups, -1).clone()
+        return self.mean.expand(num_groups, -1).clone()
