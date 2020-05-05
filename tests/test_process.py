@@ -102,17 +102,3 @@ class TestProcess(TestCase):
         self.assertTrue((state_mean[1:] == state_mean_last[:-1]).all())
 
         self.assertListEqual(batch_season.H(0)[0].tolist(), [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
-
-    def test_cls_validation(self):
-        with self.assertRaises(TypeError):
-            class MyProcess(Process):
-                def for_batch(self, num_groups: int, num_timesteps: int, **kwargs) -> 'Process':
-                    return super().for_batch(num_groups, num_timesteps)
-
-        with self.assertRaises(TypeError):
-            class MyProcess(Process):
-                def for_batch(self, num_groups, num_timesteps, pred_mat=None) -> 'Process':
-                    return super().for_batch(num_groups, num_timesteps)
-
-                def initial_state_means_for_batch(self, parameters, num_groups) -> Tensor:
-                    return super().initial_state_means_for_batch(parameters, num_groups)

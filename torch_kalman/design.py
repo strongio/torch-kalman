@@ -155,7 +155,9 @@ class Design(NiceRepr, Batchable):
                 )
                 for k in used:
                     unused_kwargs.discard(k)
-                for_batch.processes[process_name] = process.for_batch(**batch_dim_kwargs, **proc_kwargs)
+                proc_for_batch = process.for_batch(**batch_dim_kwargs, **proc_kwargs)
+                assert proc_for_batch
+                for_batch.processes[process_name] = proc_for_batch
 
                 # init mean:
                 init_mean_kwargs, used = self._parse_kwargs(
@@ -173,9 +175,6 @@ class Design(NiceRepr, Batchable):
             except Exception as e:
                 # add process-name to traceback
                 raise type(e)(f"Failed to create `{process}.for_batch()` (see traceback above).") from e
-
-            if for_batch.processes[process_name] is None:
-                raise RuntimeError(f"{process_name}'s `for_batch` call did not return anything.")
 
         # var adjustments:
         for_batch._measure_var_adjustments = self._measure_var_adjustments.for_batch(**batch_dim_kwargs)

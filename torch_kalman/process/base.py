@@ -150,6 +150,9 @@ class Process(NiceRepr, Batchable):
             raise ValueError("Class has been misconfigured: some fixed state-elements are also dynamic-state-elements.")
 
     def batch_kwargs(self) -> Iterable[str]:
+        if type(self).for_batch.__code__ == Process.for_batch.__code__:
+            yield from ()
+            return
         excluded = {'self', 'num_groups', 'num_timesteps'}
         for kwarg in inspect.signature(self.for_batch).parameters:
             if kwarg in excluded:
@@ -168,8 +171,8 @@ class InitialState(torch.nn.Module):
     _forward_kwargs = ['num_groups']
 
     def __init__(self, state_elements: Sequence[str]):
-        self.means = torch.nn.Parameter(.1 * torch.randn(len(state_elements)))
         super().__init__()
+        self.means = torch.nn.Parameter(.1 * torch.randn(len(state_elements)))
 
     def forward(self, num_groups: int) -> torch.Tensor:
         return self.means.expand(num_groups, -1).clone()

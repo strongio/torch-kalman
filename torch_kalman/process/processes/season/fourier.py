@@ -1,4 +1,4 @@
-from typing import Tuple, Optional, Union, Sequence, Dict, List, Callable
+from typing import Tuple, Optional, Union, Sequence, Dict, List
 
 from torch import Tensor
 from torch.nn import ParameterDict, Module
@@ -21,7 +21,7 @@ class _FourierSeason(Process):
                  K: Union[int, float],
                  decay: Union[bool, Tuple[float, float]] = False,
                  dt_unit: Optional[str] = None,
-                 initial_state: Optional[torch.nn.Module] = None):
+                 initial_state: Optional[Module] = None):
 
         # season structure:
         self.seasonal_period = seasonal_period

@@ -50,11 +50,12 @@ class Season(Process):
 
         # state-elements:
         pad_n = len(str(seasonal_period))
+        state_elements = [self.measured_name] + [zpad(i, pad_n) for i in range(1, seasonal_period)]
         super().__init__(
             id=id,
-            state_elements=[self.measured_name] + [zpad(i, pad_n) for i in range(1, seasonal_period)],
+            state_elements=state_elements,
             initial_state=SeasonInitialState(
-                state_elements=self.state_elements,
+                state_elements=state_elements,
                 dt_helper=self._dt_helper,
                 season_duration=season_duration,
                 seasonal_period=seasonal_period
@@ -157,10 +158,9 @@ class SeasonInitialState(InitialState):
         self._dt_helper = dt_helper
 
     def forward(self, num_groups: int, start_datetimes: Optional[np.ndarray]) -> torch.Tensor:
-        means = super().forward(num_groups)
         if start_datetimes is None:
             start_datetimes = np.zeros(num_groups)
         delta = self._dt_helper.make_delta_grid(start_datetimes, num_timesteps=1).squeeze(1)
         season_shift = (np.floor(delta / self.season_duration) % self.seasonal_period).astype('int')
-        means = [torch.cat([means[-shift:], means[:-shift]]) for shift in season_shift]
+        means = [torch.cat([self.means[-shift:], self.means[:-shift]]) for shift in season_shift]
         return torch.stack(means, 0)
