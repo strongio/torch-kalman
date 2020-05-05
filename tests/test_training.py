@@ -9,6 +9,7 @@ from torch_kalman.kalman_filter import KalmanFilter
 from torch_kalman.process import LocalLevel, Season
 
 from torch_kalman.state_belief import CensoredGaussian
+from torch_kalman.utils.datetime import DEFAULT_START_DT
 from torch_kalman.utils.simulate import _simulate
 
 
@@ -16,7 +17,7 @@ class TestTraining(unittest.TestCase):
     config = {
         'num_groups': 4,
         'num_timesteps': int(30 * 2.5),
-        'season_spec': {'season_start': np.datetime64('2018-01-01'), 'dt_unit': 'D'}
+        'dt_unit': 'D'
     }
 
     def _train_kf(self, data: torch.Tensor, num_epochs: int = 8, cls: Type['KalmanFilter'] = KalmanFilter):
@@ -24,13 +25,13 @@ class TestTraining(unittest.TestCase):
             measures=['y'],
             processes=[
                 LocalLevel(id='local_level').add_measure('y'),
-                Season(id='day_in_week', seasonal_period=7, **self.config['season_spec']).add_measure('y')
+                Season(id='day_in_week', seasonal_period=7, dt_unit='D').add_measure('y')
             ]
         )
         kf.opt = LBFGS(kf.parameters())
 
         start_datetimes = (
-                np.zeros(self.config['num_groups'], dtype='timedelta64') + self.config['season_spec']['season_start']
+                np.zeros(self.config['num_groups'], dtype='timedelta64') + DEFAULT_START_DT
         )
 
         def closure():

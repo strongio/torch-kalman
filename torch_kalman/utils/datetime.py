@@ -3,23 +3,14 @@ from typing import Union, Sequence, Optional
 import numpy as np
 import datetime
 
-DEFAULT_START_DT = '1970-01-05'  # first monday since epoch
+DEFAULT_START_DT = np.datetime64('1970-01-05')  # first monday since epoch
 
 
 class DateTimeHelper:
     supported_dt_units = {'Y', 'D', 'h', 'm', 's'}
 
-    def __init__(self,
-                 dt_unit: Optional[str] = None,
-                 start_datetime: Optional[np.datetime64] = DEFAULT_START_DT):
+    def __init__(self, dt_unit: Optional[str] = None):
         self.dt_unit = dt_unit
-        if self.dt_unit is None:
-            assert start_datetime is None
-            self.start_datetime = None
-        else:
-            if start_datetime is None:
-                start_datetime = DEFAULT_START_DT
-            self.start_datetime = np.datetime64(start_datetime, 'D' if dt_unit == 'W' else dt_unit)
 
     def make_grid(self, start_datetimes: Union[np.ndarray, Sequence], num_timesteps: int) -> np.ndarray:
         assert len(start_datetimes.shape) == 1
@@ -31,10 +22,10 @@ class DateTimeHelper:
 
     def make_delta_grid(self, start_datetimes: Union[np.ndarray, Sequence], num_timesteps: int) -> np.ndarray:
         dts = self.make_grid(start_datetimes, num_timesteps)
-        if self.start_datetime is None:
+        if self.dt_unit is None:
             out = dts.view('int64')
         else:
-            out = (dts - self.start_datetime).view('int64')
+            out = (dts - DEFAULT_START_DT).view('int64')
         if self.dt_unit == 'W':
             out //= 7
         return out

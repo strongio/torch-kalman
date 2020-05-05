@@ -86,6 +86,7 @@ class FourierSeason(_FourierSeason):
                  decay: Union[bool, Tuple[float, float]] = False,
                  dt_unit: Optional[str] = None,
                  initial_state: Optional[Module] = None):
+
         """
         :param id: Unique name for this instance.
         :param seasonal_period: The seasonal period (e.g. 24 for daily season in hourly data, 365.25 for yearly season

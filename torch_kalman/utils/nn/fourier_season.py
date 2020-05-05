@@ -1,4 +1,4 @@
-from typing import Union, Optional
+from typing import Union
 
 import torch
 import numpy as np
@@ -13,11 +13,10 @@ class FourierSeasonNN(Linear):
                  period: Union[np.timedelta64, str],
                  dt_unit: str,
                  num_outputs: int,
-                 start_datetime: Optional[np.datetime64] = None,
                  bias: bool = False):
         self.K = K
         self.period = period
-        self._dt_helper = DateTimeHelper(dt_unit=dt_unit, start_datetime=start_datetime)
+        self._dt_helper = DateTimeHelper(dt_unit=dt_unit)
         super().__init__(in_features=K * 2, out_features=num_outputs, bias=bias)
 
     def forward(self, datetimes: np.ndarray) -> torch.Tensor:
@@ -28,8 +27,7 @@ class FourierSeasonNN(Linear):
             datetimes=datetimes,
             K=self.K,
             period=self.period,
-            output_fmt='float32',
-            start_datetime=self._dt_helper.start_datetime
+            output_fmt='float32'
         ))
 
     def reset_parameters(self):

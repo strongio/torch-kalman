@@ -3,6 +3,15 @@
 
 Time-series forecasting models using Kalman-filters in PyTorch.
 
+## Table of Contents
+
+- [Installation](#Installation)
+- [Example: Beijing Multi-Site Air-Quality Dataset](#Example-Beijing-Multi-Site–Air-Quality-Dataset)
+  * [Prepare Our Dataset](#Prepare-our-Dataset)
+  * [Specify Our Model](#Specify-our-model)
+  * [Visualize the Results](#Visualize-the-results)
+  * [Using Predictors](#Using-predictors)
+
 ## Installation
 
 ```
@@ -22,19 +31,6 @@ df_aq_weekly.loc[:,['date','station','SO2','PM10','TEMP','PRES','DEWP']]
 
 
 <div>
-<style scoped>
-    .dataframe tbody tr th:only-of-type {
-        vertical-align: middle;
-    }
-
-    .dataframe tbody tr th {
-        vertical-align: top;
-    }
-
-    .dataframe thead th {
-        text-align: right;
-    }
-</style>
 <table border="1" class="dataframe">
   <thead>
     <tr style="text-align: right;">
@@ -183,7 +179,8 @@ dataset_all = TimeSeriesDataset.from_dataframe(
     dt_unit='W',
     measure_colnames=measures_pp,
     group_colname='station', 
-    time_colname='date'
+    time_colname='date',
+    pad_X=0.0
 )
 
 # Train/Val split:
@@ -307,7 +304,6 @@ print(pred.plot(df_pred.query("group=='Changping'"), split_dt=SPLIT_DT))
 ![png](README_files/README_11_0.png)
 
 
-    <ggplot: (-9223372036550318171)>
 
 
 
@@ -322,7 +318,6 @@ print(pred.plot(pred.to_dataframe(dataset_all, type='components').query("group==
 
 
 
-    <ggplot: (-9223372036551602039)>
 
 
 
@@ -407,14 +402,12 @@ print(pred.plot(df_components.query("group=='Changping'"), split_dt=SPLIT_DT))
 ![png](README_files/README_16_0.png)
 
 
-    <ggplot: (308906760)>
 
 
 
 ![png](README_files/README_16_2.png)
 
 
-    <ggplot: (-9223372036552943300)>
 
 
 
@@ -426,5 +419,4 @@ print(pred.plot(df_components.query("(group=='Changping') & (process.str.endswit
 ![png](README_files/README_17_0.png)
 
 
-    <ggplot: (303712113)>
 

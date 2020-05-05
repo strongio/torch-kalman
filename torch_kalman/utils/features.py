@@ -7,7 +7,6 @@ from torch_kalman.utils.datetime import DateTimeHelper
 def fourier_model_mat(datetimes: np.ndarray,
                       K: int,
                       period: Union[np.timedelta64, str],
-                      start_datetime: Optional[np.datetime64] = None,
                       output_fmt: str = 'float64') -> np.ndarray:
     """
     :param datetimes: An array of datetimes.
@@ -32,7 +31,7 @@ def fourier_model_mat(datetimes: np.ndarray,
             raise ValueError("Unrecognized `period`.")
 
     period_int = period.view('int64')
-    dt_helper = DateTimeHelper(dt_unit=np.datetime_data(period)[0], start_datetime=start_datetime)
+    dt_helper = DateTimeHelper(dt_unit=np.datetime_data(period)[0])
     time = dt_helper.validate_datetimes(datetimes).view('int64')
 
     output_dataframe = (output_fmt.lower() == 'dataframe')

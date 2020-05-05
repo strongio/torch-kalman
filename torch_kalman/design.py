@@ -334,7 +334,7 @@ class Design(NiceRepr, Batchable):
             specific_key = "{}__{}".format(prefix, k)
             if specific_key in all_kwargs:
                 out[k] = all_kwargs[specific_key]
-                used.add(k)
+                used.add(specific_key)
             elif k in all_kwargs:
                 if k in too_generic:
                     raise ValueError(
@@ -381,7 +381,9 @@ class Design(NiceRepr, Batchable):
                     args, kwargs = args_or_kwargs, {}
 
                 if alias == 'per_group':
-                    out_nn = NamedEmbedding(*args, **kwargs, embedding_dim=num_outputs)
+                    if 'embedding_dim' not in kwargs:
+                        kwargs['embedding_dim'] = num_outputs
+                    out_nn = NamedEmbedding(*args, **kwargs)
                     out_nn._forward_kwargs_aliases = {'input': 'group_names'}
                 elif alias == 'seasonal':
                     out_nn = FourierSeasonNN(*args, **kwargs, num_outputs=num_outputs)

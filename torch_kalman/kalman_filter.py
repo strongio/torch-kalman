@@ -1,4 +1,8 @@
-from typing import Optional, Union, Sequence, Any
+"""
+Base class for torch.nn.Modules that generate predictions with the Kalman-filtering algorithm.
+"""
+
+from typing import Optional, Union, Sequence
 from warnings import warn
 
 import torch
@@ -16,7 +20,9 @@ from torch_kalman.internals.utils import identity
 
 class KalmanFilter(Module):
     """
-    The base class for a KalmanFilter nn-module.
+    :cvar family: A subclass of `StateBelief`, representing the distribution being predicted. In this base class this is
+     `Gaussian`. `torch-kalman` also includes `CensoredGaussian`.
+    :cvar design_cls: The class that receives the `measures` and `processes`. In this base class this is `Design`.
     """
     family = Gaussian
     design_cls = Design
@@ -59,16 +65,8 @@ class KalmanFilter(Module):
         # generally a more reasonable init:
         self.design.process_covariance.set(self.design.process_covariance.create().data / 10.)
 
-    def predict_initial_state(self, design_for_batch: Design) -> 'Gaussian':
-        return self.family(
-            means=design_for_batch.initial_mean,
-            covs=design_for_batch.initial_covariance,
-            # we consider this a one-step-ahead prediction, so last measured one step ago:
-            last_measured=torch.ones(design_for_batch.num_groups, dtype=torch.int)
-        )
-
     def forward(self,
-                input: Any,
+                *args,
                 forecast_horizon: Optional[int] = None,
                 out_timesteps: Optional[int] = None,
                 progress: Union[tqdm, bool] = False,
@@ -77,9 +75,10 @@ class KalmanFilter(Module):
         """
         Generate 1-step-ahead predictions.
 
-        :param input: The multivariate time-series to be fit by the kalman-filter. The exact structure depends on the
-        kalman-filter `family`; for most, it is a tensor where the first dimension represents the groups, the second
-        dimension represents the time-points, and the third dimension represents the measures.
+        :param args: For this base class, a single Tensor containing a batch of time-series with dims
+            (group, time, measure). Child classes using a different :code:`KalmanFilter.family` may accept additional
+            args (e.g. :code:`CensoredGaussian` requires three arguments: the time-series, the lower censoring limits,
+            and the upper-censoring limits).
         :param forecast_horizon: Number of timesteps past the end of the input to continue making predictions. Defaults
         to 0. Ignored if `out_timesteps` is specified.
         :param out_timesteps: The number of timesteps to generate predictions for. Sometimes more convenient than
@@ -95,13 +94,13 @@ class KalmanFilter(Module):
         using sklearn-style double-underscoring: `process1__predictors` and `process2__predictors`.
         :return: A StateBeliefOverTime consisting of one-step-ahead predictions.
         """
-        if input is None:
+        if not args:
             if initial_prediction is None:
-                raise ValueError("Can only pass input=None if `initial_prediction` is passed.")
+                raise ValueError("No input tensor was passed, so must pass `initial_prediction`.")
             num_groups = initial_prediction.num_groups
             input_num_timesteps = 0
         else:
-            num_groups, input_num_timesteps, num_measures, *_ = self.family.get_input_dim(input)
+            num_groups, input_num_timesteps, num_measures, *_ = args[0].shape
             if num_measures != len(self.design.measures):
                 raise ValueError(
                     f"This KalmanFilter has {len(self.design.measures)} measures; but the input shape is "
@@ -128,7 +127,7 @@ class KalmanFilter(Module):
 
         # initial state of the system:
         if initial_prediction is None:
-            state_prediction = self.predict_initial_state(design_for_batch)
+            state_prediction = self._predict_initial_state(design_for_batch)
         else:
             state_prediction = initial_prediction.copy()
 
@@ -136,11 +135,11 @@ class KalmanFilter(Module):
         state_predictions = []
         for t in times:
             if t > 0:
-                if input is None:
+                if not args:
                     state_belief = state_prediction.copy()
                 else:
                     # take state-pred of previous t (now t-1), correct it according to what was actually measured at t-1
-                    state_belief = state_prediction.update_from_input(input, time=t - 1)
+                    state_belief = state_prediction.update(*args, time=t - 1)
 
                 # predict the state for t, from information from t-1
                 # F at t-1 is transition *from* t-1 *to* t
@@ -158,5 +157,10 @@ class KalmanFilter(Module):
 
         return self.family.concatenate_over_time(state_beliefs=state_predictions, design=self.design)
 
-    def smooth(self, states: StateBeliefOverTime):
-        raise NotImplementedError
+    def _predict_initial_state(self, design_for_batch: Design) -> 'Gaussian':
+        return self.family(
+            means=design_for_batch.initial_mean,
+            covs=design_for_batch.initial_covariance,
+            # we consider this a one-step-ahead prediction, so last measured one step ago:
+            last_measured=torch.ones(design_for_batch.num_groups, dtype=torch.int)
+        )

@@ -81,7 +81,7 @@ class TestProcess(TestCase):
     def test_discrete_seasons(self):
         # test seasons without durations
         season = Season(
-            id='day_of_week', seasonal_period=7, season_duration=1, season_start='2018-01-01', dt_unit='D'
+            id='day_of_week', seasonal_period=7, season_duration=1, dt_unit='D'
         )
         season.add_measure('measure')
 

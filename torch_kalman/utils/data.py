@@ -51,10 +51,13 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         self.measures = tuple(tuple(m) for m in measures)
         self.all_measures = tuple(itertools.chain.from_iterable(self.measures))
         self.group_names = group_names
-        self._dt_helper = DateTimeHelper(dt_unit=dt_unit, start_datetime=None)
+        self._dt_helper = DateTimeHelper(dt_unit=dt_unit)
         self.start_times = self._dt_helper.validate_datetimes(start_times)
-        self.dt_unit = dt_unit
         super().__init__(*tensors)
+
+    @property
+    def dt_unit(self) -> str:
+        return self._dt_helper.dt_unit
 
     @property
     def sizes(self) -> Sequence:
@@ -119,7 +122,12 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
                     raise ValueError(f"{new_time} is later than all the times for group {self.group_names[g]}")
                 elif (old_times > new_time).all():
                     raise ValueError(f"{new_time} is earlier than all the times for group {self.group_names[g]}")
-                new_tens.append(tens[g, true1d_idx(old_times >= new_time), :].unsqueeze(0))
+                # drop if before new_time:
+                g_tens = tens[g, true1d_idx(old_times >= new_time), :]
+                # drop if after last nan:
+                all_nan, _ = torch.min(torch.isnan(g_tens), 1)
+                end_idx = true1d_idx(~all_nan).max() + 1
+                new_tens.append(g_tens[:end_idx].unsqueeze(0))
             new_tens = ragged_cat(new_tens, ragged_dim=1, cat_dim=0)
             new_tensors.append(new_tens)
         return type(self)(
@@ -261,7 +269,8 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
                        dt_unit: Optional[str],
                        measure_colnames: Optional[Sequence[str]] = None,
                        X_colnames: Optional[Sequence[str]] = None,
-                       y_colnames: Optional[Sequence[str]] = None) -> 'TimeSeriesDataset':
+                       y_colnames: Optional[Sequence[str]] = None,
+                       pad_X: Optional[float] = None) -> 'TimeSeriesDataset':
 
         if measure_colnames is None:
             if X_colnames is None or y_colnames is None:
@@ -321,8 +330,9 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             dataset = dataset.split_measures(y_colnames, X_colnames)
             y, X = dataset.tensors
             # don't use nan-padding on the predictor tensor:
-            for i, time_idx in enumerate(time_idxs):
-                X[:, time_idx.max():, :] = 0.0
+            if pad_X is not None:
+                for i, time_idx in enumerate(time_idxs):
+                    X[:, time_idx.max():, :] = pad_X
 
         return dataset
 
