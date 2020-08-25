@@ -93,6 +93,21 @@ class CovarianceFromLogCholesky(CovarianceParameterization):
         return self._param_dict
 
 
+class CovarianceFromStdDevs(CovarianceParameterization):
+    def __init__(self, rank: int):
+        super().__init__(rank=rank)
+        self._param_dict = ParameterDict()
+        self._param_dict['log_std_devs'] = Parameter(data=.01 * torch.randn(rank))
+
+    def create(self, leading_dims: Sequence[int] = ()) -> torch.Tensor:
+        std_devs = torch.exp(self.param_dict()['log_std_devs'])
+        cov = torch.diag_embed(std_devs ** 2)
+        return cov.expand(tuple(leading_dims) + (-1, -1)).clone()
+
+    def param_dict(self):
+        return self._param_dict
+
+
 class PartialCovariance(CovarianceParameterization):
     partial_parameterizer_cls: Type[CovarianceParameterization] = None
 
