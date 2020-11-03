@@ -15,7 +15,7 @@ Time-series forecasting models using Kalman-filters in PyTorch.
 ## Installation
 
 ```
-pip install https://github.com/strongio/torch-kalman#egg=torch_kalman
+pip install git+https://github.com/strongio/torch-kalman.git#egg=torch_kalman
 ```
 
 ## Example: Beijing Multi-Site Air-Quality Dataset
