@@ -24,11 +24,8 @@ import torch
 from torch.optim import LBFGS
 
 from torch_kalman.kalman_filter import KalmanFilter
-from torch_kalman.process import LocalLevel, LocalTrend, Season, FourierSeason, LinearModel
+from torch_kalman.process import LocalLevel, LocalTrend, FourierSeason, LinearModel
 from torch_kalman.utils.data import TimeSeriesDataset
-from torch_kalman.utils.simulate import simulate_daily_series
-
-from sklearn.preprocessing import StandardScaler
 
 import numpy as np
 import pandas as pd
@@ -272,3 +269,5 @@ df_components = pred.to_dataframe(dataset_all, type='components')
 print(pred.plot(df_components.query("group=='Changping'"), split_dt=SPLIT_DT))
 # -
 print(pred.plot(df_components.query("(group=='Changping') & (process.str.endswith('predictors'))"), split_dt=SPLIT_DT))
+
+
