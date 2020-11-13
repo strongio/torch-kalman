@@ -45,7 +45,12 @@ class Design(NiceRepr, Batchable):
         :param measure_var_predict: See documentation for KalmanFilter.
         :param process_var_predict: See documentation for KalmanFilter.
         """
+        if isinstance(measures, str):
+            raise ValueError("Expected `measures` to be a sequence of strings, not a string.")
         self.measures = tuple(measures)
+        for m in self.measures:
+            if not isinstance(m, str):
+                raise ValueError(f"`{m}` is an element of measures, but is not a string")
 
         self.processes = OrderedDict()
         for process in processes:

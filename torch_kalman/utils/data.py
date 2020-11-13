@@ -126,8 +126,12 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
                 g_tens = tens[g, true1d_idx(old_times >= new_time), :]
                 # drop if after last nan:
                 all_nan, _ = torch.min(torch.isnan(g_tens), 1)
-                end_idx = true1d_idx(~all_nan).max() + 1
-                new_tens.append(g_tens[:end_idx].unsqueeze(0))
+                if all_nan.all():
+                    warn(f"Group '{self.group_names[g]}' (tensor {i}) has only `nans` after {new_time}")
+                    new_tens.append(g_tens.unsqueeze(0))
+                else:
+                    end_idx = true1d_idx(~all_nan).max() + 1
+                    new_tens.append(g_tens[:end_idx].unsqueeze(0))
             new_tens = ragged_cat(new_tens, ragged_dim=1, cat_dim=0)
             new_tensors.append(new_tens)
         return type(self)(
