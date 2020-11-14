@@ -119,19 +119,23 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             new_tens = []
             for g, (new_time, old_times) in enumerate(zip(start_times, times)):
                 if (old_times <= new_time).all():
-                    raise ValueError(f"{new_time} is later than all the times for group {self.group_names[g]}")
+                    warn(f"{new_time} is later than all the times for group {self.group_names[g]}")
+                    new_tens.append(tens[[g], 0:0])
+                    continue
                 elif (old_times > new_time).all():
-                    raise ValueError(f"{new_time} is earlier than all the times for group {self.group_names[g]}")
+                    warn(f"{new_time} is earlier than all the times for group {self.group_names[g]}")
+                    new_tens.append(tens[[g], 0:0])
+                    continue
                 # drop if before new_time:
-                g_tens = tens[g, true1d_idx(old_times >= new_time), :]
+                g_tens = tens[g, true1d_idx(old_times >= new_time)]
                 # drop if after last nan:
                 all_nan, _ = torch.min(torch.isnan(g_tens), 1)
                 if all_nan.all():
                     warn(f"Group '{self.group_names[g]}' (tensor {i}) has only `nans` after {new_time}")
-                    new_tens.append(g_tens.unsqueeze(0))
+                    end_idx = 0
                 else:
                     end_idx = true1d_idx(~all_nan).max() + 1
-                    new_tens.append(g_tens[:end_idx].unsqueeze(0))
+                new_tens.append(g_tens[:end_idx].unsqueeze(0))
             new_tens = ragged_cat(new_tens, ragged_dim=1, cat_dim=0)
             new_tensors.append(new_tens)
         return type(self)(
