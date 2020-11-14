@@ -57,7 +57,6 @@ class NN(Process):
 
         #
         self._has_process_variance = process_variance
-        self._has_init_variance = init_variance
 
         #
         pad_n = len(str(state_dim))
