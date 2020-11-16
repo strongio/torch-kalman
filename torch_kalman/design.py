@@ -200,13 +200,20 @@ class Design(NiceRepr, Batchable):
                 for k in used:
                     unused_kwargs.discard(k)
 
-                adjustments = adjustments_from_nn(
-                    nn=nn,
-                    **batch_dim_kwargs,
-                    nn_kwargs=nn_kwargs,
-                    output_names=self.measures if var_type == 'measure' else self.dynamic_state_elements,
-                    time_split_kwargs=getattr(nn, '_time_split_kwargs', ())
-                )
+                try:
+                    adjustments = adjustments_from_nn(
+                        nn=nn,
+                        **batch_dim_kwargs,
+                        nn_kwargs=nn_kwargs,
+                        output_names=self.measures if var_type == 'measure' else self.dynamic_state_elements,
+                        time_split_kwargs=getattr(nn, '_time_split_kwargs', ())
+                    )
+                except TypeError as e:
+                    if "forward() missing 1 required" in str(e):
+                        raise TypeError(
+                            f"`{var_type}_var_nn.forward()` didn't get an expected argument; see traceback."
+                        ) from e
+                    raise e
 
                 for el, adj in adjustments.items():
                     for_batch._adjust_variance(el, adjustment=adj, check_slow_grad=False)
