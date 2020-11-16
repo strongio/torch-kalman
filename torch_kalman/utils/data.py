@@ -228,7 +228,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
                      ) -> 'DataFrame':
 
         return self.tensor_to_dataframe(
-            tensor=torch.cat(self.tensors, 2),
+            tensor=ragged_cat(self.tensors, ragged_dim=1, cat_dim=2),
             times=self.times(),
             group_names=self.group_names,
             group_colname=group_colname,
@@ -340,7 +340,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             # don't use nan-padding on the predictor tensor:
             if pad_X is not None:
                 for i, time_idx in enumerate(time_idxs):
-                    X[:, time_idx.max():, :] = pad_X
+                    X[i, time_idx.max():, :] = pad_X
 
         return dataset
 
