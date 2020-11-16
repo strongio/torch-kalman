@@ -3,6 +3,7 @@ from warnings import warn
 
 import torch
 from torch.nn import Embedding
+import numpy as np
 
 
 class NamedEmbedding(Embedding):
@@ -24,6 +25,11 @@ class NamedEmbedding(Embedding):
 
     @property
     def name_to_idx(self) -> Dict[str, int]:
+        """
+        We'd like to store `name_to_idx` in the state so that it's saved, and loaded with load_state_dict. But this is
+        only for Parameters -- and can't use a ParameterDict because load_state_dict will complain about mismatched
+        keys. So we convert the names to integers then save them in a 2d Parameter.
+        """
         if self._name_to_idx is None:
             self._name_to_idx = {}
             for i, int_repr in enumerate(self._names_as_ints.tolist()):
@@ -39,13 +45,17 @@ class NamedEmbedding(Embedding):
             nm = str(nm).rstrip()
             if nm not in self.name_to_idx:
                 if len(self.name_to_idx) >= self.num_embeddings:
-                    # TODO: support deviation coding
-                    raise RuntimeError(
-                        f"Got a new group name '{nm}', but all {self.num_embeddings} idx are taken by previous groups."
-                    )
+                    if self.training:
+                        raise RuntimeError(
+                            f"Got a new group name '{nm}', but all {self.num_embeddings} idx are taken by previous "
+                            f"groups. If trying to predict for new groups set `self.train(False)`"
+                        )
+                    else:
+                        indices.append(-1)
+                        continue
                 else:
                     self._names_as_ints[len(self.name_to_idx)] = torch.tensor(_str_to_ints(nm, width=self.max_name_len))
-                    self._name_to_idx = None
+                    self._name_to_idx = None  # reset `name_to_idx` cache
             indices.append(self.name_to_idx[nm])
 
         with torch.no_grad():
@@ -53,7 +63,11 @@ class NamedEmbedding(Embedding):
         return idx
 
     def forward(self, input: Sequence[str]) -> torch.Tensor:
-        return super().forward(input=self._input_to_idx(input))
+        idx = self._input_to_idx(input)
+        legal_idx = np.where(idx >= 0)[0]
+        out = torch.zeros((len(input), self.embedding_dim))
+        out[legal_idx] = super().forward(idx[legal_idx])
+        return out
 
     def reset_parameters(self):
         super().reset_parameters()
