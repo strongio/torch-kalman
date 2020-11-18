@@ -42,13 +42,10 @@ class StateBeliefOverTime(NiceRepr):
         self.num_timesteps = len(state_beliefs)
 
         # the last idx where any updates/predicts occurred:
-        self._last_update = None
-        self._last_prediction = None
-        self.last_predict_idx = -torch.ones(self.num_groups, dtype=torch.int)
-        self.last_update_idx = -torch.ones(self.num_groups, dtype=torch.int)
+        self.last_update_idx = torch.zeros(self.num_groups, dtype=torch.int)
         for t, state_belief in enumerate(state_beliefs):
-            self.last_predict_idx[state_belief.last_measured == 1] = t
-            self.last_update_idx[state_belief.last_measured == 0] = t
+            # TODO: any cases where this would be zero?
+            self.last_update_idx[state_belief.last_measured <= 1] = t
 
         self._means = None
         self._covs = None
@@ -116,11 +113,6 @@ class StateBeliefOverTime(NiceRepr):
         measurement.
         :return: A StateBelief.
         """
-        no_updates = self.last_update_idx < 0
-        if no_updates.any():
-            raise ValueError(
-                f"The following groups have never been updated:\n{no_updates.nonzero().squeeze().tolist()}"
-            )
         return self._restore_sb(enumerate(self.last_update_idx.tolist()))
 
     # Distribution-Methods -----------:
