@@ -273,9 +273,7 @@ class StateBeliefOverTime(NiceRepr):
             stds = torch.diagonal(self.prediction_uncertainty, dim1=-1, dim2=-2).sqrt()
             for i, measure in enumerate(self.design.measures):
                 # predicted:
-                df_pred = _tensor_to_df(self.predictions[..., [i]], measures=['mean'])
-                df_std = _tensor_to_df(stds[..., [i]], measures=['_std'])
-                df = df_pred.merge(df_std, on=[group_colname, time_colname])
+                df = _tensor_to_df(torch.stack([self.predictions[..., i], stds[..., i]], 2), measures=['mean', '_std'])
                 df['lower'] = df['mean'] - multi * df['_std']
                 df['upper'] = df['mean'] + multi * df.pop('_std')
 
