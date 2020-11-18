@@ -82,7 +82,8 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             assert 0 < train_frac < 1
             # for each group, find the last non-nan, take `frac` of that to find the train/val split point:
             split_idx = np.array([int(idx * train_frac) for idx in self._last_measured_idx()], dtype='int')
-            split_times = np.take(self.times(0), split_idx)
+            _times = self.times(0)
+            split_times = np.array([_times[i, t] for i, t in enumerate(split_idx)])
         else:
             if train_frac is not None:
                 raise TypeError("Can pass only one of `train_frac`, `dt`.")
