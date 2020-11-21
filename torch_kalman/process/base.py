@@ -35,8 +35,6 @@ class Process(NiceRepr, Batchable):
 
         # a callable that predicts the initial state
         self.initial_state = initial_state or InitialState(self.state_elements)
-        if not hasattr(self.initial_state, '_forward_kwargs'):
-            self.initial_state._forward_kwargs = infer_forward_kwargs(self.initial_state)
 
         self._validate()
 
@@ -164,6 +162,8 @@ class Process(NiceRepr, Batchable):
             yield kwarg
 
     def init_mean_kwargs(self) -> Iterable[str]:
+        if not hasattr(self.initial_state, '_forward_kwargs'):
+            self.initial_state._forward_kwargs = infer_forward_kwargs(self.initial_state)
         return self.initial_state._forward_kwargs
 
 
