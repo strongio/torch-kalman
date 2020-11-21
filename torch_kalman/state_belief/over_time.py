@@ -214,7 +214,7 @@ class StateBeliefOverTime(NiceRepr):
                      type: str = 'predictions',
                      group_colname: str = 'group',
                      time_colname: str = 'time',
-                     multi: float = 1.96) -> 'DataFrame':
+                     multi: Optional[float] = 1.96) -> 'DataFrame':
         """
         :param dataset: Either a TimeSeriesDataset, or a dictionary with 'start_times', 'group_names', & 'dt_unit'
         :param type: Either 'predictions' or 'components'.
@@ -264,8 +264,8 @@ class StateBeliefOverTime(NiceRepr):
                 measures=measures
             )
 
-        assert group_colname not in {'mean', 'lower', 'upper'}
-        assert time_colname not in {'mean', 'lower', 'upper'}
+        assert group_colname not in {'mean', 'lower', 'upper', 'std'}
+        assert time_colname not in {'mean', 'lower', 'upper', 'std'}
 
         out = []
         if type == 'predictions':
@@ -273,9 +273,10 @@ class StateBeliefOverTime(NiceRepr):
             stds = torch.diagonal(self.prediction_uncertainty, dim1=-1, dim2=-2).sqrt()
             for i, measure in enumerate(self.design.measures):
                 # predicted:
-                df = _tensor_to_df(torch.stack([self.predictions[..., i], stds[..., i]], 2), measures=['mean', '_std'])
-                df['lower'] = df['mean'] - multi * df['_std']
-                df['upper'] = df['mean'] + multi * df.pop('_std')
+                df = _tensor_to_df(torch.stack([self.predictions[..., i], stds[..., i]], 2), measures=['mean', 'std'])
+                if multi is not None:
+                    df['lower'] = df['mean'] - multi * df['std']
+                    df['upper'] = df['mean'] + multi * df.pop('std')
 
                 # actual:
                 orig_tensor = batch_info.get('named_tensors', {}).get(measure, None)
@@ -288,9 +289,10 @@ class StateBeliefOverTime(NiceRepr):
         elif type == 'components':
             # components:
             for (measure, process, state_element), (m, std) in self._components().items():
-                df = _tensor_to_df(torch.stack([m, std], 2), measures=['mean', '_std'])
-                df['lower'] = df['mean'] - multi * df['_std']
-                df['upper'] = df['mean'] + multi * df.pop('_std')
+                df = _tensor_to_df(torch.stack([m, std], 2), measures=['mean', 'std'])
+                if multi is not None:
+                    df['lower'] = df['mean'] - multi * df['std']
+                    df['upper'] = df['mean'] + multi * df.pop('std')
                 df['process'], df['state_element'], df['measure'] = process, state_element, measure
                 out.append(df)
 
@@ -368,6 +370,9 @@ class StateBeliefOverTime(NiceRepr):
                 raise TypeError("Please specify time_colname")
 
         df = df.copy()
+        if 'upper' not in df.columns and 'std' in df.columns:
+            df['upper'] = df['mean'] + 1.96 * df['std']
+            df['lower'] = df['lower'] - 1.96 * df['std']
         if df[group_colname].nunique() > max_num_groups:
             subset_groups = df[group_colname].drop_duplicates().sample(max_num_groups).tolist()
             if len(subset_groups) < df[group_colname].nunique():
