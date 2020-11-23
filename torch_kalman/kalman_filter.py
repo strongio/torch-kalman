@@ -69,34 +69,36 @@ class KalmanFilter(Module):
                 *args,
                 forecast_horizon: Optional[int] = None,
                 out_timesteps: Optional[int] = None,
+                n_step: int = 1,
                 progress: Union[tqdm, bool] = False,
                 initial_prediction: Optional[StateBelief] = None,
                 **kwargs) -> StateBeliefOverTime:
         """
-        Generate 1-step-ahead predictions.
+        Generate n-step-ahead predictions.
 
         :param args: For this base class, a single Tensor containing a batch of time-series with dims
-            (group, time, measure). Child classes using a different :code:`KalmanFilter.family` may accept additional
-            args (e.g. :code:`CensoredGaussian` requires three arguments: the time-series, the lower censoring limits,
-            and the upper-censoring limits).
+        (group, time, measure). Child classes using a different :code:`KalmanFilter.family` may accept additional
+        args (e.g. :code:`CensoredGaussian` requires three arguments: the time-series, the lower censoring limits,
+        and the upper-censoring limits).
         :param forecast_horizon: Number of timesteps past the end of the input to continue making predictions. Defaults
         to 0. Ignored if `out_timesteps` is specified.
         :param out_timesteps: The number of timesteps to generate predictions for. Sometimes more convenient than
         `forecast_horizon` if predictors are being used, since you can pass `out_timesteps=predictors.shape[1]`
         rather than having to compare the dimensions of the input tensor and the predictor tensor.
-        :param progress: Should progress-bar be generated?
+        :param n_step: Will generate {n_step}-step-ahead predictions. Defaults to (and cannot be less than) 1.
+        :param progress: Should progress-bar be displayed?
         :param initial_prediction: Usually left `None` so that initial predictions are made automatically; in some
-        cases case you might pass a StateBelief generated from a previous prediciton.
+        cases case you might pass a StateBelief generated from a previous prediction.
         :param kwargs: Other kwargs that will be passed to the kf's `design.for_batch()` method, which in turn passes
         them to each process (or to the NNs specified in `*_var_predict`). Sometimes, processes might share keyword-
         argument names but you want to pass different arguments to them -- for example, if you have two processes that
         take `predictors` but you want to pass a different predictor matrix to each. In this case you can disambiguate
         using sklearn-style double-underscoring: `process1__predictors` and `process2__predictors`.
-        :return: A StateBeliefOverTime consisting of one-step-ahead predictions.
+        :return: A StateBeliefOverTime consisting of n-step-ahead predictions.
         """
         if not args:
             if initial_prediction is None:
-                raise ValueError("No input tensor was passed, so must pass `initial_prediction`.")
+                raise ValueError("No input `args` were passed, so must pass `initial_prediction`.")
             num_groups = initial_prediction.num_groups
             input_num_timesteps = 0
         else:
@@ -117,45 +119,61 @@ class KalmanFilter(Module):
         else:
             if forecast_horizon is not None:
                 warn("`out_timesteps` was specified so `forecast_horizon` will be ignored.")
+        assert out_timesteps > 0
+
+        assert n_step > 0
 
         progress = progress or identity
         if progress is True:
             progress = tqdm
-        times = progress(range(out_timesteps))
+        times = progress(range(1, out_timesteps))
 
-        design_for_batch = self.design.for_batch(num_groups=num_groups, num_timesteps=out_timesteps, **kwargs)
+        try:
+            design_for_batch = self.design.for_batch(
+                num_groups=num_groups, num_timesteps=out_timesteps + n_step - 1, **kwargs
+            )
+        except IndexError as e:
+            if (n_step > 1 or forecast_horizon > 0) and ("out of bounds for dimension" in str(e)):
+                raise ValueError(
+                    f"Hit an index error when setting up design. If you passed external predictors, make sure they "
+                    f"extend into the future to support `n_step`/`forecast_horizon`; or reduce `out_timesteps` "
+                    f"(currently {out_timesteps:,})."
+                ) from e
+            else:
+                raise e
 
         # initial state of the system:
         if initial_prediction is None:
-            state_prediction = self._predict_initial_state(design_for_batch)
+            state_pred_1step = self._predict_initial_state(design_for_batch)
         else:
-            state_prediction = initial_prediction.copy()
+            state_pred_1step = initial_prediction.copy()
+        state_pred_1step.compute_measurement(H=design_for_batch.H(0), R=design_for_batch.R(0))
 
-        # generate predictions:
-        state_predictions = []
-        for t in times:
-            if t > 0:
-                if not args:
-                    state_belief = state_prediction.copy()
-                else:
-                    # take state-pred of previous t (now t-1), correct it according to what was actually measured at t-1
-                    state_belief = state_prediction.update(*args, time=t - 1)
+        state_preds = [state_pred_1step]
+        for t1 in times:
+            t = t1 - 1
 
-                # predict the state for t, from information from t-1
-                # F at t-1 is transition *from* t-1 *to* t
-                F = design_for_batch.F(t - 1)
-                Q = design_for_batch.Q(t - 1)
-                state_prediction = state_belief.predict(F=F, Q=Q)
+            # reconcile last timestep's 1step prediction with what was actually measured:
+            if args:
+                state_pred = state_pred_1step.update(*args, time=t)
+            else:
+                state_pred = state_pred_1step.copy()
 
-            # compute how state-prediction at t translates into measurement-prediction at t
-            H = design_for_batch.H(t)
-            R = design_for_batch.R(t)
-            state_prediction.compute_measurement(H=H, R=R)
+            # predict
+            # F/Q at t is transition *from* t *to* t+1
+            for i in range(n_step):
+                state_pred = state_pred.predict(F=design_for_batch.F(t + i), Q=design_for_batch.Q(t + i))
+                if i == 0:
+                    # always need to save the 1step for the next iter, even if it's not the output:
+                    state_pred_1step = state_pred
+                    state_pred_1step.compute_measurement(H=design_for_batch.H(t1), R=design_for_batch.R(t1))
 
-            # append to output:
-            state_predictions.append(state_prediction)
+            # if not 1step, need to additionally compute measurement for output:
+            if i > 0:
+                state_pred.compute_measurement(H=design_for_batch.H(t1 + i), R=design_for_batch.R(t1 + i))
+            state_preds.append(state_pred)
 
-        return self.family.concatenate_over_time(state_beliefs=state_predictions, design=self.design)
+        return self.family.concatenate_over_time(state_beliefs=state_preds, design=self.design)
 
     def _predict_initial_state(self, design_for_batch: Design) -> 'Gaussian':
         return self.family(

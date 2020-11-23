@@ -103,7 +103,7 @@ class StateBelief(NiceRepr):
 
         # groups without nan:
         if is_nan.any():
-            nonan_group_idx = (~anynan_by_group).nonzero().squeeze(-1).tolist()
+            nonan_group_idx = (~anynan_by_group).nonzero(as_tuple=False).squeeze(-1).tolist()
             if len(nonan_group_idx):
                 update_groups.append((slice(None), nonan_group_idx))
         else:

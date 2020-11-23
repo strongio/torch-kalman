@@ -17,7 +17,8 @@ setup(
         'numpy>=1.4',
         'tqdm>=4.0',
         'filterpy>=1.4',
-        'lazy_object_proxy>=1.4'
+        'lazy_object_proxy>=1.4',
+        'parameterized>=0.7'
     ],
     test_suite='nose.collector',
     tests_require=['nose']
