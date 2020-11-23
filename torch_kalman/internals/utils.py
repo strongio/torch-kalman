@@ -24,19 +24,6 @@ def bifurcate(x: Iterable, lhs: Callable[[Any], bool]) -> Tuple[list, list]:
     return l, r
 
 
-def dict_key_replace(obj: Union[Dict, Any], old: str, new: str) -> Dict:
-    if not isinstance(obj, Dict):
-        return obj
-
-    out = {}
-    for key, value in obj.items():
-        if key == old:
-            out[new] = dict_key_replace(value, old=old, new=new)
-        else:
-            out[key] = dict_key_replace(value, old=old, new=new)
-    return out
-
-
 def zpad(x: Any, n: int) -> str:
     return str(x).rjust(n, "0")
 

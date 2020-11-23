@@ -92,7 +92,7 @@ class CensoredGaussian(Gaussian):
     def _update_last_measured(self, obs: Tensor) -> Tensor:
         if obs.ndimension() == 3:
             obs = obs[..., 0]
-        any_measured_group_idx = (torch.sum(~torch.isnan(obs), 1) > 0).nonzero().squeeze(-1)
+        any_measured_group_idx = (torch.sum(~torch.isnan(obs), 1) > 0).nonzero(as_tuple=False).squeeze(-1)
         last_measured = self.last_measured.clone()
         last_measured[any_measured_group_idx] = 0
         return last_measured

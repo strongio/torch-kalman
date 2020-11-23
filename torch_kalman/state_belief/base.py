@@ -92,11 +92,11 @@ class StateBelief(NiceRepr):
         anynan_by_group = (torch.sum(is_nan, 1) > 0)
 
         # groups with nan:
-        nan_group_idx = anynan_by_group.nonzero().squeeze(-1).tolist()
+        nan_group_idx = anynan_by_group.nonzero(as_tuple=False).squeeze(-1).tolist()
         for i in nan_group_idx:
             if is_nan[i].all():
                 continue  # if all nan, then simply skip update
-            which_valid = (~is_nan[i]).nonzero().squeeze(-1).tolist()
+            which_valid = (~is_nan[i]).nonzero(as_tuple=False).squeeze(-1).tolist()
             update_groups[tuple(which_valid)].append(i)
 
         update_groups = list(update_groups.items())
@@ -123,7 +123,7 @@ class StateBelief(NiceRepr):
         return type(self)(means=means_new, covs=covs_new, last_measured=last_measured)
 
     def _update_last_measured(self, obs: Tensor) -> Tensor:
-        any_measured_group_idx = (torch.sum(~torch.isnan(obs), 1) > 0).nonzero().squeeze(-1)
+        any_measured_group_idx = (torch.sum(~torch.isnan(obs), 1) > 0).nonzero(as_tuple=False).squeeze(-1)
         last_measured = self.last_measured.clone()
         last_measured[any_measured_group_idx] = 0
         return last_measured
