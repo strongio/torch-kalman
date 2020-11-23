@@ -57,10 +57,8 @@ class NamedEmbedding(Embedding):
         :param dev_code: If True, then the actual number of weights will be reduced by 1, and the first entry in the
         dictionary will not get its own vector (instead, its vector will be -sum(all_other_vectors)). This is useful if
         the `NamedEmbedding` is being used as part of a larger network where the bias/intercept is already being
-        learned. In that case, each embedding will represent that entry's deviation from the average, and when
-        predicting for new entries that were not trained on, the average embedding will be output from `forward()`.
-        Please note that `dev_code=True` also overrides the default `reset_parameters()` method to intialize weights to
-        zero.
+        learned. In that case, each embedding will represent that entry's deviation from the bias, and when predicting
+        for new entries that were not trained on, this will be output from `forward()`.
         :param kwargs: Other keyword-arguments passed to torch.nn.Embedding.
         """
         self.dev_code = dev_code
@@ -126,13 +124,15 @@ class NamedEmbedding(Embedding):
         if in_embedding.any():
             out[np.where(in_embedding)] = super().forward(idx[np.where(in_embedding)] - int(self.dev_code))
         if self.dev_code:
-            out[np.where(idx == 0)] = -torch.sum(self.weight, 0)
+            out[np.where(idx == 0)] = -torch.sum(self.trained_weights, 0)
         return out
 
-    def reset_parameters(self):
-        super().reset_parameters()
-        if self.dev_code:
-            self.weight.data *= 0.0
+    @property
+    def trained_weights(self) -> torch.Tensor:
+        idx = torch.tensor(list(self.name_to_idx.values()), dtype=torch.long)
+        idx -= int(self.dev_code)
+        idx = idx[idx >= 0]
+        return self.weight[idx]
 
 
 def _str_to_ints(astr: str, width: int) -> Sequence[int]:
