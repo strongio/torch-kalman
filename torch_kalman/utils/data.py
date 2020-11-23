@@ -37,6 +37,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         if not isinstance(group_names, np.ndarray):
             group_names = np.array(group_names)
 
+        assert len(group_names) == len(set(group_names))
         assert len(group_names) == len(start_times)
         assert len(tensors) == len(measures)
 
