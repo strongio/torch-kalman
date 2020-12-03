@@ -162,6 +162,8 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
 
         :param measure_groups: Each argument should be be a list of measure-names, or an indexer (i.e. list of ints or
         a slice).
+        :param which: If there are already multiple measure groups, the split will occur within one of them; must
+        specify which.
         :return: A TimeSeriesDataset, now with multiple tensors for the measure-groups
         """
 
