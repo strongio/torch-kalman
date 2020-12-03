@@ -156,7 +156,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         group_idx = true1d_idx(np.isin(self.group_names, groups))
         return self[group_idx]
 
-    def split_measures(self, *measure_groups) -> 'TimeSeriesDataset':
+    def split_measures(self, *measure_groups, which: Optional[int] = None) -> 'TimeSeriesDataset':
         """
         Take a dataset with one tensor, split it into a dataset with multiple tensors.
 
@@ -164,10 +164,14 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         a slice).
         :return: A TimeSeriesDataset, now with multiple tensors for the measure-groups
         """
-        if len(self.measures) > 1:
-            raise RuntimeError(f"Can only split measures if there's only one group, but instead:\n{self.measures}")
-        self_tensor = self.tensors[0]
-        self_measures = self.measures[0]
+
+        if which is None:
+            if len(self.measures) > 1:
+                raise RuntimeError(f"Must pass `which` if there's more than one groups:\n{self.measures}")
+            which = 0
+
+        self_tensor = self.tensors[which]
+        self_measures = self.measures[which]
 
         idxs = []
         for measure_group in measure_groups:
@@ -178,7 +182,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
 
         self_measures = np.array(self_measures)
         return type(self)(
-            *(self_tensor[:, :, idx] for idx in idxs),
+            *(self_tensor[:, :, idx].clone() for idx in idxs),
             start_times=self.start_times,
             group_names=self.group_names,
             measures=[tuple(self_measures[idx]) for idx in idxs],
