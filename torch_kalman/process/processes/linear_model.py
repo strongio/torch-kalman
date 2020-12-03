@@ -1,4 +1,4 @@
-from typing import Sequence, Optional, Union, Callable, Collection
+from typing import Sequence, Optional, Union, Callable, Collection, Tuple, Dict
 
 import torch
 
@@ -6,6 +6,7 @@ from torch import Tensor
 
 from torch_kalman.process import Process
 from torch_kalman.internals.utils import split_flat
+from torch_kalman.process.utils.bounded import Bounded
 
 
 class LinearModel(Process):
@@ -25,24 +26,25 @@ class LinearModel(Process):
                  id: str,
                  covariates: Sequence[str],
                  process_variance: Union[bool, Collection[str]] = False,
-                 inv_link: Optional[Callable] = None,
+                 decay: Union[bool, Dict[str, Tuple[float, float]], Tuple[float, float]] = False,
                  initial_state: Optional[torch.nn.Module] = None):
         """
 
         :param id: A unique name for the process.
         :param covariates: The names of the predictors.
         :param process_variance: If False (the default), then the uncertainty about the values of the coefficients does
-        not grow at each timestep, so over time these coefficients eventually converge to a certain value. If True, then
-         the coefficients are allowed to 'drift' over time.
-        :param inv_link: An inverse link function that maps the linear-model to the prediction; default the identity
-        link.
+        not grow at each timestep, so over time these coefficients eventually converge to a certain value. If True,
+        then the coefficients are allowed to 'drift' over time. Can only allow process-variance for a subset by passing
+        names.
+        :param decay: If True, then in forecasts (or for missing data) the coefficients will tend to shrink towards
+        zero. Usually only used if `process_variance=True`. Default False. Instead of `True` you can specify custom-
+        bounds for the decay-rate as a tuple. You can also pass a dictionary with predictors as keys and bounds as
+        values.
         :param initial_state: Optional, a callable (typically a torch.nn.Module). When the KalmanFilter is called,
         keyword-arguments can be passed to initial_state in the format `{this_process}_initial_state__{kwarg}`.
         """
         if isinstance(covariates, str):
             raise TypeError("`covariates` should be sequence of strings, not single string")
-
-        self.inv_link = inv_link
 
         # process covariance:
         self._dynamic_state_elements = []
@@ -50,12 +52,25 @@ class LinearModel(Process):
             self._dynamic_state_elements = covariates if isinstance(process_variance, bool) else process_variance
             extras = set(self._dynamic_state_elements) - set(covariates)
             if len(extras):
-                raise ValueError(f"`process_variance` includes items not in `covariates`:{extras}")
+                raise ValueError(f"`process_variance` includes items not in `covariates`:\n{extras}")
 
         super().__init__(id=id, state_elements=covariates, initial_state=initial_state)
 
-        for cov in covariates:
-            self._set_transition(from_element=cov, to_element=cov, value=1.0)
+        # decay:
+        self.decays = {}
+        if decay:
+            if decay is True:
+                self.decays = {se: Bounded(.95, 1.00) for se in covariates}
+            elif isinstance(decay, dict):
+                assert set(decay).issubset(covariates)
+                for se, v in decay.items():
+                    self.decays[se] = v if isinstance(v, Bounded) else Bounded(*v)
+            else:
+                self.decays = {se: Bounded(*decay) for se in covariates}
+
+        for se in covariates:
+            decay = self.decays.get(se)
+            self._set_transition(from_element=se, to_element=se, value=decay.get_value if decay else 1.0)
 
     @property
     def dynamic_state_elements(self) -> Sequence[str]:
@@ -63,8 +78,21 @@ class LinearModel(Process):
 
     def add_measure(self, measure: str) -> 'LinearModel':
         for cov in self.state_elements:
-            self._set_measure(measure=measure, state_element=cov, value=0., ilink=self.inv_link)
+            self._set_measure(
+                measure=measure,
+                state_element=cov,
+                value=0.
+            )
         return self
+
+    def param_dict(self) -> torch.nn.ParameterDict:
+        p = super().param_dict()
+        for nm, decay in self.decays.items():
+            if any((decay.parameter is _dp) for _dp in p.values()):
+                # in theory se's could share decays
+                continue
+            p[f'decay_{nm}'] = decay.parameter
+        return p
 
     def for_batch(self,
                   num_groups: int,
