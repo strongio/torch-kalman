@@ -129,9 +129,7 @@ class KalmanFilter(Module):
         times = progress(range(1, out_timesteps))
 
         try:
-            design_for_batch = self.design.for_batch(
-                num_groups=num_groups, num_timesteps=out_timesteps + n_step - 1, **kwargs
-            )
+            design_for_batch = self.design.for_batch(num_groups=num_groups, num_timesteps=out_timesteps + n_step - 1, **kwargs)
         except IndexError as e:
             if (n_step > 1 or forecast_horizon > 0) and ("out of bounds for dimension" in str(e)):
                 raise ValueError(

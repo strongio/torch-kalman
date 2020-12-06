@@ -93,7 +93,15 @@ class StateBeliefOverTime(NiceRepr):
         Uncertainty on the measurement scale, aka "system uncertainty".
         """
         Ht = self.H.permute(0, 1, 3, 2)
-        return self.H.matmul(self.covs).matmul(Ht) + self.R
+        cov = self.H.matmul(self.covs).matmul(Ht) + self.R
+        if (cov < 0).any():
+            warn(
+                f"negative values in `prediction_uncertainty`. This can be caused by `{type(self).__name__}().covs` "
+                f"not being positive-definite. Try stepping through each group,time of this matrix to find the "
+                f"offending matrix (e.g. torch.cholesky returns an error); then inspect the observations around this "
+                f"group/time."
+            )
+        return cov
 
     def state_belief_for_time(self, time_idx: Sequence[int]) -> StateBelief:
         """
