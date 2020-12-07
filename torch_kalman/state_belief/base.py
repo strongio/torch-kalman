@@ -50,9 +50,12 @@ class StateBelief(NiceRepr):
             pass
         return sb
 
-    def compute_measurement(self, H: Tensor, R: Tensor) -> 'StateBelief':
+    def compute_measurement(self, H: Tensor, R: Tensor, overwrite: bool = False) -> 'StateBelief':
         assert H.ndimension() == 3
         assert R.ndimension() == 3
+        if self._H is not None and not overwrite:
+            raise RuntimeError("Tried to re-compute measurement, this should only happen once")
+
         self._H = H
         self._R = R
         return self

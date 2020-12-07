@@ -97,6 +97,5 @@ class GaussianOverTime(StateBeliefOverTime):
 
         idx_3d = bmat_idx(group_idx, time_idx, measure_idx)
         idx_4d = bmat_idx(group_idx, time_idx, measure_idx, measure_idx)
-
         dist = MultivariateNormal(self.predictions[idx_3d], self.prediction_uncertainty[idx_4d])
         return dist.log_prob(obs[idx_3d])

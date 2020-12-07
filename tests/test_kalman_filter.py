@@ -1,6 +1,8 @@
 import copy
 from itertools import product
 from unittest import TestCase
+
+import torch
 from parameterized import parameterized
 
 from torch import Tensor
@@ -16,7 +18,52 @@ from tests.utils import simple_mv_velocity_design
 class TestKalmanFilter(TestCase):
 
     @parameterized.expand([(1,), (2,), (3,)])
-    def test_nstep(self, n_step):
+    def test_nstep_preds(self, n_step: int):
+        from torch_kalman.process import LinearModel
+        from torch_kalman.utils.data import TimeSeriesDataset
+        from pandas import DataFrame
+
+        class LinearModelFixed(LinearModel):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs, process_variance=False)
+
+            @property
+            def fixed_state_elements(self):
+                return self.state_elements
+
+        kf = KalmanFilter(
+            processes=[
+                LinearModelFixed(id='lm', covariates=['x1', 'x2']).add_measure('y')
+            ],
+            measures=['y']
+        )
+        kf.state_dict()['design_parameters.process:lm.initial_state_mean'][0] = 1.5
+        kf.state_dict()['design_parameters.process:lm.initial_state_mean'][1] = -0.5
+        kf.state_dict()['design_parameters.measure_cov.cholesky_log_diag'][0] = np.log(.1 ** .5)
+
+        num_times = 100
+        df = DataFrame({'x1': np.random.randn(num_times), 'x2': np.random.randn(num_times)})
+        df['y'] = 1.5 * df['x1'] + -.5 * df['x2'] + .1 * np.random.randn(num_times)
+        df['time'] = df.index.values
+        df['group'] = '1'
+        dataset = TimeSeriesDataset.from_dataframe(
+            dataframe=df,
+            group_colname='group',
+            time_colname='time',
+            dt_unit=None,
+            X_colnames=['x1', 'x2'],
+            y_colnames=['y']
+        )
+        y, X = dataset.tensors
+
+        with torch.no_grad():
+            pred = kf(y, predictors=X, out_timesteps=X.shape[1] - n_step + 1, n_step=n_step)
+            resid = y - pred.predictions
+            self.assertLess((resid ** 2).mean(), .02)
+            self.assertLess(resid.mean().abs(), .05)
+
+    @parameterized.expand([(1,), (2,), (3,)])
+    def test_nstep(self, n_step: int):
 
         data = Tensor([[-1., 2., 1., 0.]])[:, :, None]
         num_times = data.shape[1]
@@ -31,7 +78,7 @@ class TestKalmanFilter(TestCase):
 
         # make filterpy kf:
         filter_kf = self._make_filter_kf(batch_design)
-        filterpy_states = [filter_kf.x]
+        filterpy_states = [filter_kf.x.copy() for _ in range(n_step)]
 
         # compare:
         for t in range(num_times - n_step):
