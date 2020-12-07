@@ -14,6 +14,7 @@ from torch_kalman.design import Design
 
 from torch_kalman.process import Process
 from torch_kalman.state_belief import Gaussian, StateBelief
+from torch_kalman.state_belief.base import UnmeasuredError
 from torch_kalman.state_belief.over_time import StateBeliefOverTime
 from torch_kalman.internals.utils import identity
 
@@ -129,7 +130,9 @@ class KalmanFilter(Module):
         times = progress(range(1, out_timesteps))
 
         try:
-            design_for_batch = self.design.for_batch(num_groups=num_groups, num_timesteps=out_timesteps + n_step - 1, **kwargs)
+            design_for_batch = self.design.for_batch(
+                num_groups=num_groups, num_timesteps=out_timesteps + n_step - 1, **kwargs
+            )
         except IndexError as e:
             if (n_step > 1 or forecast_horizon > 0) and ("out of bounds for dimension" in str(e)):
                 raise ValueError(
@@ -142,12 +145,22 @@ class KalmanFilter(Module):
 
         # initial state of the system:
         if initial_prediction is None:
-            state_pred_1step = self._predict_initial_state(design_for_batch)
+            # since we are using a "true" initial state that represents maximum uncertainty, it doesn't make sense
+            # to increase uncertainty with n_step
+            initial_prediction = self._predict_initial_state(design_for_batch)
+            state_preds = [
+                initial_prediction.copy().compute_measurement(H=design_for_batch.H(t_m), R=design_for_batch.R(t_m))
+                for t_m in range(n_step)
+            ]
         else:
-            state_pred_1step = initial_prediction.copy()
-        state_pred_1step.compute_measurement(H=design_for_batch.H(0), R=design_for_batch.R(0))
+            if n_step > 1:
+                raise NotImplementedError("n_step>1 is not currently implemented when `initial_prediction` is not None")
+            state_pred = initial_prediction.copy()
+            state_pred.compute_measurement(H=design_for_batch.H(0), R=design_for_batch.R(0), overwrite=True)
+            state_preds = [state_pred]
 
-        state_preds = [state_pred_1step]
+        # predict/update loop:
+        state_pred_1step = state_preds[-1]
         for t1 in times:
             t = t1 - 1
 
