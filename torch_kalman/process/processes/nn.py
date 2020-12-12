@@ -1,4 +1,4 @@
-from typing import Generator, Optional, Callable, Iterable, Sequence
+from typing import Generator, Optional, Callable, Iterable, Sequence, Union, Tuple
 
 import torch
 from torch.nn import Parameter, ParameterDict
@@ -6,6 +6,7 @@ from torch.nn import Parameter, ParameterDict
 from torch_kalman.process import Process
 
 from torch_kalman.internals.utils import zpad, infer_forward_kwargs
+from torch_kalman.process.utils.bounded import Bounded
 from torch_kalman.process.utils.design_matrix.utils import adjustments_from_nn
 
 
@@ -27,6 +28,7 @@ class NN(Process):
                  state_dim: int,
                  nn: torch.nn.Module,
                  process_variance: bool = False,
+                 decay: Union[bool, Tuple[float, float]] = False,
                  time_split_kwargs: Sequence[str] = (),
                  initial_state: Optional[torch.nn.Module] = None):
         """
@@ -38,6 +40,9 @@ class NN(Process):
         :param process_variance: If False (the default), then the uncertainty about the values of the states does not
         grow at each timestep, so over time these eventually converge to a certain value. If True, then the latent-
         states are allowed to 'drift' over time.
+        :param decay: If True, then in forecasts (or for missing data) the state-values will tend to shrink towards
+        zero. Usually only used if `process_variance=True`. Default False. Instead of `True` you can specify custom-
+        bounds for the decay-rate as a tuple.
         :param time_split_kwargs: When calling the KalmanFilter, you will pass a prediction Tensor for your nn.Module
         that is (num_groups, num_timesteps, input_dim). However, internally, this will be split up into multiple
         tensors, and your nn.Module will take a (num_groups, input_dim) tensor. If your nn.Module's `forward()` method
@@ -62,8 +67,17 @@ class NN(Process):
         pad_n = len(str(state_dim))
         super().__init__(id=id, state_elements=[zpad(i, pad_n) for i in range(state_dim)], initial_state=initial_state)
 
+        # decay:
+        self.decays = {}
+        if decay:
+            if decay is True:
+                self.decays = {se: Bounded(.95, 1.00) for se in self.state_elements}
+            else:
+                self.decays = {se: Bounded(*decay) for se in self.state_elements}
+
         for se in self.state_elements:
-            self._set_transition(from_element=se, to_element=se, value=1.0)
+            decay = self.decays.get(se)
+            self._set_transition(from_element=se, to_element=se, value=decay.get_value if decay else 1.0)
 
     @property
     def dynamic_state_elements(self):
@@ -71,6 +85,9 @@ class NN(Process):
 
     def param_dict(self) -> ParameterDict:
         p = super().param_dict()
+        for nm, decay in self.decays.items():
+            p[f'decay_{nm}'] = decay.parameter
+
         for nm, param in self.nn.named_parameters():
             nm = 'module_' + nm.replace('.', '_')
             p[nm] = param
