@@ -67,12 +67,13 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
     # Subsetting ------------------------:
     def train_val_split(self,
                         train_frac: float = None,
-                        dt: np.datetime64 = None) -> Tuple['TimeSeriesDataset', 'TimeSeriesDataset']:
+                        dt: Union[np.datetime64, dict] = None) -> Tuple['TimeSeriesDataset', 'TimeSeriesDataset']:
         """
         :param train_frac: The proportion of the data to keep for training. This is calculated on a per-group basis, by
         taking the last observation for each group (i.e., the last observation that a non-nan value on any measure). If
         neither `train_frac` nor `dt` are passed, `train_frac=.75` is used.
-        :param dt: A datetime to use in dividing train/validation (first datetime for validation).
+        :param dt: A datetime to use in dividing train/validation (first datetime for validation), or a dictionary of
+        group-names : date-times.
         :return: Two TimeSeriesDatasets, one with data before the split, the other with >= the split.
         """
 
@@ -88,9 +89,12 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         else:
             if train_frac is not None:
                 raise TypeError("Can pass only one of `train_frac`, `dt`.")
-            if not isinstance(dt, np.datetime64):
-                dt = np.datetime64(dt, self.dt_unit)
-            split_times = np.full(shape=len(self.group_names), fill_value=dt)
+            if isinstance(dt, dict):
+                split_times = np.array([dt[group_name] for group_name in self.group_names])
+            else:
+                if not isinstance(dt, np.datetime64):
+                    dt = np.datetime64(dt, self.dt_unit)
+                split_times = np.full(shape=len(self.group_names), fill_value=dt)
 
         # val:
         val_dataset = self.with_new_start_times(split_times)
