@@ -49,7 +49,8 @@ class VarianceMultiplierMatrix(DesignMatrix):
                          dim2_names: Sequence,
                          batch_info: Tuple,
                          new_assignments: Dict,
-                         new_ilinks: Dict
+                         new_ilinks: Dict,
+                         requires_grad: bool
                          ) -> 'VarianceMultiplierMatrix':
         """
         Ignores nonzero_elements, but that gets overwritten by new_assignments and new_ilinks
@@ -59,6 +60,7 @@ class VarianceMultiplierMatrix(DesignMatrix):
         out._batch_info = batch_info
         out._assignments = new_assignments
         out._ilinks = new_ilinks
+        out.requires_grad = requires_grad
         return out
 
     def assign(self, value: DesignMatAssignment, **kwargs):

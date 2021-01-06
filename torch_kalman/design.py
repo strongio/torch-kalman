@@ -254,7 +254,7 @@ class Design(NiceRepr, Batchable):
     def F(self) -> DynamicMatrix:
         merged = TransitionMatrix.merge([(nm, process.transition_mat) for nm, process in self.processes.items()])
         assert list(merged.from_elements) == list(self.state_elements) == list(merged.to_elements)
-        return merged.compile()
+        return merged.compile('F')
 
     # Measurement Matrix ------:
     @cached_property
@@ -264,7 +264,7 @@ class Design(NiceRepr, Batchable):
         # order dim:
         assert set(merged.measures) == set(self.measures)
         merged.measures[:] = self.measures
-        return merged.compile()
+        return merged.compile('H')
 
     # Process-Covariance Matrix ------:
     def Q(self, t: int) -> torch.Tensor:
@@ -278,7 +278,7 @@ class Design(NiceRepr, Batchable):
             [(nm, process.variance_multi_mat) for nm, process in self.processes.items()]
         )
         assert list(merged.state_elements) == list(self.state_elements)
-        return merged.compile()
+        return merged.compile('process_variance_multi')
 
     @cached_property
     def _base_Q(self):
@@ -297,7 +297,7 @@ class Design(NiceRepr, Batchable):
 
     @cached_property
     def _measure_variance_multi(self) -> DynamicMatrix:
-        return self._measure_var_adjustments.compile()
+        return self._measure_var_adjustments.compile('measure_variance_multi')
 
     @cached_property
     def _base_R(self):

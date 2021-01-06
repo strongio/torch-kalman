@@ -86,8 +86,6 @@ class StateBelief(NiceRepr):
             else:
                 return self.update(obs=obs[:, time], **kwargs)
 
-        if torch.isinf(obs).any():
-            raise RuntimeError("Infs not allowed in `obs`")
         is_nan = torch.isnan(obs)
 
         # need to do a different update depending on which (if any) dimensions are missing:
@@ -121,6 +119,12 @@ class StateBelief(NiceRepr):
                                                                            group_idx=group_idx,
                                                                            which_valid=which_valid,
                                                                            **kwargs)
+
+        # TODO: don't check these every iteration?
+        if torch.isinf(obs).any():
+            raise RuntimeError("Infs not allowed in `obs`")
+        if (means_new != means_new).any():
+            raise ValueError("Infs/nans after update.")
 
         last_measured = self._update_last_measured(obs)
         return type(self)(means=means_new, covs=covs_new, last_measured=last_measured)
@@ -205,14 +209,6 @@ class StateBelief(NiceRepr):
             raise ValueError("means should be 2D (first dimension batch-size)")
         if self.covs.dim() != 3:
             raise ValueError("covs should be 3D (first dimension batch-size)")
-        if torch.isinf(self.means).any():
-            raise ValueError("Infs in `means`.")
-        if torch.isinf(self.covs).any():
-            raise ValueError("Infs in `covs`.")
-        if torch.isnan(self.means).any():
-            raise ValueError("nans in `means`.")
-        if torch.isnan(self.covs).any():
-            raise ValueError("nans in `covs`.")
         if self.covs.shape[0] != self.means.shape[0]:
             raise ValueError("The batch-size (1st dimension) of cov doesn't match that of mean.")
         if self.covs.shape[1] != self.covs.shape[2]:

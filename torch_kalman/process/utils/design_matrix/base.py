@@ -15,6 +15,7 @@ from torch_kalman.process.utils.design_matrix.utils import DesignMatAssignment, 
 class DesignMatrix(NiceRepr, Batchable):
     dim1_name: str = None
     dim2_name: str = None
+    requires_grad: bool = None
     _repr_attrs = ('dim1_names', 'dim2_names')
 
     def __init__(self,
@@ -41,7 +42,8 @@ class DesignMatrix(NiceRepr, Batchable):
             dim2_names=list(self.dim2_names),
             batch_info=self._batch_info,
             new_assignments=dict(self._assignments),
-            new_ilinks=dict(self._ilinks)
+            new_ilinks=dict(self._ilinks),
+            requires_grad=self.requires_grad
         )
 
     def for_batch(self, num_groups: int, num_timesteps: int) -> 'DesignMatrix':
@@ -51,9 +53,15 @@ class DesignMatrix(NiceRepr, Batchable):
         out.batch_info = (num_groups, num_timesteps)
         out._ilinks = dict(self._ilinks)
         out._assignments = {}
+        out.requires_grad = False
         for key, values in self._assignments.items():
-            # assignments can be no-grad tensors or callables
-            out._assignments[key] = [v() if callable(v) else v for v in values]
+            out._assignments[key] = []
+            for v in values:
+                if callable(v):
+                    v = v()
+                if getattr(v, 'requires_grad', False):
+                    out.requires_grad = True
+                out._assignments[key].append(v)
         return out
 
     def assign(self, value: DesignMatAssignment, overwrite: bool = False, **kwargs):
@@ -110,6 +118,11 @@ class DesignMatrix(NiceRepr, Batchable):
         except KeyError:
             raise RuntimeError("Tried to adjust {} (in {}); but need to `assign()` it first.".format(key, self))
 
+        if isinstance(value, Tensor):
+            self.requires_grad |= value.requires_grad
+        else:
+            self.requires_grad |= value[0].requires_grad
+
     @classmethod
     def merge(cls, mats: Sequence[Tuple[str, 'DesignMatrix']]) -> 'DesignMatrix':
         if not all(isinstance(mat, cls) for _, mat in mats):
@@ -139,38 +152,54 @@ class DesignMatrix(NiceRepr, Batchable):
             dim1_names=list(new_dimnames[1]), dim2_names=list(new_dimnames[2]),
             batch_info=list(dims)[0],
             new_assignments=new_assignments,
-            new_ilinks=new_ilinks
+            new_ilinks=new_ilinks,
+            requires_grad=any(mat.requires_grad for _, mat in mats)
         )
 
         return out
 
-    def compile(self) -> 'DynamicMatrix':
+    def compile(self, name: Optional[str] = None) -> 'DynamicMatrix':
         """
         Consolidate assignments then apply the link function. Some assignments can be "frozen" into a pre-computed
         matrix, while others must remain as lists to be evaluated in DesignForBatch as needed.
         """
-        from torch_kalman.process.utils.design_matrix.dynamic_matrix import DynamicMatrix
 
-        base_mat = torch.zeros(self.num_groups, len(self.dim1_names), len(self.dim2_names))
-        dynamic_assignments = {}
-        for (dim1, dim2), values in self._assignments.items():
-            r = self.dim1_names.index(dim1)
-            c = self.dim2_names.index(dim2)
-            ilink = self._ilinks[(dim1, dim2)] or identity
-            dynamic, base = bifurcate(values, _is_dynamic_assignment)
-            if dynamic:
-                # if any dynamic, then all dynamic:
-                dynamic = dynamic + [[x] * self.num_timesteps for x in base]
-                per_timestep = list(zip(*dynamic))  # invert
-                assert len(per_timestep) == self.num_timesteps
-                assert (r, c) not in dynamic_assignments.keys()
-                dynamic_assignments[(r, c)] = [
-                    ilink(torch.sum(torch.stack(broadcast_all(*x), dim=0), dim=0)) for x in per_timestep
-                ]
-            else:
-                base_mat[:, r, c] = ilink(torch.sum(torch.stack(broadcast_all(*base), dim=0), dim=0))
+        if self.requires_grad:
+            from torch_kalman.process.utils.design_matrix.dynamic_matrix import DynamicMatrix
+            base_mat = torch.zeros(self.num_groups, len(self.dim1_names), len(self.dim2_names))
+            dynamic_assignments = {}
+            for (dim1, dim2), values in self._assignments.items():
+                r = self.dim1_names.index(dim1)
+                c = self.dim2_names.index(dim2)
+                ilink = self._ilinks[(dim1, dim2)] or identity
+                dynamic, base = bifurcate(values, _is_dynamic_assignment)
 
-        return DynamicMatrix(base_mat, dynamic_assignments)
+                if dynamic:
+                    # if any dynamic, then all dynamic (TODO: why?):
+                    dynamic = dynamic + [[x] * self.num_timesteps for x in base]
+                    per_timestep = list(zip(*dynamic))  # invert
+                    assert len(per_timestep) == self.num_timesteps
+                    assert (r, c) not in dynamic_assignments.keys()
+                    dynamic_assignments[(r, c)] = [
+                        ilink(torch.sum(torch.stack(broadcast_all(*x), dim=0), dim=0)) for x in per_timestep
+                    ]
+                else:
+                    base_mat[:, r, c] = ilink(torch.sum(torch.stack(broadcast_all(*base), dim=0), dim=0))
+            return DynamicMatrix(base_mat, dynamic_assignments, name=name)
+        else:
+            from torch_kalman.process.utils.design_matrix.dynamic_matrix import NonDynamicMatrix
+
+            mat = torch.zeros(self.num_groups, self.num_timesteps, len(self.dim1_names), len(self.dim2_names))
+            for (dim1, dim2), values in self._assignments.items():
+                r = self.dim1_names.index(dim1)
+                c = self.dim2_names.index(dim2)
+                ilink = self._ilinks[(dim1, dim2)] or identity
+                for value in values:
+                    if isinstance(value, (list, tuple)):
+                        value = torch.stack(value, 1)
+                    mat[..., r, c] += value
+                mat[..., r, c] = ilink(mat[..., r, c])
+            return NonDynamicMatrix(mat)
 
     # utils ------------------------------------------
     @classmethod
@@ -179,12 +208,14 @@ class DesignMatrix(NiceRepr, Batchable):
                          dim2_names: Sequence,
                          batch_info: Tuple,
                          new_assignments: Dict,
-                         new_ilinks: Dict
+                         new_ilinks: Dict,
+                         requires_grad: bool
                          ) -> 'DesignMatrix':
         out = cls(dim1_names=dim1_names, dim2_names=dim2_names)
         out._batch_info = batch_info
         out._assignments = new_assignments
         out._ilinks = new_ilinks
+        out.requires_grad = requires_grad
         return out
 
     def _get_key(self, kwargs: dict) -> Tuple[str, str]:
