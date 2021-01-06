@@ -104,10 +104,13 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         for i, tens in enumerate(self.tensors):
             train = tens.data.clone()
             train[np.where(self.times(i) >= split_times[:, None])] = float('nan')
-            not_all_nan = (~torch.isnan(train)).sum((0, 2))
-            last_good_idx = true1d_idx(not_all_nan).max()
+            if i == 0:
+                not_all_nan = (~torch.isnan(train)).sum((0, 2))
+                last_good_idx = true1d_idx(not_all_nan).max()
             train = train[:, :(last_good_idx + 1), :]
             train_tensors.append(train)
+        # TODO: replace padding nans for all but first tensor?
+        # TODO: reduce width of 0> tensors based on width of 0 tensor?
         train_dataset = self.with_new_tensors(*train_tensors)
 
         return train_dataset, val_dataset
