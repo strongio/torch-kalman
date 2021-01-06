@@ -387,7 +387,7 @@ class Design(NiceRepr, Batchable):
                 if alias == 'per_group' and isinstance(args_or_kwargs, int):
                     args_or_kwargs = (args_or_kwargs,)
                 if isinstance(args_or_kwargs, dict):
-                    args, kwargs = (), args_or_kwargs
+                    args, kwargs = (), args_or_kwargs.copy()
                 else:
                     args, kwargs = args_or_kwargs, {}
 

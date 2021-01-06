@@ -1,5 +1,5 @@
 import inspect
-from typing import Dict, Union, Any, Callable, Iterable, Tuple, Sequence
+from typing import Union, Any, Callable, Iterable, Tuple, Sequence
 
 import torch
 
