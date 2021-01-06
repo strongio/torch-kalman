@@ -54,7 +54,7 @@ def adjustments_from_nn(nn: torch.nn.Module,
                 nn_output = nn_output.unsqueeze(-1)
             if len(nn_output.shape) > 2:
                 raise InputValidationError(
-                    f"Expected {nn} to output a 2D tensor. XXX"
+                    f"Expected {nn} to output a 2D tensor. XXX\n"
                     f"Input:\n{nn_kwargs}"
                 )
             if nn_output.shape[1] == 1:
@@ -69,7 +69,7 @@ def adjustments_from_nn(nn: torch.nn.Module,
         except InputValidationError as e:
             if len(nn_kwargs) == 1:
                 input = next(iter(nn_kwargs.values()))
-                if input.shape[0] == num_groups and input.shape[1] >= num_timesteps:
+                if input.shape[0] == num_groups:
                     time_split_kwargs = list(nn_kwargs.keys())
                     nn_outputs = adjustments_from_nn(
                         nn=nn,
