@@ -76,6 +76,12 @@ class NamedEmbedding(Embedding):
         self._names_as_ints.requires_grad_(False)
         self._name_to_idx = None
 
+    def reset_parameters(self):
+        super().reset_parameters()
+        # use a gentler init than Embedding:
+        with torch.no_grad():
+            self.weight.normal_(mean=0, std=.1)
+
     def set_weights_for_names(self, named_weights: dict):
         if self.dev_code:
             raise NotImplementedError("`set_weights_for_names` not currently implemented when `dev_code=True`")
