@@ -196,6 +196,7 @@ class Design(NiceRepr, Batchable):
                 if 'datetimes' in nn._forward_kwargs and 'datetimes' not in nn_kwargs and hasattr(nn, '_dt_helper'):
                     if 'start_datetimes' in kwargs:
                         nn_kwargs['datetimes'] = nn._dt_helper.make_grid(kwargs['start_datetimes'], num_timesteps)
+                        unused_kwargs.discard('start_datetimes')
 
                 for k in used:
                     unused_kwargs.discard(k)
