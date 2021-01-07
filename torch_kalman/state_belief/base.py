@@ -89,14 +89,13 @@ class StateBelief(NiceRepr):
         is_nan = torch.isnan(obs)
 
         # need to do a different update depending on which (if any) dimensions are missing:
-        update_groups = defaultdict(list)
-
-        # groups with nan:
         if not is_nan.any():
             # if no nans at all, then faster to use slices:
-            update_groups = [(slice(None), slice(None))]
+            means_new, covs_new = self._update_group(obs=obs, group_idx=slice(None), which_valid=slice(None), **kwargs)
         else:
             anynan_by_group = (torch.sum(is_nan, 1) > 0)
+            update_groups = defaultdict(list)
+            # groups with nan:
             nan_group_idx = anynan_by_group.nonzero(as_tuple=False).squeeze(-1).tolist()
             for i in nan_group_idx:
                 if is_nan[i].all():
@@ -111,14 +110,14 @@ class StateBelief(NiceRepr):
             if len(nonan_group_idx):
                 update_groups.append((slice(None), nonan_group_idx))
 
-        # updates:
-        means_new = self.means.clone()
-        covs_new = self.covs.clone()
-        for which_valid, group_idx in update_groups:
-            means_new[group_idx], covs_new[group_idx] = self._update_group(obs=obs,
-                                                                           group_idx=group_idx,
-                                                                           which_valid=which_valid,
-                                                                           **kwargs)
+            # updates:
+            means_new = self.means.clone()
+            covs_new = self.covs.clone()
+            for which_valid, group_idx in update_groups:
+                means_new[group_idx], covs_new[group_idx] = self._update_group(obs=obs,
+                                                                               group_idx=group_idx,
+                                                                               which_valid=which_valid,
+                                                                               **kwargs)
 
         # TODO: don't check these every iteration?
         if torch.isinf(obs).any():
