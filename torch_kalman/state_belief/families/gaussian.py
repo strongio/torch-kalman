@@ -18,11 +18,6 @@ class Gaussian(StateBelief):
     Underlying states in most kalman-filters are assumed to be gaussian; this is implemented by this class.
     """
 
-    def __init__(self, means: Tensor, covs: Tensor, last_measured: Optional[Tensor] = None):
-        self._measured_means = None
-        self._system_uncertainty = None
-        super().__init__(means=means, covs=covs, last_measured=last_measured)
-
     def _update_group(self,
                       obs: Tensor,
                       group_idx: Union[slice, Sequence[int]],

@@ -1,4 +1,6 @@
 from typing import Dict, Tuple
+from collections import defaultdict
+from typing import Dict, Tuple, Optional
 
 from torch import Tensor
 from torch_kalman.internals.repr import NiceRepr

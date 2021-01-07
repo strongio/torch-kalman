@@ -84,32 +84,32 @@ class StateBelief(NiceRepr):
             if time >= obs.shape[1]:
                 return self.copy()
             else:
-                return self.update(obs=obs[:, time], **kwargs)
+                return self.update(obs=obs[:, time, :], **kwargs)
 
         is_nan = torch.isnan(obs)
 
         # need to do a different update depending on which (if any) dimensions are missing:
         update_groups = defaultdict(list)
-        anynan_by_group = (torch.sum(is_nan, 1) > 0)
 
         # groups with nan:
-        nan_group_idx = anynan_by_group.nonzero(as_tuple=False).squeeze(-1).tolist()
-        for i in nan_group_idx:
-            if is_nan[i].all():
-                continue  # if all nan, then simply skip update
-            which_valid = (~is_nan[i]).nonzero(as_tuple=False).squeeze(-1).tolist()
-            update_groups[tuple(which_valid)].append(i)
+        if not is_nan.any():
+            # if no nans at all, then faster to use slices:
+            update_groups = [(slice(None), slice(None))]
+        else:
+            anynan_by_group = (torch.sum(is_nan, 1) > 0)
+            nan_group_idx = anynan_by_group.nonzero(as_tuple=False).squeeze(-1).tolist()
+            for i in nan_group_idx:
+                if is_nan[i].all():
+                    continue  # if all nan, then simply skip update
+                which_valid = (~is_nan[i]).nonzero(as_tuple=False).squeeze(-1).tolist()
+                update_groups[tuple(which_valid)].append(i)
 
-        update_groups = list(update_groups.items())
+            update_groups = list(update_groups.items())
 
-        # groups without nan:
-        if is_nan.any():
+            # groups without nan:
             nonan_group_idx = (~anynan_by_group).nonzero(as_tuple=False).squeeze(-1).tolist()
             if len(nonan_group_idx):
                 update_groups.append((slice(None), nonan_group_idx))
-        else:
-            # if no nans at all, then faster to use slices:
-            update_groups.append((slice(None), slice(None)))
 
         # updates:
         means_new = self.means.clone()
