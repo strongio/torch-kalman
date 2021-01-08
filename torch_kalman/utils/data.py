@@ -305,8 +305,10 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             df[time_colname] = np.nan
             df[time_colname] = times[g, 0:len(df.index)]
             dfs.append(df)
-
-        return concat(dfs)
+        if dfs:
+            return concat(dfs)
+        else:
+            return DataFrame(columns=list(measures) + [group_colname, time_colname])
 
     @classmethod
     def from_dataframe(cls,
