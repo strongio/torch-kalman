@@ -1,4 +1,3 @@
-import datetime
 import itertools
 
 from typing import Sequence, Any, Union, Optional, Tuple
@@ -154,6 +153,31 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             measures=self.measures,
             dt_unit=self.dt_unit
         )
+
+    def state_belief_for_times(self,
+                               predictions: 'StateBeliefOverTime',
+                               dt: Union[dict, np.datetime64]) -> 'StateBelief':
+        """
+        Given the output of a kalman-filter generated with this dataset as input, get the StateBelief corresponding to
+        a particular datetime (or datetime-per-group).
+        """
+        if isinstance(dt, dict):
+            times = np.array([dt[group_name] for group_name in self.group_names])
+        else:
+            if not isinstance(dt, np.datetime64):
+                dt = np.datetime64(dt, self.dt_unit)
+            times = np.full(shape=len(self.group_names), fill_value=dt)
+
+        time_idx = []
+        for i, gtimes in enumerate(self.times()):
+            tidx = true1d_idx(gtimes == times[i])
+            if len(tidx) == 0:
+                raise RuntimeError(
+                    f"Group '{self.group_names[i]}' does not have any predictions corresponding to '{times[i]}'"
+                )
+            time_idx.append(tidx.item())
+
+        return predictions.state_belief_for_time(time_idx)
 
     def get_groups(self, groups: Sequence[Any]) -> 'TimeSeriesDataset':
         """
