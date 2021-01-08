@@ -288,7 +288,7 @@ class StateBeliefOverTime(NiceRepr):
 
                 # actual:
                 orig_tensor = batch_info.get('named_tensors', {}).get(measure, None)
-                if orig_tensor is not None:
+                if orig_tensor is not None and (orig_tensor == orig_tensor).any():
                     df_actual = _tensor_to_df(orig_tensor, measures=['actual'])
                     df = df.merge(df_actual, on=[group_colname, time_colname], how='left')
 
