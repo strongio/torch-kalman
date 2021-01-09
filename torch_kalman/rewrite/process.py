@@ -4,50 +4,7 @@ import torch
 
 from torch import jit, nn, Tensor
 
-
-class Identity(jit.ScriptModule):
-    """
-    Identity function
-    """
-
-    @jit.script_method
-    def forward(self, inputs: List[Tensor]) -> Tensor:
-        assert len(inputs) == 1
-        return inputs[0]
-
-
-class ReturnValues(jit.ScriptModule):
-    """
-    Just return a fixed set of values on each call.
-    """
-
-    def __init__(self, values: Tensor):
-        super(ReturnValues, self).__init__()
-        self.values = values
-
-    @jit.script_method
-    def forward(self, inputs: List[Tensor]) -> Tensor:
-        return self.values
-
-
-class SimpleTransition(jit.ScriptModule):
-    """
-    Useful for transitions which are either 1, or a learnable parameter near but <1.
-    """
-
-    def __init__(self, value: Tuple[Optional[float], float]):
-        super(SimpleTransition, self).__init__()
-        lower, upper = value
-        self.lower = None if lower is None else torch.full((1,), lower)
-        self.upper = torch.full((1,), upper)
-        self.parameter = nn.Parameter(torch.randn(1))
-
-    @jit.script_method
-    def forward(self, inputs: List[Tensor]) -> Tensor:
-        if self.lower is not None:
-            return torch.sigmoid(self.parameter) * (self.upper - self.lower) + self.lower
-        else:
-            return self.upper
+from torch_kalman.rewrite.helpers import Identity, ReturnValues, SimpleTransition
 
 
 class Process(jit.ScriptModule):
@@ -68,6 +25,9 @@ class Process(jit.ScriptModule):
 
         self.measure = ''
 
+        # elements without process covariance, defaults to none
+        self.no_pcov_state_elements: List[str] = []
+
     def get_groupwise_args(self, *args, **kwargs) -> List[Tensor]:
         raise NotImplementedError
 
@@ -75,6 +35,7 @@ class Process(jit.ScriptModule):
         raise NotImplementedError
 
     def get_num_groups_from_inputs(self, inputs: List[Tensor]) -> int:
+        # TODO: get rid of this
         raise NotImplementedError
 
     def set_measure(self, measure: str) -> 'Process':
@@ -238,8 +199,8 @@ class LinearModel(PredictorBase):
     def __init__(self,
                  id: str,
                  predictors: Sequence[str],
-                 process_variance: bool,
-                 decay: Optional[Tuple[float, float]]):
+                 process_variance: bool = False,
+                 decay: Optional[Tuple[float, float]] = None):
         super(LinearModel, self).__init__(
             id=id,
             predictors=predictors,
@@ -247,14 +208,16 @@ class LinearModel(PredictorBase):
             process_variance=process_variance,
             decay=decay
         )
+        if not process_variance:
+            self.no_pcov_state_elements = self.state_elements
 
 
 class NN(PredictorBase):
     def __init__(self,
                  id: str,
                  nn: torch.nn.Module,
-                 process_variance: bool,
-                 decay: Optional[Tuple[float, float]]):
+                 process_variance: bool = False,
+                 decay: Optional[Tuple[float, float]] = None):
         num_outputs = self._infer_num_outputs(nn)
         super(NN, self).__init__(
             id=id,
@@ -263,6 +226,8 @@ class NN(PredictorBase):
             process_variance=process_variance,
             decay=decay
         )
+        if not process_variance:
+            self.no_pcov_state_elements = self.state_elements
 
     @staticmethod
     def _infer_num_outputs(nn: torch.nn.Module) -> int:

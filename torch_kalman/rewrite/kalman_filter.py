@@ -1,10 +1,14 @@
+from collections import namedtuple
 from typing import Tuple, List, Optional, Sequence, Dict
 
 import torch
 from torch import jit, nn, Tensor
 
+from torch_kalman.rewrite.covariance import Covariance
 from torch_kalman.rewrite.gaussian import Gaussian
 from torch_kalman.rewrite.process import Process
+
+KFOutput = namedtuple('KFOutput', ['means', 'covs', 'R', 'H'])
 
 
 class KalmanFilter(nn.Module):
@@ -28,13 +32,25 @@ class KalmanFilter(nn.Module):
                 p.set_measure(measures[0])
 
     def _parse_process_args(self, *args, **kwargs) -> Dict[str, dict]:
-        # TODO
-        return {'process_args_groupwise': {}, 'process_args_timewise': {}}
+        out = {'process_args_groupwise': {}, 'process_args_timewise': {}}
+        for process in self.script_module.processes:
+            out['process_args_groupwise'][process.id] = process.get_groupwise_args(*args, **kwargs)
+            out['process_args_timewise'][process.id] = process.get_timewise_args(*args, **kwargs)
+        return out
 
     def forward(self,
                 input: Tensor,
-                state: Optional[Tuple[Tensor, Tensor]] = None) -> Tuple[Tensor, Tensor]:
-        return self.script_module(input=input, state=None, **self._parse_process_args())
+                n_step: int = 1,
+                out_timesteps: Optional[int] = None,
+                initial_state: Optional[Tuple[Tensor, Tensor]] = None,
+                **kwargs) -> KFOutput:
+        return self.script_module(
+            input=input,
+            initial_state=initial_state,
+            n_step=n_step,
+            out_timesteps=out_timesteps,
+            **self._parse_process_args(input=input, **kwargs)
+        )
 
 
 class ScriptKalmanFilter(jit.ScriptModule):
@@ -53,18 +69,20 @@ class ScriptKalmanFilter(jit.ScriptModule):
         # processes:
         self.processes = nn.ModuleList()
         self.process_to_slice = torch.jit.annotate(Dict[str, Tuple[int, int]], {})
-        state_rank = 0
+        self.state_rank = 0
+        self.no_pcov_idx = []
         for p in processes:
             self.processes.append(p)
             if not p.measure:
                 raise RuntimeError(f"Must call `set_measure()` on '{p.id}'")
-            self.process_to_slice[p.id] = (state_rank, state_rank + len(p.state_elements))
-            state_rank += len(p.state_elements)
-        self.state_rank = state_rank
+            self.process_to_slice[p.id] = (self.state_rank, self.state_rank + len(p.state_elements))
 
-        # XXX:
-        self._Q = torch.eye(self.state_rank)
-        self._R = torch.eye(len(self.measures))
+            for i, se in enumerate(p.no_pcov_state_elements):
+                self.no_pcov_idx.append(self.state_rank + i)
+            self.state_rank += len(p.state_elements)
+
+        self.process_covariance = Covariance(rank=self.state_rank, empty_idx=self.no_pcov_idx)
+        self.measure_covariance = Covariance(rank=len(self.measures))
 
     def get_initial_state(self, input: Tensor) -> Tuple[Tensor, Tensor]:
         # TODO
@@ -91,8 +109,19 @@ class ScriptKalmanFilter(jit.ScriptModule):
             _process_slice = slice(*self.process_to_slice[process.id])
             H[:, self.measure_to_idx[process.measure], _process_slice] = pH
             F[:, _process_slice, _process_slice] = pF
-        Q = self._Q.expand(num_groups, -1, -1)
-        R = self._R.expand(num_groups, -1, -1)
+
+        if 'process_covariance' in process_args.keys():
+            pcov_args = process_args['process_covariance']
+        else:
+            pcov_args = [input]
+        Q = self.process_covariance(pcov_args)
+
+        # TODO: scale Q by R?
+        if 'measure_covariance' in process_args.keys():
+            mcov_args = process_args['measure_covariance']
+        else:
+            mcov_args = [input]
+        R = self.measure_covariance(mcov_args)
 
         return F, H, Q, R
 
@@ -101,25 +130,47 @@ class ScriptKalmanFilter(jit.ScriptModule):
                 input: Tensor,
                 process_args_groupwise: Dict[str, List[Tensor]],
                 process_args_timewise: Dict[str, List[Tensor]],
-                state: Optional[Tuple[Tensor, Tensor]] = None) -> Tuple[Tensor, Tensor]:
-        if state is None:
+                n_step: int = 1,
+                out_timesteps: Optional[int] = None,
+                initial_state: Optional[Tuple[Tensor, Tensor]] = None) -> KFOutput:
+        if initial_state is None:
             mean, cov = self.get_initial_state(input)
         else:
-            mean, cov = state
+            mean, cov = initial_state
 
-        inputs = input.unbind(1)
+        assert n_step > 0
+        if input is None:
+            raise NotImplementedError("TODO")
+        else:
+            inputs = input.unbind(1)
+            if out_timesteps is None:
+                out_timesteps = len(inputs)
 
-        means = torch.jit.annotate(List[Tensor], [mean])
-        covs = torch.jit.annotate(List[Tensor], [cov])
-        for i in range(len(inputs) - 1):
+        means = torch.jit.annotate(List[Tensor], [])
+        covs = torch.jit.annotate(List[Tensor], [])
+        Hs = torch.jit.annotate(List[Tensor], [])
+        Rs = torch.jit.annotate(List[Tensor], [])
+        for t in range(out_timesteps):
+            # get design-mats for this timestep:
             process_args = process_args_groupwise.copy()
             for k, args in process_args_timewise.items():
-                # TODO: i + 1 for H?
                 if k not in process_args.keys():
                     process_args[k] = []
-                process_args[k].extend([v[:, i] for v in args])
+                process_args[k].extend([v[:, t] for v in args])
             F, H, Q, R = self.get_design_mats(input=input, process_args=process_args)
-            mean, cov = self.kf_step(input=inputs[i], mean=mean, cov=cov, F=F, H=H, Q=Q, R=R)
+
+            # get new mean/cov
+            if n_step <= t <= len(inputs):
+                # don't update until we have input
+                mean, cov = self.kf_step.update(input=inputs[t - 1], mean=mean, cov=cov, H=H, R=R)
+                if t >= n_step:
+                    # if t < n_step, then it doesn't make sense to increase uncertainty with each step -- our initial
+                    # state already represents maximum uncertainty
+                    mean, cov = self.kf_step.predict(mean, cov, F=F, Q=Q)
+                    assert n_step == 1  # TODO
+
             means += [mean]
             covs += [cov]
-        return torch.stack(means, 1), torch.stack(covs, 1)
+            Hs += [H]
+            Rs += [R]
+        return KFOutput(torch.stack(means, 1), torch.stack(covs, 1), torch.stack(Rs, 1), torch.stack(Hs, 1))
