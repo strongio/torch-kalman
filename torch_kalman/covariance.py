@@ -1,13 +1,30 @@
+from typing import List, Dict
+
 import torch
 
-from typing import Tuple, Optional, Sequence, Type, Iterable
-
-from torch.nn import ParameterDict, Parameter
+from torch import Tensor, nn
 
 
-class Covariance(torch.Tensor):
-    def __new__(cls, *args, **kwargs) -> 'Covariance':
-        return super().__new__(cls, *args, **kwargs)
+class Covariance(nn.Module):
+    def __init__(self,
+                 rank: int,
+                 empty_idx: List[int] = (),
+                 method: str = 'log_cholesky'):
+        super(Covariance, self).__init__()
+        self.rank = rank
+        if len(empty_idx) == 0:
+            empty_idx = [self.rank + 1]  # jit doesn't seem to like empty lists
+        self.empty_idx = empty_idx
+        self.method = method
+        if self.method == 'log_cholesky':
+            param_rank = len([i for i in range(self.rank) if i not in self.empty_idx])
+            self.cholesky_log_diag = torch.nn.Parameter(.1 * torch.randn(param_rank))
+            n_off = int(param_rank * (param_rank - 1) / 2)
+            self.cholesky_off_diag = torch.nn.Parameter(.1 * torch.randn(n_off))
+        else:
+            raise NotImplementedError(method)
+
+        self.cache: Dict[str, Tensor] = {'null': torch.empty(0)}  # jit doesn't like empty
 
     @staticmethod
     def log_chol_to_chol(log_diag: torch.Tensor, off_diag: torch.Tensor) -> torch.Tensor:
@@ -23,155 +40,15 @@ class Covariance(torch.Tensor):
                 idx += 1
         return L
 
-    @classmethod
-    def from_log_cholesky(cls,
-                          log_diag: torch.Tensor,
-                          off_diag: torch.Tensor,
-                          **kwargs) -> 'Covariance':
-        rank = log_diag.shape[-1]
-        batch_dim = log_diag.shape[:-1]
-        L = cls.log_chol_to_chol(log_diag, off_diag)
-        out = cls(size=batch_dim + (rank, rank))
-        if kwargs:
-            out = out.to(**kwargs)
-        perm_shape = tuple(range(len(batch_dim))) + (-1, -2)
-        out[:] = L.matmul(L.permute(perm_shape))
-        return out
-
-    def to_log_cholesky(self) -> Tuple[torch.Tensor, torch.Tensor]:
-        batch_dim = self.shape[:-2]
-        rank = self.shape[-1]
-        L = torch.cholesky(self)
-
-        n_off = int(rank * (rank - 1) / 2)
-        off_diag = torch.empty(batch_dim + (n_off,))
-        idx = 0
-        for i in range(rank):
-            for j in range(i):
-                off_diag[..., idx] = L[..., i, j]
-                idx += 1
-        log_diag = torch.log(torch.diagonal(L, dim1=-2, dim2=-1))
-        return log_diag, off_diag
-
-
-def cov_to_corr(cov: torch.Tensor) -> torch.Tensor:
-    std = cov.diag().sqrt()
-    return cov / std.unsqueeze(-1).matmul(std.unsqueeze(-2))
-
-
-class CovarianceParameterization:
-    def __init__(self, rank: int):
-        self.rank = rank
-
-    def param_dict(self) -> ParameterDict:
-        raise NotImplementedError
-
-    def create(self, leading_dims: Sequence[int] = ()) -> torch.Tensor:
-        raise NotImplementedError
-
-    def set(self, cov: torch.Tensor):
-        raise NotImplementedError
-
-
-class CovarianceFromLogCholesky(CovarianceParameterization):
-    def __init__(self, rank: int):
-        super().__init__(rank=rank)
-        num_upper_tri = int(rank * (rank - 1) / 2)
-        self._param_dict = ParameterDict()
-        self._param_dict['cholesky_log_diag'] = Parameter(data=.01 * torch.randn(rank))
-        self._param_dict['cholesky_off_diag'] = Parameter(data=.01 * torch.randn(num_upper_tri))
-
-    def create(self, leading_dims: Sequence[int] = ()) -> torch.Tensor:
-        kwargs = {k.replace('cholesky_', ''): v for k, v in self.param_dict().items()}
-        cov = Covariance.from_log_cholesky(**kwargs)
-        return cov.expand(tuple(leading_dims) + (-1, -1)).clone()
-
-    def set(self, cov: torch.Tensor):
-        if len(cov.shape) != 2 or set(cov.shape) != {self.rank}:
-            raise ValueError(f"Tensor shape is {cov.shape} but expected rank {self.rank}.")
-        log_diag, off_diag = Covariance.to_log_cholesky(cov)
-        self._param_dict['cholesky_log_diag'].data[:] = log_diag
-        self._param_dict['cholesky_off_diag'].data[:] = off_diag
-
-    def param_dict(self):
-        return self._param_dict
-
-
-class CovarianceFromStdDevs(CovarianceParameterization):
-    def __init__(self, rank: int):
-        super().__init__(rank=rank)
-        self._param_dict = ParameterDict()
-        self._param_dict['log_std_devs'] = Parameter(data=.01 * torch.randn(rank))
-
-    def create(self, leading_dims: Sequence[int] = ()) -> torch.Tensor:
-        std_devs = torch.exp(self.param_dict()['log_std_devs'])
-        cov = torch.diag_embed(std_devs ** 2)
-        return cov.expand(tuple(leading_dims) + (-1, -1)).clone()
-
-    def param_dict(self):
-        return self._param_dict
-
-
-class PartialCovariance(CovarianceParameterization):
-    partial_parameterizer_cls: Type[CovarianceParameterization] = None
-
-    def __init__(self, full_dim_names: Iterable, partial_dim_names: Iterable, diag: float = 0.0):
-        self.diag = diag
-        self.full_dim_names = list(full_dim_names)
-        self.partial_dim_names = list(partial_dim_names)
-
-        in_partial_but_not_full = set(self.partial_dim_names) - set(self.full_dim_names)
-        if len(in_partial_but_not_full):
-            raise ValueError(
-                f"The following are present in `partial_dim_names` but not `full_dim_names`:\n{in_partial_but_not_full}"
-            )
-
-        super().__init__(rank=len(self.full_dim_names))
-
-        self.partial_parameterizer = self.partial_parameterizer_cls(rank=self.partial_rank)
-
-    @property
-    def partial_rank(self):
-        return len(self.partial_dim_names)
-
-    @property
-    def full_rank(self):
-        return len(self.full_dim_names)
-
-    def param_dict(self) -> ParameterDict:
-        return self.partial_parameterizer.param_dict()
-
-    def set(self, cov: torch.Tensor):
-        partial_cov = torch.zeros((self.partial_rank, self.partial_rank))
-        for r in range(self.rank):
-            for c in range(self.rank):
-                value = cov[r, c]
-                try:
-                    to_r = self.partial_dim_names.index(self.full_dim_names[r])
-                    to_c = self.partial_dim_names.index(self.full_dim_names[c])
-                except ValueError:
-                    assert value.abs() < 1e-7
-                    continue
-                partial_cov[..., to_r, to_c] = value
-        return self.partial_parameterizer.set(partial_cov)
-
-    def create(self, leading_dims: Sequence[int] = ()):
-        cov = torch.eye(self.full_rank) * self.diag
-        cov = cov.expand(tuple(leading_dims) + (-1, -1)).clone()
-
-        if self.partial_rank == 0:
-            return cov
-
-        partial_cov = self.partial_parameterizer.create(leading_dims=())
-
-        for r in range(self.partial_rank):
-            for c in range(self.partial_rank):
-                to_r = self.full_dim_names.index(self.partial_dim_names[r])
-                to_c = self.full_dim_names.index(self.partial_dim_names[c])
-                cov[..., to_r, to_c] = partial_cov[r, c]
-
-        return cov
-
-
-class PartialCovarianceFromLogCholesky(PartialCovariance):
-    partial_parameterizer_cls = CovarianceFromLogCholesky
+    def forward(self, input: Tensor) -> Tensor:
+        if self.method == 'log_cholesky':
+            num_groups = input.shape[0]
+            key = 'cov'
+            if key not in self.cache:
+                L = self.log_chol_to_chol(self.cholesky_log_diag, self.cholesky_off_diag)
+                self.cache[key] = L @ L.t()
+            cov = self.cache[key]
+            # TODO: predicting diag-multi?
+            return cov.expand(num_groups, -1, -1)
+        else:
+            raise NotImplementedError(self.method)

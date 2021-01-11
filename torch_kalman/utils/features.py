@@ -1,5 +1,7 @@
-from typing import Union, Optional
+from math import pi
+from typing import Union
 import numpy as np
+import torch
 
 from torch_kalman.utils.datetime import DateTimeHelper
 
@@ -55,4 +57,20 @@ def fourier_model_mat(datetimes: np.ndarray,
         from pandas import DataFrame
         out = DataFrame(out, columns=columns)
 
+    return out
+
+
+def fourier_tensor(time: torch.Tensor, seasonal_period: float, K: int) -> torch.Tensor:
+    """
+    Given an N-dimensional tensor, create an N+2 dimensional tensor with the 2nd to last dimension corresponding to the
+    Ks and the last dimension corresponding to sin/cos.
+    """
+    out = torch.empty((*time.shape, K, 2))
+    base_index = tuple(slice(0, x) for x in time.shape)
+    for idx in range(K):
+        k = idx + 1
+        for sincos in range(2):
+            val = 2. * pi * k * time / seasonal_period
+            index = base_index + (idx, sincos)
+            out[index] = torch.sin(val) if sincos == 0 else torch.cos(val)
     return out

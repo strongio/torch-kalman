@@ -1,2 +1,0 @@
-class InputValidationError(ValueError):
-    pass

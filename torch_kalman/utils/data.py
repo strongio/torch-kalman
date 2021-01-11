@@ -8,9 +8,22 @@ import torch
 from torch import Tensor
 from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
 
-from torch_kalman.internals.repr import NiceRepr
 from torch_kalman.internals.utils import ragged_cat, true1d_idx
 from torch_kalman.utils.datetime import DateTimeHelper
+
+
+class NiceRepr:
+    # TODO: might not need this class anymore
+    _repr_attrs = None
+
+    def __repr__(self) -> str:
+        kwargs = []
+        for k in self._repr_attrs:
+            v = getattr(self, k)
+            if isinstance(v, Tensor):
+                v = v.size()
+            kwargs.append("{}={!r}".format(k, v))
+        return "{}({})".format(type(self).__name__, ", ".join(kwargs))
 
 
 class TimeSeriesDataset(NiceRepr, TensorDataset):
@@ -177,7 +190,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
                 )
             time_idx.append(tidx.item())
 
-        return predictions.state_belief_for_time(time_idx)
+        return predictions.get_timeslice(time_idx)
 
     def get_groups(self, groups: Sequence[Any]) -> 'TimeSeriesDataset':
         """
@@ -479,3 +492,26 @@ class TimeSeriesDataLoader(DataLoader):
             ]
         )
         return cls(dataset=dataset, **kwargs)
+
+
+def bmat_idx(*args) -> Tuple:
+    """
+    Create indices for tensor assignment that act like slices. E.g., batch[:,[1,2,3],[1,2,3]] does not select the upper
+    3x3 sub-matrix over batches, but batch[bmat_idx(slice(None),[1,2,3],[1,2,3])] does.
+
+    :param args: Each arg is a sequence of integers. The first N args can be slices, and the last N args can be slices.
+    :return: A tuple that can be used for matrix/tensor-selection.
+    """
+
+    if len(args) == 0:
+        return ()
+    elif isinstance(args[-1], slice):
+        # trailing slices can't be passed to np._ix, but can be appended to its results
+        return bmat_idx(*args[:-1]) + (args[-1],)
+    elif isinstance(args[0], slice):
+        # leading slices can't be passed to np._ix, but can be prepended to its results
+        return (args[0],) + bmat_idx(*args[1:])
+    else:
+        if any(isinstance(arg, slice) for arg in args[1:]):
+            raise ValueError("Only the first/last contiguous args can be slices, not middle args.")
+        return np.ix_(*args)

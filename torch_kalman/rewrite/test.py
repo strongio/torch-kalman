@@ -1,14 +1,10 @@
-from typing import List
 import numpy as np
 from filterpy.kalman import KalmanFilter as filterpy_KalmanFilter
 
 import torch
-from torch import jit, nn, Tensor
 
-from torch_kalman.rewrite.covariance import Covariance
-from torch_kalman.rewrite.gaussian import Gaussian
-from torch_kalman.rewrite.kalman_filter import KalmanFilter
-from torch_kalman.rewrite.process import LocalLevel, LocalTrend
+from torch_kalman.kalman_filter import KalmanFilter
+from torch_kalman.process import LocalTrend
 
 
 @torch.no_grad()
@@ -37,7 +33,7 @@ def test_equations():
     filter_kf.H = H.numpy().squeeze(0)
 
     # compare:
-    means, covs, R, H = torch_kf(data)
+    sb = torch_kf(data)
 
     #
     filter_kf.means = []
@@ -48,14 +44,10 @@ def test_equations():
         filter_kf.update(data[:, t, :])
         filter_kf.predict()
 
-    assert np.isclose(means.numpy().squeeze(), np.stack(filter_kf.means).squeeze()).all()
-    assert np.isclose(covs.numpy().squeeze(), np.stack(filter_kf.covs).squeeze()).all()
+    assert np.isclose(sb.means.numpy().squeeze(), np.stack(filter_kf.means).squeeze()).all()
+    assert np.isclose(sb.covs.numpy().squeeze(), np.stack(filter_kf.covs).squeeze()).all()
     print('PASSED')
 
 
 if __name__ == '__main__':
-    cov = Covariance(rank=3, empty_idx=[1])
-    # print(cov([torch.zeros(1)]))
-    ll = LocalTrend('ll')
-    # print(ll([torch.ones(1)]))
     test_equations()

@@ -1,130 +1,47 @@
 from collections import defaultdict
-from typing import Sequence, Dict, Tuple, Union, Optional, Iterable
+from typing import Tuple, Union, Sequence, Optional, Dict
 from warnings import warn
 
 import torch
-from lazy_object_proxy.utils import cached_property
-
-from torch import Tensor
-
-from torch_kalman.utils.data import TimeSeriesDataset
-from torch_kalman.design import Design
-from torch_kalman.state_belief import StateBelief
-from torch_kalman.state_belief.base import UnmeasuredError
+from torch import nn, Tensor
 
 import numpy as np
 
-from torch_kalman.internals.repr import NiceRepr
-from torch_kalman.utils.datetime import DateTimeHelper
+from torch_kalman.utils.data import TimeSeriesDataset
 
-Selector = Union[Sequence[int], slice]
+Selector = Union[int, slice, Sequence[int]]
 
 
-class StateBeliefOverTime(NiceRepr):
+class StateBeliefOverTime(nn.Module):
     """
-    The output of the KalmanFilter forward pass, containing a sequence of StateBeliefs which represent one-step-ahead
-    predictions.
+    The output of the KalmanFilter forward pass.
+
+    TODO: better name?
 
     Contains methods for evaluating the predictions (log_prob), converting them into dataframes (to_dataframe), and for
     sampling from the underlying distribution (sample_measurements).
     """
-    _repr_attrs = ('num_groups', 'num_timesteps')
 
-    def __init__(self, state_beliefs: Sequence['StateBelief'], design: Design):
-        """
-        :param state_beliefs: A sequence of StateBelief objects, representing one-step-ahead predictions.
-        :param design: The design of the kalman-filter that produced these StateBeliefs
-        """
-        self.state_beliefs = state_beliefs
-        self.design = design
-        self.family = self.state_beliefs[0].__class__
-        self.num_groups = self.state_beliefs[0].num_groups
-        self.num_timesteps = len(state_beliefs)
+    def __init__(self,
+                 means: Tensor,
+                 covs: Tensor,
+                 R: Tensor,
+                 H: Tensor,
+                 kf_step: 'KFStep'):
+        super().__init__()
+        self.means = means
+        self.covs = covs
+        self.H = H
+        self.R = R
 
-        # the last idx where any updates/predicts occurred:
-        self.last_update_idx = torch.zeros(self.num_groups, dtype=torch.int)
-        for t, state_belief in enumerate(state_beliefs):
-            # TODO: any cases where this would be zero?
-            self.last_update_idx[state_belief.last_measured <= 1] = t
+        self.kf_step = kf_step
 
-        self._means = None
-        self._covs = None
-        self._last_measured = None
-        self._H = None
-        self._R = None
+        self._predictions = None
+        self._prediction_uncertainty = None
 
-    # Attributes stacked from the contained StateBeliefs ---------:
-    @property
-    def means(self) -> Tensor:
-        if self._means is None:
-            self._means_covs()
-        return self._means
+        self.num_groups, self.num_timesteps, self.state_size = self.means.shape
 
-    @property
-    def covs(self) -> Tensor:
-        if self._covs is None:
-            self._means_covs()
-        return self._covs
-
-    @property
-    def H(self) -> Tensor:
-        if self._H is None:
-            self._H = torch.stack([sb.H for sb in self.state_beliefs], 1)
-        return self._H
-
-    @property
-    def R(self) -> Tensor:
-        if self._R is None:
-            self._R = torch.stack([sb.R for sb in self.state_beliefs], 1)
-        return self._R
-
-    # Information for Prediction ---------:
-    @cached_property
-    def predictions(self) -> Tensor:
-        """
-        The predictions on the measurement scale -- i.e., appropriate for comparing to the input that was originally fed
-         into the KalmanFilter, e.g. via metrics like MSE.
-        """
-        return self.H.matmul(self.means.unsqueeze(-1)).squeeze(-1)
-
-    @cached_property
-    def prediction_uncertainty(self) -> Tensor:
-        """
-        Uncertainty on the measurement scale, aka "system uncertainty".
-        """
-        Ht = self.H.permute(0, 1, 3, 2)
-        cov = self.H.matmul(self.covs).matmul(Ht) + self.R
-        if (cov < 0).any():
-            warn(
-                f"negative values in `prediction_uncertainty`. This can be caused by `{type(self).__name__}().covs` "
-                f"not being positive-definite. Try stepping through each group,time of this matrix to find the "
-                f"offending matrix (e.g. torch.cholesky returns an error); then inspect the observations around this "
-                f"group/time."
-            )
-        return cov
-
-    def state_belief_for_time(self, time_idx: Sequence[int]) -> StateBelief:
-        """
-        Get a StateBelief which captures the predictions at a set of timepoints, one for each group.
-
-        :param time_idx: A sequence of integers, one for each group, indexing the time (e.g. 0 would be the first
-        timepoint, 1 the 2nd timepoint...).
-        :return: A StateBelief for those times.
-        """
-        if len(time_idx) != self.num_groups:
-            raise ValueError("Expected len(time_idx) to == num_groups.")
-        return self._restore_sb(enumerate(time_idx))
-
-    def last_update(self) -> StateBelief:
-        """
-        Get a StateBelief which captures the predictions at the timepoint, for each group, of the last observed
-        measurement.
-        :return: A StateBelief.
-        """
-        return self._restore_sb(enumerate(self.last_update_idx.tolist()))
-
-    # Distribution-Methods -----------:
-    def log_prob(self, obs: Tensor, **kwargs) -> Tensor:
+    def forward(self, obs: Tensor) -> Tensor:
         """
         Compute the log-probability of data (e.g. data that was originally fed into the KalmanFilter).
 
@@ -133,9 +50,6 @@ class StateBeliefOverTime(NiceRepr):
           upper and lower bounds).
         :return: A tensor with one element for each group X timestep indicating the log-probability.
         """
-        if obs.grad_fn is not None:
-            warn("`obs` has a grad_fn, nans may propagate to gradient")
-
         num_groups, num_times, num_dist_dims = obs.shape
         assert self.predictions.shape[2] == num_dist_dims
 
@@ -187,34 +101,70 @@ class StateBeliefOverTime(NiceRepr):
         for group_idx, time_idx, measure_idx in lp_groups:
             if isinstance(time_idx, int):
                 # assignment is dimensionless in time; needed b/c group isn't a slice
-                out[group_idx, time_idx] = self._log_prob_with_subsetting(
+                out[group_idx, time_idx] = self.kf_step.likelihood(
                     obs=obs,
                     group_idx=group_idx,
                     time_idx=(time_idx,),
-                    measure_idx=measure_idx,
-                    **kwargs
+                    measure_idx=measure_idx
                 ).squeeze(-1)
             else:
                 # time has dimension, but group is a slice so it's OK
-                out[group_idx, time_idx] = self._log_prob_with_subsetting(
+                out[group_idx, time_idx] = self.kf_step.likelihood(
                     obs=obs,
                     group_idx=group_idx,
                     time_idx=time_idx,
-                    measure_idx=measure_idx,
-                    **kwargs
+                    measure_idx=measure_idx
                 )
 
         return out
 
-    def sample_measurements(self, eps: Optional[Union[Tensor, float]] = None) -> Tensor:
+    # Information for Prediction ---------:
+    @property
+    def predictions(self) -> Tensor:
         """
-        Generate samples from the underlying torch.Distribution (usually a MultivariateNormal) on the measurement scale.
+        The predictions on the measurement scale -- i.e., appropriate for comparing to the input that was originally fed
+         into the KalmanFilter, e.g. via metrics like MSE.
+        """
+        if self._predictions is None:
+            self._predictions = self.H.matmul(self.means.unsqueeze(-1)).squeeze(-1)
+        return self._predictions
 
-        :param eps: An optional float that will act as a multiplier on the noise in sampling. For advanced use-cases can
-          alternatively be a Tensor that will be used as uncorrelated white noise when generating samples.
-        :return: A tensor of random samples.
+    @property
+    def prediction_uncertainty(self) -> Tensor:
         """
-        raise NotImplementedError
+        Uncertainty on the measurement scale, aka "system uncertainty".
+        """
+        if self._prediction_uncertainty is None:
+            Ht = self.H.permute(0, 1, 3, 2)
+            cov = self.H.matmul(self.covs).matmul(Ht) + self.R
+            if (cov < 0).any():
+                warn(
+                    f"negative values in `prediction_uncertainty`. This can be caused by "
+                    f"`{type(self).__name__}().covs` not being positive-definite. Try stepping through each group,time "
+                    f"of this matrix to find the offending matrix (e.g. torch.cholesky returns an error); then inspect "
+                    f"the observations around this group/time."
+                )
+        return self._prediction_uncertainty
+
+    def get_timeslice(self, indices: Dict[int, Selector]) -> 'StateBeliefOverTime':
+        """
+        For each group, get a time or slice of times. Often useful because means,covs 0-timestep will be the first dt
+        that each group data data, and all groups will be right-padded to be equal in length; but in some forecasting
+        contexts we want to take the *last* timestep for each group.
+
+        :param indices: A dictionary where the keys are group-indices and the values are for taking the time-slice
+        (e.g. an integer to get the specific timepoint, or a slice to get multiple timepoints).
+        :return: A new `StateBeliefOverTime`
+        """
+        if isinstance(indices, dict):
+            indices = list(indices.items())
+        means, covs, H, R = [], [], [], []
+        for g, t in indices:
+            means.append(self.means[g, t])
+            covs.append(self.covs[g, t])
+            H.append(self.H[g, t])
+            R.append(self.R[g, t])
+        return type(self)(means.stack(0), covs.stack(0), R=R.stack(0), H=H.stack(0), kf_step=self.kf_step)
 
     # Exporting to other Formats ---------:
     def to_dataframe(self,
@@ -259,7 +209,7 @@ class StateBeliefOverTime(NiceRepr):
                 "Expected `batch` to be a TimeSeriesDataset, or a dictionary with 'start_times' and 'group_names'."
             )
 
-        dt_helper = DateTimeHelper(dt_unit=batch_info['dt_unit'])
+        dt_helper = None  # TODO
 
         def _tensor_to_df(tens, measures):
             times = dt_helper.make_grid(batch_info['start_times'], tens.shape[1])
@@ -432,48 +382,3 @@ class StateBeliefOverTime(NiceRepr):
             plot = plot + geom_vline(xintercept=np.datetime64(split_dt), linetype='dashed')
 
         return plot + theme_bw() + theme(**kwargs)
-
-    # Private utils ---------:
-    def _restore_sb(self, indices: Iterable[Tuple[int, int]]) -> StateBelief:
-        means, covs, H, R = [], [], [], []
-        for g, t in indices:
-            means.append(self.means[g, t])
-            covs.append(self.covs[g, t])
-            H.append(self.H[g, t])
-            R.append(self.R[g, t])
-        sb = self.family(torch.stack(means), torch.stack(covs))
-        try:
-            sb.compute_measurement(H=torch.stack(H), R=torch.stack(R))
-        except UnmeasuredError:
-            pass
-        return sb
-
-    @staticmethod
-    def _which_valid_key(is_nan: Tensor) -> Tuple[int]:
-        num_multi_dims = sum(x > 1 for x in is_nan.shape)
-        if num_multi_dims > 1:
-            raise ValueError("Expected `tensor` to be 1D (or have only one non-singleton dimension.")
-        is_valid = ~is_nan
-        return tuple(is_valid.nonzero().squeeze(-1).tolist())
-
-    def _means_covs(self) -> None:
-        means, covs = zip(*[(state_belief.means, state_belief.covs) for state_belief in self.state_beliefs])
-        self._means = torch.stack(means, 1)
-        self._covs = torch.stack(covs, 1)
-
-    def _log_prob_with_subsetting(self,
-                                  obs: Tensor,
-                                  group_idx: Selector,
-                                  time_idx: Selector,
-                                  measure_idx: Selector,
-                                  **kwargs) -> Tensor:
-        raise NotImplementedError
-
-    @staticmethod
-    def _check_lp_sub_input(group_idx: Selector, time_idx: Selector):
-        if isinstance(group_idx, Sequence) and isinstance(time_idx, Sequence):
-            if len(group_idx) > 1 and len(time_idx) > 1:
-                warn(
-                    "Both `group_idx` and `time_idx` are indices (i.e. neither is an int or a slice). This is rarely "
-                    "the expected input."
-                )

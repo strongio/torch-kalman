@@ -2,22 +2,26 @@ from collections import namedtuple
 from typing import Tuple, List, Optional, Sequence, Dict
 
 import torch
-from torch import jit, nn, Tensor
+from torch import nn, Tensor
 
-from torch_kalman.rewrite.covariance import Covariance
-from torch_kalman.rewrite.gaussian import Gaussian
-from torch_kalman.rewrite.process import Process
+from torch_kalman.covariance import Covariance
+from torch_kalman.kalman_filter.gaussian import GaussianStep
+from torch_kalman.kalman_filter.state_belief_over_time import StateBeliefOverTime
+from torch_kalman.process.regression import Process
 
 KFOutput = namedtuple('KFOutput', ['means', 'covs', 'R', 'H'])
 
 
 class KalmanFilter(nn.Module):
-    kf_step = Gaussian
+    kf_step = GaussianStep
+    use_jit = True
 
     def __init__(self, processes: Sequence[Process], measures: Sequence[str]):
         super(KalmanFilter, self).__init__()
         self._validate(processes, measures)
         self.script_module = ScriptKalmanFilter(kf_step=self.kf_step(), processes=processes, measures=measures)
+        if self.use_jit:
+            self.script_module = torch.jit.script(self.script_module)
 
     @staticmethod
     def _validate(processes: Sequence[Process], measures: Sequence[str]):
@@ -32,10 +36,11 @@ class KalmanFilter(nn.Module):
                 p.set_measure(measures[0])
 
     def _parse_process_args(self, *args, **kwargs) -> Dict[str, dict]:
-        out = {'process_args_groupwise': {}, 'process_args_timewise': {}}
+        out = {'process_kwargs_groupwise': {}, 'process_kwargs_timewise': {}}
+        # TODO: track used/unused?
         for process in self.script_module.processes:
-            out['process_args_groupwise'][process.id] = process.get_groupwise_args(*args, **kwargs)
-            out['process_args_timewise'][process.id] = process.get_timewise_args(*args, **kwargs)
+            out['process_kwargs_groupwise'][process.id] = process.get_groupwise_kwargs(*args, **kwargs)
+            out['process_kwargs_timewise'][process.id] = process.get_timewise_kwargs(*args, **kwargs)
         return out
 
     def forward(self,
@@ -43,19 +48,20 @@ class KalmanFilter(nn.Module):
                 n_step: int = 1,
                 out_timesteps: Optional[int] = None,
                 initial_state: Optional[Tuple[Tensor, Tensor]] = None,
-                **kwargs) -> KFOutput:
-        return self.script_module(
+                **kwargs) -> StateBeliefOverTime:
+        means, covs, R, H = self.script_module(
             input=input,
             initial_state=initial_state,
             n_step=n_step,
             out_timesteps=out_timesteps,
             **self._parse_process_args(input=input, **kwargs)
         )
+        return StateBeliefOverTime(means, covs, R=R, H=H, kf_step=self.kf_step)
 
 
-class ScriptKalmanFilter(jit.ScriptModule):
+class ScriptKalmanFilter(nn.Module):
     def __init__(self,
-                 kf_step: 'Gaussian',
+                 kf_step: 'GaussianStep',
                  processes: Sequence[Process],
                  measures: Sequence[str]):
         super(ScriptKalmanFilter, self).__init__()
@@ -68,7 +74,7 @@ class ScriptKalmanFilter(jit.ScriptModule):
 
         # processes:
         self.processes = nn.ModuleList()
-        self.process_to_slice = torch.jit.annotate(Dict[str, Tuple[int, int]], {})
+        self.process_to_slice: Dict[str, Tuple[int, int]] = {}
         self.state_rank = 0
         self.no_pcov_idx = []
         for p in processes:
@@ -93,43 +99,32 @@ class ScriptKalmanFilter(jit.ScriptModule):
 
     def get_design_mats(self,
                         input: Tensor,
-                        process_args: Dict[str, List[Tensor]]
+                        process_kwargs: Dict[str, Dict[str, Tensor]]
                         ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         num_groups = input.shape[0]
 
         F = torch.zeros((num_groups, self.state_rank, self.state_rank))
         H = torch.zeros((num_groups, len(self.measures), self.state_rank))
         for process in self.processes:
-            if process.id in process_args.keys():
-                this_process_args = process_args[process.id]
+            if process.id in process_kwargs.keys():
+                this_process_kwargs = process_kwargs[process.id]
             else:
-                this_process_args = []
-            pH, pF = process(this_process_args)
+                this_process_kwargs = {}
+            pH, pF = process(this_process_kwargs)
 
             _process_slice = slice(*self.process_to_slice[process.id])
             H[:, self.measure_to_idx[process.measure], _process_slice] = pH
             F[:, _process_slice, _process_slice] = pF
 
-        if 'process_covariance' in process_args.keys():
-            pcov_args = process_args['process_covariance']
-        else:
-            pcov_args = [input]
-        Q = self.process_covariance(pcov_args)
-
-        # TODO: scale Q by R?
-        if 'measure_covariance' in process_args.keys():
-            mcov_args = process_args['measure_covariance']
-        else:
-            mcov_args = [input]
-        R = self.measure_covariance(mcov_args)
+        Q = self.process_covariance(input)
+        R = self.measure_covariance(input)
 
         return F, H, Q, R
 
-    @jit.script_method
     def forward(self,
                 input: Tensor,
-                process_args_groupwise: Dict[str, List[Tensor]],
-                process_args_timewise: Dict[str, List[Tensor]],
+                process_kwargs_groupwise: Dict[str, Dict[str, Tensor]],
+                process_kwargs_timewise: Dict[str, Dict[str, Tensor]],
                 n_step: int = 1,
                 out_timesteps: Optional[int] = None,
                 initial_state: Optional[Tuple[Tensor, Tensor]] = None) -> KFOutput:
@@ -146,18 +141,25 @@ class ScriptKalmanFilter(jit.ScriptModule):
             if out_timesteps is None:
                 out_timesteps = len(inputs)
 
-        means = torch.jit.annotate(List[Tensor], [])
-        covs = torch.jit.annotate(List[Tensor], [])
-        Hs = torch.jit.annotate(List[Tensor], [])
-        Rs = torch.jit.annotate(List[Tensor], [])
+        # avoid 'trying to backward a second time' error:
+        for p in self.processes:
+            p.cache.clear()
+        self.process_covariance.cache.clear()
+        self.measure_covariance.cache.clear()
+
+        means: List[Tensor] = []
+        covs: List[Tensor] = []
+        Hs: List[Tensor] = []
+        Rs: List[Tensor] = []
         for t in range(out_timesteps):
             # get design-mats for this timestep:
-            process_args = process_args_groupwise.copy()
-            for k, args in process_args_timewise.items():
-                if k not in process_args.keys():
-                    process_args[k] = []
-                process_args[k].extend([v[:, t] for v in args])
-            F, H, Q, R = self.get_design_mats(input=input, process_args=process_args)
+            process_kwargs = process_kwargs_groupwise.copy()
+            for pid, pkwargs in process_kwargs_timewise.items():
+                if pid not in process_kwargs.keys():
+                    process_kwargs[pid] = {}
+                for k, v in pkwargs.items():
+                    process_kwargs[pid][k] = v
+            F, H, Q, R = self.get_design_mats(input=input, process_kwargs=process_kwargs)
 
             # get new mean/cov
             if n_step <= t <= len(inputs):

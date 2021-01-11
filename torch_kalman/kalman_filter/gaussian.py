@@ -1,12 +1,10 @@
-from typing import Tuple
+from typing import Tuple, List
 
 import torch
-from torch import jit, Tensor
+from torch import nn, Tensor
 
 
-class Gaussian(jit.ScriptModule):
-
-    @jit.script_method
+class GaussianStep(nn.Module):
     def forward(self,
                 input: Tensor,
                 mean: Tensor,
@@ -52,3 +50,6 @@ class Gaussian(jit.ScriptModule):
         Kt, _ = torch.solve(B, A)
         K = Kt.permute(0, 2, 1)
         return K
+
+    def likelihood(self, inputs: List[Tensor]) -> Tensor:
+        raise NotImplementedError("TODO")
