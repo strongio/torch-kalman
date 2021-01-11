@@ -170,10 +170,6 @@ class ScriptKalmanFilter(nn.Module):
                 n_step: int = 1,
                 out_timesteps: Optional[int] = None,
                 initial_state: Optional[Tuple[Tensor, Tensor]] = None) -> KFOutput:
-        if initial_state is None:
-            mean, cov = self.get_initial_state(input)
-        else:
-            mean, cov = initial_state
 
         assert n_step > 0
         if input is None:
@@ -188,32 +184,45 @@ class ScriptKalmanFilter(nn.Module):
         self.process_covariance.cache.clear()
         self.measure_covariance.cache.clear()
 
-        means: List[Tensor] = []
-        covs: List[Tensor] = []
+        # build design-mats:
+        tv_kwargs = list(timevarying_process_kwargs.keys())
+        Fs: List[Tensor] = []
         Hs: List[Tensor] = []
+        Qs: List[Tensor] = []
         Rs: List[Tensor] = []
         for t in range(out_timesteps):
             # get design-mats for this timestep:
-            process_kwargs = process_kwargs_groupwise.copy()
-            for pid, pkwargs in process_kwargs_timewise.items():
+            process_kwargs = static_process_kwargs.copy()
+            for pid, tv_pkwargs in timevarying_process_kwargs.items():
                 if pid not in process_kwargs.keys():
                     process_kwargs[pid] = {}
-                for k, v in pkwargs.items():
-                    process_kwargs[pid][k] = v
-            F, H, Q, R = self.get_design_mats(input=input, process_kwargs=process_kwargs)
+                else:
+                    process_kwargs[pid] = process_kwargs[pid].copy()
+                for k, v in tv_pkwargs.items():
+                    process_kwargs[pid][k] = v[t]
+            F, H, Q, R = self.get_design_mats(input=input, process_kwargs=process_kwargs, tv_kwargs=tv_kwargs)
+            Fs += [F]
+            Hs += [H]
+            Qs += [Q]
+            Rs += [R]
 
-            # get new mean/cov
-            if n_step <= t <= len(inputs):
-                # don't update until we have input
-                mean, cov = self.kf_step.update(input=inputs[t - 1], mean=mean, cov=cov, H=H, R=R)
-                if t >= n_step:
-                    # if t < n_step, then it doesn't make sense to increase uncertainty with each step -- our initial
-                    # state already represents maximum uncertainty
-                    mean, cov = self.kf_step.predict(mean, cov, F=F, Q=Q)
-                    assert n_step == 1  # TODO
-
+        # generate predictions:
+        if initial_state is None:
+            mean1step, cov1step = self.get_initial_state(input)
+        else:
+            mean1step, cov1step = initial_state
+        means: List[Tensor] = []
+        covs: List[Tensor] = []
+        for ts in range(out_timesteps):
+            # ts: the time of the state
+            # tu: the time of the update
+            tu = ts - n_step
+            if tu >= 0:
+                mean1step, cov1step = self.kf_step.update(inputs[tu], mean1step, cov1step, H=Hs[tu], R=Rs[tu])
+                mean1step, cov1step = self.kf_step.predict(mean1step, cov1step, F=Fs[tu], Q=Qs[tu])
+            mean, cov = mean1step, cov1step
+            for h in range(1, n_step):
+                mean, cov = self.kf_step.predict(mean, cov, F=Fs[tu + h], Q=Qs[tu + h])
             means += [mean]
             covs += [cov]
-            Hs += [H]
-            Rs += [R]
         return KFOutput(torch.stack(means, 1), torch.stack(covs, 1), torch.stack(Rs, 1), torch.stack(Hs, 1))
