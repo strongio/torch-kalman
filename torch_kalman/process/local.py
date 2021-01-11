@@ -1,4 +1,4 @@
-from typing import Tuple, List, Optional, Dict
+from typing import Tuple, List, Optional, Dict, Sequence
 
 import torch
 
@@ -9,12 +9,6 @@ from .utils import SimpleTransition, ReturnValues
 
 
 class LocalLevel(Process):
-    def get_groupwise_kwargs(self, *args, **kwargs) -> Dict[str, Tensor]:
-        return {}
-
-    def get_timewise_kwargs(self, *args, **kwargs) -> Dict[str, Tensor]:
-        return {}
-
     def __init__(self, id: str, decay: Optional[Tuple[float, float]] = None):
         """
         :param id: A unique identifier for this process.
@@ -40,12 +34,6 @@ class LocalLevel(Process):
 
 
 class LocalTrend(Process):
-
-    def get_groupwise_kwargs(self, *args, **kwargs) -> Dict[str, Tensor]:
-        return {}
-
-    def get_timewise_kwargs(self, *args, **kwargs) -> Dict[str, Tensor]:
-        return {}
 
     def __init__(self,
                  id: str,

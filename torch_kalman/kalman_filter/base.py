@@ -1,5 +1,6 @@
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 from typing import Tuple, List, Optional, Sequence, Dict
+from warnings import warn
 
 import torch
 from torch import nn, Tensor
@@ -14,13 +15,21 @@ KFOutput = namedtuple('KFOutput', ['means', 'covs', 'R', 'H'])
 
 class KalmanFilter(nn.Module):
     kf_step = GaussianStep
-    use_jit = True
 
-    def __init__(self, processes: Sequence[Process], measures: Sequence[str]):
+    def __init__(self,
+                 processes: Sequence[Process],
+                 measures: Sequence[str],
+                 compiled: bool = True,
+                 **kwargs):
         super(KalmanFilter, self).__init__()
         self._validate(processes, measures)
-        self.script_module = ScriptKalmanFilter(kf_step=self.kf_step(), processes=processes, measures=measures)
-        if self.use_jit:
+        self.script_module = ScriptKalmanFilter(
+            kf_step=self.kf_step(),
+            processes=processes,
+            measures=measures,
+            **kwargs
+        )
+        if compiled:
             self.script_module = torch.jit.script(self.script_module)
 
     @staticmethod
@@ -35,13 +44,32 @@ class KalmanFilter(nn.Module):
                     raise RuntimeError(f"Must call `set_measure()` on '{p.id}' since there are multiple measures.")
                 p.set_measure(measures[0])
 
-    def _parse_process_args(self, *args, **kwargs) -> Dict[str, dict]:
-        out = {'process_kwargs_groupwise': {}, 'process_kwargs_timewise': {}}
-        # TODO: track used/unused?
+    def _parse_process_kwargs(self, **kwargs) -> Dict[str, dict]:
+        out = {'static_process_kwargs': defaultdict(dict), 'timevarying_process_kwargs': defaultdict(dict)}
+        unused = set(kwargs)
         for process in self.script_module.processes:
-            out['process_kwargs_groupwise'][process.id] = process.get_groupwise_kwargs(*args, **kwargs)
-            out['process_kwargs_timewise'][process.id] = process.get_timewise_kwargs(*args, **kwargs)
+            for key in process.expected_kwargs:
+                specific_key = f"{process.id}__{key}"
+                if specific_key in kwargs:
+                    value = kwargs[specific_key]
+                    unused.discard(specific_key)
+                else:
+                    value = kwargs[key]
+                    unused.discard(key)
+                if len(value.shape) == 3:
+                    assert not getattr(value, 'requires_grad', False), f"`{specific_key}` should not require grad"
+                    out['timevarying_process_kwargs'][process.id][key] = value.unbind(1)
+                else:
+                    out['static_process_kwargs'][process.id][key] = value
+        if unused and unused != {'input'}:
+            warn(f"There are unused keyword arguments:\n{unused}")
+        out['static_process_kwargs'] = dict(out['static_process_kwargs'])
+        out['timevarying_process_kwargs'] = dict(out['timevarying_process_kwargs'])
         return out
+
+    def _enable_process_cache(self, enable: bool = True):
+        for p in self.script_module.processes:
+            p.enable_cache(enable)
 
     def forward(self,
                 input: Tensor,
@@ -49,13 +77,17 @@ class KalmanFilter(nn.Module):
                 out_timesteps: Optional[int] = None,
                 initial_state: Optional[Tuple[Tensor, Tensor]] = None,
                 **kwargs) -> StateBeliefOverTime:
-        means, covs, R, H = self.script_module(
-            input=input,
-            initial_state=initial_state,
-            n_step=n_step,
-            out_timesteps=out_timesteps,
-            **self._parse_process_args(input=input, **kwargs)
-        )
+        self._enable_process_cache(True)
+        try:
+            means, covs, R, H = self.script_module(
+                input=input,
+                initial_state=initial_state,
+                n_step=n_step,
+                out_timesteps=out_timesteps,
+                **self._parse_process_kwargs(input=input, **kwargs)
+            )
+        finally:
+            self._enable_process_cache(False)
         return StateBeliefOverTime(means, covs, R=R, H=H, kf_step=self.kf_step)
 
 
@@ -63,7 +95,10 @@ class ScriptKalmanFilter(nn.Module):
     def __init__(self,
                  kf_step: 'GaussianStep',
                  processes: Sequence[Process],
-                 measures: Sequence[str]):
+                 measures: Sequence[str],
+                 process_covariance: Optional[Covariance] = None,
+                 measure_covariance: Optional[Covariance] = None,
+                 initial_covariance: Optional[Covariance] = None):
         super(ScriptKalmanFilter, self).__init__()
 
         self.kf_step = kf_step
@@ -87,19 +122,26 @@ class ScriptKalmanFilter(nn.Module):
                 self.no_pcov_idx.append(self.state_rank + i)
             self.state_rank += len(p.state_elements)
 
-        self.process_covariance = Covariance(rank=self.state_rank, empty_idx=self.no_pcov_idx)
-        self.measure_covariance = Covariance(rank=len(self.measures))
+        if process_covariance is None:
+            process_covariance = Covariance(rank=self.state_rank, empty_idx=self.no_pcov_idx)
+        self.process_covariance = process_covariance
+        if measure_covariance is None:
+            measure_covariance = Covariance(rank=len(self.measures))
+        self.measure_covariance = measure_covariance
+        if initial_covariance is None:
+            initial_covariance = Covariance(rank=self.state_rank)  # TODO: fixed state-elements; low-rank
+        self.initial_covariance = initial_covariance
 
     def get_initial_state(self, input: Tensor) -> Tuple[Tensor, Tensor]:
-        # TODO
         num_groups = input.shape[0]
-        mean = torch.zeros(num_groups, self.state_rank)
-        cov = torch.eye(self.state_rank).expand(num_groups, -1, -1)
+        mean = torch.zeros(num_groups, self.state_rank)  # TODO
+        cov = self.initial_covariance(input)
         return mean, cov
 
     def get_design_mats(self,
                         input: Tensor,
-                        process_kwargs: Dict[str, Dict[str, Tensor]]
+                        process_kwargs: Dict[str, Dict[str, Tensor]],
+                        tv_kwargs: List[str]
                         ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         num_groups = input.shape[0]
 
@@ -110,7 +152,7 @@ class ScriptKalmanFilter(nn.Module):
                 this_process_kwargs = process_kwargs[process.id]
             else:
                 this_process_kwargs = {}
-            pH, pF = process(this_process_kwargs)
+            pH, pF = process(this_process_kwargs, tv_kwargs=tv_kwargs)
 
             _process_slice = slice(*self.process_to_slice[process.id])
             H[:, self.measure_to_idx[process.measure], _process_slice] = pH
@@ -123,8 +165,8 @@ class ScriptKalmanFilter(nn.Module):
 
     def forward(self,
                 input: Tensor,
-                process_kwargs_groupwise: Dict[str, Dict[str, Tensor]],
-                process_kwargs_timewise: Dict[str, Dict[str, Tensor]],
+                static_process_kwargs: Dict[str, Dict[str, Tensor]],
+                timevarying_process_kwargs: Dict[str, Dict[str, List[Tensor]]],
                 n_step: int = 1,
                 out_timesteps: Optional[int] = None,
                 initial_state: Optional[Tuple[Tensor, Tensor]] = None) -> KFOutput:
@@ -142,8 +184,7 @@ class ScriptKalmanFilter(nn.Module):
                 out_timesteps = len(inputs)
 
         # avoid 'trying to backward a second time' error:
-        for p in self.processes:
-            p.cache.clear()
+        # TODO: move somewhere else?
         self.process_covariance.cache.clear()
         self.measure_covariance.cache.clear()
 

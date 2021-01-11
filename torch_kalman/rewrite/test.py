@@ -18,7 +18,7 @@ def test_equations():
     )
     expectedF = torch.tensor([[1., 1.], [0., 1.]])
     expectedH = torch.tensor([[1., 0.]])
-    F, H, Q, R = torch_kf.script_module.get_design_mats(data, {})
+    F, H, Q, R = torch_kf.script_module.get_design_mats(data, {}, [])
     assert torch.isclose(expectedF, F).all()
     assert torch.isclose(expectedH, H).all()
 

@@ -9,17 +9,6 @@ from torch_kalman.process.utils import SimpleTransition, Identity
 
 
 class _RegressionBase(Process):
-    mm_kwarg_name = 'predictors'
-
-    def get_groupwise_kwargs(self, *args, **kwargs) -> Dict[str, Tensor]:
-        return {}
-
-    def get_timewise_kwargs(self, *args, **kwargs) -> Dict[str, Tensor]:
-        predictor_mat = kwargs.get(f"{self.id}__{self.mm_kwarg_name}", kwargs.get(self.mm_kwarg_name))
-        if predictor_mat is None:
-            raise RuntimeError(f"Process `{self.id}` expected a keyword argument '{self.mm_kwarg_name}'.")
-        return {self.mm_kwarg_name: predictor_mat}
-
     def __init__(self,
                  id: str,
                  predictors: Sequence[str],
@@ -38,6 +27,8 @@ class _RegressionBase(Process):
         )
         if not process_variance:
             self.no_pcov_state_elements = self.state_elements
+
+        self.h_kwarg = 'predictors'
 
 
 class LinearModel(_RegressionBase):
