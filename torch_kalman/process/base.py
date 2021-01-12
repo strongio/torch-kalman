@@ -42,6 +42,9 @@ class Process(nn.Module):
         #
         self.cache: Optional[Dict[str, Tensor]] = None
 
+        #
+        self.expected_init_state_kwargs = ['']  # jit doesn't like empty list
+
     @property
     def expected_kwargs(self) -> List[str]:
         out: List[str] = []

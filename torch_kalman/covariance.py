@@ -26,6 +26,9 @@ class Covariance(nn.Module):
 
         self.cache: Dict[str, Tensor] = {'null': torch.empty(0)}  # jit doesn't like empty
 
+        # jit doesnt like empty list:
+        self.expected_kwargs = ['']
+
     @staticmethod
     def log_chol_to_chol(log_diag: torch.Tensor, off_diag: torch.Tensor) -> torch.Tensor:
         assert log_diag.shape[:-1] == off_diag.shape[:-1]
@@ -40,15 +43,17 @@ class Covariance(nn.Module):
                 idx += 1
         return L
 
-    def forward(self, input: Tensor) -> Tensor:
+    def forward(self, inputs: Dict[str, Tensor]) -> Tensor:
         if self.method == 'log_cholesky':
-            num_groups = input.shape[0]
-            key = 'cov'
+            if not len(inputs):
+                key = 'cov0'
+            else:
+                raise NotImplementedError
             if key not in self.cache:
                 L = self.log_chol_to_chol(self.cholesky_log_diag, self.cholesky_off_diag)
                 self.cache[key] = L @ L.t()
             cov = self.cache[key]
-            # TODO: predicting diag-multi?
-            return cov.expand(num_groups, -1, -1)
+            # TODO: predicting diag-multi
+            return cov
         else:
             raise NotImplementedError(self.method)

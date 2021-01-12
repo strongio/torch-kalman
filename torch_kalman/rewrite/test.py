@@ -18,13 +18,16 @@ def test_equations():
     )
     expectedF = torch.tensor([[1., 1.], [0., 1.]])
     expectedH = torch.tensor([[1., 0.]])
-    F, H, Q, R = torch_kf.script_module.get_design_mats(data, {}, [])
+    _kwargs = torch_kf._parse_design_kwargs(input=data)
+    init_state_kwargs = _kwargs.pop('init_state_kwargs')
+    design_kwargs = torch_kf.script_module._get_design_kwargs_for_time(time=0, **_kwargs)
+    F, H, Q, R = torch_kf.script_module.get_design_mats(num_groups=1, design_kwargs=design_kwargs, tv_kwargs=[])
     assert torch.isclose(expectedF, F).all()
     assert torch.isclose(expectedH, H).all()
 
     # make filterpy kf:
     filter_kf = filterpy_KalmanFilter(dim_x=2, dim_z=1)
-    filter_kf.x, filter_kf.P = torch_kf.script_module.get_initial_state(data)
+    filter_kf.x, filter_kf.P = torch_kf.script_module.get_initial_state(data, init_state_kwargs, {})
     filter_kf.x = filter_kf.x.detach().numpy().T
     filter_kf.P = filter_kf.P.detach().numpy().squeeze(0)
     filter_kf.Q = Q.numpy().squeeze(0)
