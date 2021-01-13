@@ -25,7 +25,8 @@ class Identity(nn.Module):
     Identity function
     """
 
-    def forward(self, input: Tensor) -> Tensor:
+    def forward(self, input: Optional[Tensor]) -> Tensor:
+        assert input is not None
         return input
 
 

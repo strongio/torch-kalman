@@ -55,11 +55,12 @@ class KalmanFilter(nn.Module):
             ('initial_covariance', self.script_module.initial_covariance),
         ]
 
-    def _parse_design_kwargs(self, **kwargs) -> Dict[str, dict]:
+    def _parse_design_kwargs(self, input: Optional[Tensor], out_timesteps: int, **kwargs) -> Dict[str, dict]:
         static_kwargs = defaultdict(dict)
         time_varying_kwargs = defaultdict(dict)
         init_mean_kwargs = defaultdict(dict)
         unused = set(kwargs)
+        kwargs.update(input=input, current_time=torch.tensor(list(range(out_timesteps))).view(1, -1, 1))
         for submodule_nm, submodule in list(self.named_processes()) + list(self.named_covariances()):
             for key in submodule.get_all_expected_kwargs():
                 found_key, value = self._get_design_kwarg(submodule_nm, key, kwargs)
@@ -68,14 +69,14 @@ class KalmanFilter(nn.Module):
                     init_mean_kwargs[submodule_nm][key] = value
                 if key in (submodule.time_varying_kwargs or []):
                     if len(value.shape) < 3:
-                        raise RuntimeError(f"`{found_key}` is time-varying according to {submodule}, but has ndim < 3")
+                        raise RuntimeError(f"{submodule_nm} lists `{found_key}` as time-varying, but input has ndim <3")
                     time_varying_kwargs[submodule_nm][key] = value.unbind(1)
                 else:
                     if len(value.shape) >= 3:
-                        raise RuntimeError(f"`{found_key}` is static according to {submodule}, but has ndim >= 3")
+                        raise RuntimeError(f"{submodule_nm} lists `{found_key}` as static, but input has ndim >=3")
                     static_kwargs[submodule_nm][key] = value
 
-        if unused and unused != {'input'}:
+        if unused:
             warn(f"There are unused keyword arguments:\n{unused}")
         return {
             'static_kwargs': dict(static_kwargs),
@@ -99,19 +100,23 @@ class KalmanFilter(nn.Module):
             cov.enable_cache(enable)
 
     def forward(self,
-                input: Tensor,
+                input: Optional[Tensor],
                 n_step: int = 1,
                 out_timesteps: Optional[int] = None,
                 initial_state: Optional[Tuple[Tensor, Tensor]] = None,
                 **kwargs) -> StateBeliefOverTime:
         self._enable_cache(True)
+
+        if out_timesteps is None and input is None:
+            raise RuntimeError("If `input` is None must specify `out_timesteps`")
+
         try:
             means, covs, R, H = self.script_module(
                 input=input,
                 initial_state=initial_state,
                 n_step=n_step,
                 out_timesteps=out_timesteps,
-                **self._parse_design_kwargs(input=input, **kwargs)
+                **self._parse_design_kwargs(input=input, out_timesteps=out_timesteps or input.shape[1], **kwargs)
             )
         finally:
             self._enable_cache(False)
@@ -174,7 +179,7 @@ class ScriptKalmanFilter(nn.Module):
         mean = torch.zeros(num_groups, self.state_rank)
         for p in self.processes:
             _process_slice = slice(*self.process_to_slice[p.id])
-            mean[_process_slice] = p.get_initial_state_mean(init_mean_kwargs.get(p.id, {}))
+            mean[:, _process_slice] = p.get_initial_state_mean(init_mean_kwargs.get(p.id, {}))
 
         # initial cov:
         cov = self.initial_covariance(init_cov_kwargs)
