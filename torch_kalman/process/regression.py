@@ -1,11 +1,11 @@
-from typing import Tuple, Sequence, Optional, List, Dict
+from typing import Tuple, Sequence, Optional
 
 import torch
 
 from torch import nn, Tensor
 
 from torch_kalman.process.base import Process
-from torch_kalman.process.utils import SimpleTransition, Identity
+from torch_kalman.process.utils import Identity, Bounded, SingleOutput
 
 
 class _RegressionBase(Process):
@@ -15,20 +15,23 @@ class _RegressionBase(Process):
                  h_module: torch.nn.Module,
                  process_variance: bool,
                  decay: Optional[Tuple[float, float]]):
-        transitions = nn.ModuleDict() if decay else {}
+
+        transition = torch.ones(1) if decay is None else SingleOutput(Bounded(decay))
+        transitions = {} if decay is None else nn.ModuleDict()
         for pred in predictors:
-            transitions[f'{pred}->{pred}'] = SimpleTransition(decay) if decay else torch.ones(1)
+            transitions[f'{pred}->{pred}'] = transition
         super().__init__(
             id=id,
             state_elements=predictors,
-            f_tensors=None if decay else transitions,
-            f_modules=transitions if decay else None,
+            f_tensors=transitions if decay is None else None,
+            f_modules=None if decay is None else transitions,
             h_module=h_module
         )
         if not process_variance:
             self.no_pcov_state_elements = self.state_elements
 
         self.h_kwarg = 'predictors'
+        self.time_varying_kwargs = ['predictors']
 
 
 class LinearModel(_RegressionBase):

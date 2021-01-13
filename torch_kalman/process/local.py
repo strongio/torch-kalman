@@ -1,11 +1,11 @@
-from typing import Tuple, List, Optional, Dict, Sequence
+from typing import Tuple, Optional
 
 import torch
 
-from torch import nn, Tensor
+from torch import nn
 
 from .base import Process
-from .utils import SimpleTransition, ReturnValues
+from .utils import SingleOutput, Bounded
 
 
 class LocalLevel(Process):
@@ -21,7 +21,7 @@ class LocalLevel(Process):
         se = 'position'
         if decay:
             transitions = nn.ModuleDict()
-            transitions[f'{se}->{se}'] = SimpleTransition(decay or (None, 1.0))
+            transitions[f'{se}->{se}'] = SingleOutput(Bounded(decay))
         else:
             transitions = {se: torch.ones(1)}
         super(LocalLevel, self).__init__(
@@ -58,11 +58,11 @@ class LocalTrend(Process):
         if decay_position is None:
             f_tensors['position->position'] = torch.ones(1)
         else:
-            f_modules['position->position'] = SimpleTransition(decay_position)
+            f_modules['position->position'] = SingleOutput(Bounded(decay_position))
         if decay_velocity is None:
             f_tensors['velocity->velocity'] = torch.ones(1)
         else:
-            f_modules['velocity->velocity'] = SimpleTransition(decay_velocity)
+            f_modules['velocity->velocity'] = SingleOutput(Bounded(decay_velocity))
 
         assert velocity_multi <= 1.
         f_tensors['velocity->position'] = torch.ones(1) * velocity_multi
