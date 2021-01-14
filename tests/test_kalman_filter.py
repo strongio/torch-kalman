@@ -1,4 +1,5 @@
 import copy
+import itertools
 from collections import defaultdict
 from typing import Callable
 from unittest import TestCase
@@ -276,10 +277,11 @@ class TestKalmanFilter(TestCase):
             else:
                 self.assertGreater(pred.state_means[:, -1], pred.state_means[:, 0])
 
-    @parameterized.expand([(1,), (2,), (3,)])
+    @parameterized.expand(itertools.product([1, 2, 3], [1, 2, 3]))
     @torch.no_grad()
-    def test_nans(self, ndim: int = 1):
-        data = torch.zeros((2, 5, ndim))
+    def test_nans(self, ndim: int = 1, n_step: int = 1):
+        ntimes = 4 + n_step
+        data = torch.zeros((3, ntimes, ndim))
         data[0, 2, 0] = float('nan')
         kf = KalmanFilter(
             processes=[LocalLevel(id=f'lm{i}').set_measure(str(i)) for i in range(ndim)],
@@ -287,9 +289,55 @@ class TestKalmanFilter(TestCase):
             compiled=False
         )
         if ndim == 1:
-            obs_means, obs_covs = kf(data)
+            obs_means, obs_covs = kf(data, n_step=n_step)
             self.assertFalse(torch.isnan(obs_means).any())
             self.assertFalse(torch.isnan(obs_covs).any())
+            self.assertEqual(tuple(obs_means.shape), (3, ntimes, ndim))
         else:
-            with self.assertRaises(NotImplementedError):
-                obs_means, obs_covs = kf(data)()
+            with self.assertRaises(NotImplementedError, msg=(ndim, n_step)):
+                obs_means, obs_covs = kf(data, n_step=n_step)
+
+    @torch.no_grad()
+    def test_predictions(self, ndim: int = 2):
+        data = torch.zeros((2, 5, ndim))
+        kf = KalmanFilter(
+            processes=[LocalLevel(id=f'lm{i}').set_measure(str(i)) for i in range(ndim)],
+            measures=[str(i) for i in range(ndim)],
+            compiled=False
+        )
+        pred = kf(data)
+        self.assertEqual(len(tuple(pred)), 2)
+        self.assertIsInstance(np.asanyarray(pred), np.ndarray)
+        means, covs = pred
+        self.assertIsInstance(means, torch.Tensor)
+        self.assertIsInstance(covs, torch.Tensor)
+
+        with self.assertRaises(TypeError):
+            pred[1]
+
+        with self.assertRaises(TypeError):
+            pred[(1,)]
+
+        pred_group2 = pred[[1]]
+        self.assertTupleEqual(tuple(pred_group2.covs.shape), (1, 5, ndim, ndim))
+        self.assertTrue((pred_group2.state_means == pred.state_means[1, :, :]).all())
+        self.assertTrue((pred_group2.state_covs == pred.state_covs[1, :, :, :]).all())
+
+        pred_time3 = pred[:, [2]]
+        self.assertTupleEqual(tuple(pred_time3.covs.shape), (2, 1, ndim, ndim))
+        self.assertTrue((pred_time3.state_means == pred.state_means[:, 2, :]).all())
+        self.assertTrue((pred_time3.state_covs == pred.state_covs[:, 2, :, :]).all())
+
+        pred_last_dim = pred[..., [-1]]
+        self.assertTupleEqual(tuple(pred_last_dim.covs.shape), (2, 5, 1, 1))
+        self.assertTrue((pred_last_dim.state_means == pred.state_means[:, :, [ndim - 1]]).all())
+        self.assertTrue(
+            (pred_last_dim.state_covs == pred.state_covs[:, :, ndim - 1, ndim - 1].unsqueeze(-1).unsqueeze(-1)).all()
+        )
+
+        pred_last_dim = pred[:, :, [-1]]
+        self.assertTupleEqual(tuple(pred_last_dim.covs.shape), (2, 5, 1, 1))
+        self.assertTrue((pred_last_dim.state_means == pred.state_means[:, :, [ndim - 1]]).all())
+        self.assertTrue(
+            (pred_last_dim.state_covs == pred.state_covs[:, :, ndim - 1, ndim - 1].unsqueeze(-1).unsqueeze(-1)).all()
+        )

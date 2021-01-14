@@ -69,9 +69,42 @@ class Predictions(nn.Module):
         yield self.means
         yield self.covs
 
-    def __array__(self) -> Tensor:
-        # for torch.as_tensor and numpy.asarray
-        return self.means
+    def __array__(self) -> np.ndarray:
+        # for numpy.asarray
+        return self.means.detach().numpy()
+
+    def __getitem__(self, item: Tuple) -> 'Predictions':
+        kwargs = {
+            'state_means': self.state_means[item],
+            'state_covs': self.state_covs[item],
+            'H': self.H[item],
+            'R': self.R[item]
+        }
+        cls = type(self)
+        for k, v in kwargs.items():
+            if k == 'state_means':
+                if len(v.shape) != 3:
+                    raise TypeError(
+                        f"Indexing/slicing into a `{cls.__name__}` object should be done in a way that preserves its "
+                        f"3/4D shape; but `means` got shape `{v.shape}`."
+                    )
+            elif v.shape[-1] != v.shape[-2]:
+                # handle symmetry
+                if isinstance(item, tuple):
+                    if item[0] is Ellipsis and len(item) == 2:
+                        # `(..., idx)`, so missed 3rd dim
+                        kwargs[k] = v[..., item[1], :]
+                        continue
+                    elif len(item) == 3:
+                        # `(g, t, idx)` is implicitly `(g, t, idx, :)`, so missed 4th dim
+                        kwargs[k] = v[..., item[2]]
+                        continue
+                raise TypeError(
+                    f"Indexing/slicing into a `{cls.__name__}` object resulted in symetrical matrix `{k}` "
+                    f"having shape {v.shape}. Try `predictions[...,idx]`."
+                )
+        kwargs['kalman_filter'] = self.kalman_filter
+        return cls(**kwargs)
 
     @property
     def means(self) -> Tensor:
@@ -102,12 +135,28 @@ class Predictions(nn.Module):
           upper and lower bounds).
         :return: A tensor with one element for each group X timestep indicating the log-probability.
         """
-        num_groups, num_times, num_dist_dims = obs.shape
-        raise NotImplementedError
+        assert len(obs.shape) == 3
+        assert obs.shape[-1] == self.means.shape[-1]
+        ndim = obs.shape[-1]
 
-        # pred.means[mask.nonzero(as_tuple=True)].view(2, 2)
-        # import pdb
-        # pdb.set_trace()
+        obs_flat = obs.view(-1, ndim)
+        means_flat = self.means.view(-1, ndim)
+        covs_flat = self.covs.view(-1, ndim, ndim)
+
+        lp_flat = torch.zeros(obs_flat.shape[0])
+        numnan_flat = torch.isnan(obs_flat).sum(-1)
+        if not set(numnan_flat.unique().tolist()).issubset({0, ndim}):
+            raise NotImplementedError
+
+        is_valid = (numnan_flat == 0)
+        if is_valid.any():
+            is_valid = is_valid.nonzero().unbind(1)
+            lp_flat[is_valid] = self.kalman_filter.kf_step.log_prob(
+                obs_flat[is_valid],
+                means_flat[is_valid],
+                covs_flat[is_valid]
+            )
+        return lp_flat.view(obs.shape[0:2])
 
     # Exporting to other Formats ---------:
     def to_dataframe(self,

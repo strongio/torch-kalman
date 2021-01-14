@@ -35,9 +35,12 @@ class GaussianStep(nn.Module):
             if ((nandims_by_group > 0) & (nandims_by_group < state_dim)).any():
                 raise NotImplementedError  # TODO: partial nans
             no_nan_idx = (nandims_by_group == 0).nonzero().unbind(1)  # jit doesn't support as_tuple=True
-            return self._update(
+            new_mean = mean.clone()
+            new_cov = cov.clone()
+            new_mean[no_nan_idx], new_cov[no_nan_idx] = self._update(
                 input=input[no_nan_idx], mean=mean[no_nan_idx], cov=cov[no_nan_idx], H=H[no_nan_idx], R=R[no_nan_idx]
             )
+            return new_mean, new_cov
         else:
             return self._update(input=input, mean=mean, cov=cov, H=H, R=R)
 
@@ -73,9 +76,4 @@ class GaussianStep(nn.Module):
 
     @classmethod
     def log_prob(cls, obs: Tensor, obs_mean: Tensor, obs_cov: Tensor) -> Tensor:
-        # adapted from torch.distributions.MultivariateNormal
-        diff = obs - obs_mean
-        scale_tril = torch.cholesky(obs_cov)
-        M = _batch_mahalanobis(scale_tril, diff)
-        half_log_det = scale_tril.diagonal(dim1=-2, dim2=-1).log().sum(-1)
-        return -0.5 * (float(obs.shape[-1]) * math.log(2 * math.pi) + M) - half_log_det
+        return torch.distributions.MultivariateNormal(obs_mean, obs_cov).log_prob(obs)

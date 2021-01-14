@@ -26,16 +26,38 @@ class TestTraining(unittest.TestCase):
         log_lik2 = mv.log_prob(data)
         self.assertAlmostEqual(log_lik1.sum().item(), log_lik2.sum().item())
 
-    def test_log_prob_with_missings(self, ndim: int = 2):
-        data = torch.zeros((2, 5, ndim))
-        data[0, 1, :] = float('nan')
+    @parameterized.expand([(1,), (2,), (3,)])
+    @torch.no_grad()
+    def test_log_prob_with_missings(self, ndim: int = 1, num_groups: int = 1, num_times: int = 5):
+        data = torch.randn((num_groups, num_times, ndim))
+        mask = torch.randn((num_groups, num_times)) > 1.
+        while mask.all() or not mask.any():
+            mask = torch.randn((num_groups, num_times)) > 1.
+        data[mask.nonzero(as_tuple=True)] = float('nan')
         kf = KalmanFilter(
             processes=[LocalLevel(id=f'lm{i}').set_measure(str(i)) for i in range(ndim)],
             measures=[str(i) for i in range(ndim)],
             compiled=False
         )
         pred = kf(data)
-        print(pred.log_prob(data))
+        lp_method1 = pred.log_prob(data)
+        lp_method1_sum = lp_method1.sum().item()
+
+        lp_method2_sum = 0
+        for g in range(num_groups):
+            data_g = data[[g]]
+            pred_g = kf(data_g)
+            for t in range(num_times):
+                pred_gt = pred_g[:, [t]]
+                data_gt = data_g[:, [t]]
+                isvalid_gt = ~torch.isnan(data_gt).squeeze(0).squeeze(0)
+                if not isvalid_gt.any():
+                    continue
+                isvalid_gt = isvalid_gt.nonzero(as_tuple=False).squeeze(-1)
+                lp_gt = kf.kf_step.log_prob(data_gt[..., isvalid_gt], *pred_gt[..., isvalid_gt]).item()
+                self.assertAlmostEqual(lp_method1[g, t].item(), lp_gt, places=4)
+                lp_method2_sum += lp_gt
+        self.assertAlmostEqual(lp_method1_sum, lp_method2_sum, places=3)
 
 
 class Foo:
