@@ -23,7 +23,7 @@ class LocalLevel(Process):
             transitions = nn.ModuleDict()
             transitions[f'{se}->{se}'] = SingleOutput(Bounded(decay))
         else:
-            transitions = {se: torch.ones(1)}
+            transitions = {f'{se}->{se}': torch.ones(1)}
         super(LocalLevel, self).__init__(
             id=id,
             state_elements=[se],

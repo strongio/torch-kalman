@@ -7,10 +7,15 @@ from torch import Tensor
 
 import numpy as np
 from torch_kalman.kalman_filter import KalmanFilter
-from torch_kalman.process import LinearModel
+from torch_kalman.process import LinearModel, LocalLevel
 
 
 class TestProcess(TestCase):
+    def test_decay(self):
+        data = torch.zeros((2, 5, 1))
+        kf = KalmanFilter(processes=[LocalLevel(id='lm', decay=(.95, 1.))], measures=['y'])
+        # TODO
+
     @parameterized.expand(itertools.product([1, 2, 3], [1, 2, 3]))
     @torch.no_grad()
     def test_lm(self, num_groups: int = 1, num_preds: int = 1):

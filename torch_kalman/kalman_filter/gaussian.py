@@ -1,7 +1,10 @@
+import math
+import pdb
 from typing import Tuple, List
 
 import torch
 from torch import nn, Tensor
+from torch.distributions.multivariate_normal import _batch_mahalanobis
 
 
 class GaussianStep(nn.Module):
@@ -23,6 +26,23 @@ class GaussianStep(nn.Module):
         return mean, cov
 
     def update(self, input: Tensor, mean: Tensor, cov: Tensor, H: Tensor, R: Tensor) -> Tuple[Tensor, Tensor]:
+        state_dim = mean.shape[-1]
+        isnan = torch.isnan(input)
+        if isnan.all():
+            return mean, cov
+        if isnan.any():
+            nandims_by_group = torch.sum(isnan, dim=-1)
+            if ((nandims_by_group > 0) & (nandims_by_group < state_dim)).any():
+                raise NotImplementedError  # TODO: partial nans
+            no_nan_idx = (nandims_by_group == 0).nonzero().unbind(1)  # jit doesn't support as_tuple=True
+            return self._update(
+                input=input[no_nan_idx], mean=mean[no_nan_idx], cov=cov[no_nan_idx], H=H[no_nan_idx], R=R[no_nan_idx]
+            )
+        else:
+            return self._update(input=input, mean=mean, cov=cov, H=H, R=R)
+
+    def _update(self, input: Tensor, mean: Tensor, cov: Tensor, H: Tensor, R: Tensor) -> Tuple[Tensor, Tensor]:
+        # this should just be part of `update()`, but recursive calls not currently supported in torchscript
         K = self.kalman_gain(cov=cov, H=H, R=R)
         measured_mean = H.matmul(mean.unsqueeze(2)).squeeze(2)
         new_mean = mean + K.matmul((input - measured_mean).unsqueeze(2)).squeeze(2)
@@ -51,5 +71,11 @@ class GaussianStep(nn.Module):
         K = Kt.permute(0, 2, 1)
         return K
 
-    def likelihood(self, inputs: List[Tensor]) -> Tensor:
-        raise NotImplementedError("TODO")
+    @classmethod
+    def log_prob(cls, obs: Tensor, obs_mean: Tensor, obs_cov: Tensor) -> Tensor:
+        # adapted from torch.distributions.MultivariateNormal
+        diff = obs - obs_mean
+        scale_tril = torch.cholesky(obs_cov)
+        M = _batch_mahalanobis(scale_tril, diff)
+        half_log_det = scale_tril.diagonal(dim1=-2, dim2=-1).log().sum(-1)
+        return -0.5 * (float(obs.shape[-1]) * math.log(2 * math.pi) + M) - half_log_det

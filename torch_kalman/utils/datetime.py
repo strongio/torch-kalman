@@ -3,11 +3,10 @@ from typing import Union, Sequence, Optional
 import numpy as np
 import datetime
 
-DEFAULT_START_DT = np.datetime64('1970-01-05')  # first monday since epoch
-
 
 class DateTimeHelper:
     supported_dt_units = {'Y', 'D', 'h', 'm', 's'}
+    default_start_dt = np.datetime64('1970-01-05')  # first monday since epoch
 
     def __init__(self, dt_unit: Optional[str] = None):
         self.dt_unit = dt_unit
@@ -25,7 +24,7 @@ class DateTimeHelper:
         if self.dt_unit is None:
             out = dts.view('int64')
         else:
-            out = (dts - DEFAULT_START_DT).view('int64')
+            out = (dts - self.default_start_dt).view('int64')
         if self.dt_unit == 'W':
             out //= 7
         return out

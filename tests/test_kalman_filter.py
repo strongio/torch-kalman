@@ -14,7 +14,7 @@ from torch_kalman.kalman_filter import KalmanFilter
 import numpy as np
 from filterpy.kalman import KalmanFilter as filterpy_KalmanFilter
 
-from torch_kalman.process import LocalTrend, LinearModel
+from torch_kalman.process import LocalTrend, LinearModel, LocalLevel
 from torch_kalman.process.base import Process
 from torch_kalman.process.utils import SingleOutput
 
@@ -22,7 +22,7 @@ from torch_kalman.process.utils import SingleOutput
 class TestKalmanFilter(TestCase):
     @torch.no_grad()
     def test_jit(self):
-        from torch_kalman.kalman_filter.state_belief_over_time import StateBeliefOverTime
+        from torch_kalman.kalman_filter.predictions import Predictions
 
         # compile-able:
         h_module = SingleOutput()
@@ -39,7 +39,7 @@ class TestKalmanFilter(TestCase):
             measures=['y']
         )
         # runs:
-        self.assertIsInstance(torch_kf(torch.tensor([[[-5., 5., 1.]]])), StateBeliefOverTime)
+        self.assertIsInstance(torch_kf(torch.tensor([[[-5., 5., 1.]]])), Predictions)
 
         # not compile-able:
         not_compilable = Process(id='not_compilable',
@@ -61,7 +61,7 @@ class TestKalmanFilter(TestCase):
             measures=['y'],
             compiled=False
         )
-        self.assertIsInstance(torch_kf(torch.tensor([[[-5., 5., 1.]]])), StateBeliefOverTime)
+        self.assertIsInstance(torch_kf(torch.tensor([[[-5., 5., 1.]]])), Predictions)
 
     @parameterized.expand([(0,), (1,), (2,), (3,)])
     @torch.no_grad()
@@ -103,8 +103,8 @@ class TestKalmanFilter(TestCase):
             sb = torch_kf(data, n_step=n_step)
 
         #
-        filter_kf.means = []
-        filter_kf.covs = []
+        filter_kf.state_means = []
+        filter_kf.state_covs = []
         for t in range(num_times):
             if t >= n_step:
                 filter_kf.update(data[:, t - n_step, :])
@@ -114,11 +114,11 @@ class TestKalmanFilter(TestCase):
             filter_kf_copy = copy.deepcopy(filter_kf)
             for i in range(1, n_step):
                 filter_kf_copy.predict()
-            filter_kf.means.append(filter_kf_copy.x)
-            filter_kf.covs.append(filter_kf_copy.P)
+            filter_kf.state_means.append(filter_kf_copy.x)
+            filter_kf.state_covs.append(filter_kf_copy.P)
 
-        assert np.isclose(sb.means.numpy().squeeze(), np.stack(filter_kf.means).squeeze()).all()
-        assert np.isclose(sb.covs.numpy().squeeze(), np.stack(filter_kf.covs).squeeze()).all()
+        assert np.isclose(sb.state_means.numpy().squeeze(), np.stack(filter_kf.state_means).squeeze()).all()
+        assert np.isclose(sb.state_covs.numpy().squeeze(), np.stack(filter_kf.state_covs).squeeze()).all()
 
     @parameterized.expand([(1,), (2,), (3,)])
     @torch.no_grad()
@@ -161,7 +161,7 @@ class TestKalmanFilter(TestCase):
         pred = kf(y, predictors=X, out_timesteps=X.shape[1], n_step=n_step)
         y_series = Series(y.squeeze().numpy())
         for shift in range(-2, 3):
-            resid = y_series.shift(shift) - Series(pred.predictions.squeeze().numpy())
+            resid = y_series.shift(shift) - Series(pred.means.squeeze().numpy())
             if shift:
                 # check there's no misalignment in internal n_step logic (i.e., realigning the input makes things worse)
                 self.assertGreater((resid ** 2).mean(), 1.)
@@ -272,6 +272,24 @@ class TestKalmanFilter(TestCase):
 
             # more suited to a season test but we'll check anyways:
             if init_state == 1.:
-                self.assertTrue((pred.means == 1.).all())
+                self.assertTrue((pred.state_means == 1.).all())
             else:
-                self.assertGreater(pred.means[:, -1], pred.means[:, 0])
+                self.assertGreater(pred.state_means[:, -1], pred.state_means[:, 0])
+
+    @parameterized.expand([(1,), (2,), (3,)])
+    @torch.no_grad()
+    def test_nans(self, ndim: int = 1):
+        data = torch.zeros((2, 5, ndim))
+        data[0, 2, 0] = float('nan')
+        kf = KalmanFilter(
+            processes=[LocalLevel(id=f'lm{i}').set_measure(str(i)) for i in range(ndim)],
+            measures=[str(i) for i in range(ndim)],
+            compiled=False
+        )
+        if ndim == 1:
+            obs_means, obs_covs = kf(data)
+            self.assertFalse(torch.isnan(obs_means).any())
+            self.assertFalse(torch.isnan(obs_covs).any())
+        else:
+            with self.assertRaises(NotImplementedError):
+                obs_means, obs_covs = kf(data)()

@@ -1,5 +1,5 @@
-from collections import namedtuple, defaultdict
-from typing import Tuple, List, Optional, Sequence, Dict, Iterable, Collection
+from collections import defaultdict
+from typing import Tuple, List, Optional, Sequence, Dict, Iterable
 from warnings import warn
 
 import torch
@@ -7,10 +7,8 @@ from torch import nn, Tensor
 
 from torch_kalman.covariance import Covariance
 from torch_kalman.kalman_filter.gaussian import GaussianStep
-from torch_kalman.kalman_filter.state_belief_over_time import StateBeliefOverTime
+from torch_kalman.kalman_filter.predictions import Predictions
 from torch_kalman.process.regression import Process
-
-KFOutput = namedtuple('KFOutput', ['means', 'covs', 'R', 'H'])
 
 
 class KalmanFilter(nn.Module):
@@ -104,7 +102,7 @@ class KalmanFilter(nn.Module):
                 n_step: int = 1,
                 out_timesteps: Optional[int] = None,
                 initial_state: Optional[Tuple[Tensor, Tensor]] = None,
-                **kwargs) -> StateBeliefOverTime:
+                **kwargs) -> Predictions:
         self._enable_cache(True)
 
         if out_timesteps is None and input is None:
@@ -120,7 +118,7 @@ class KalmanFilter(nn.Module):
             )
         finally:
             self._enable_cache(False)
-        return StateBeliefOverTime(means, covs, R=R, H=H, kf_step=self.kf_step)
+        return Predictions(state_means=means, state_covs=covs, R=R, H=H, kalman_filter=self)
 
 
 class ScriptKalmanFilter(nn.Module):
@@ -220,7 +218,7 @@ class ScriptKalmanFilter(nn.Module):
                 init_mean_kwargs: Dict[str, Dict[str, Tensor]],
                 n_step: int = 1,
                 out_timesteps: Optional[int] = None,
-                initial_state: Optional[Tuple[Tensor, Tensor]] = None) -> KFOutput:
+                initial_state: Optional[Tuple[Tensor, Tensor]] = None) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
 
         if initial_state is None:
             assert input is not None
@@ -272,7 +270,7 @@ class ScriptKalmanFilter(nn.Module):
                 mean, cov = self.kf_step.predict(mean, cov, F=Fs[tu + h], Q=Qs[tu + h])
             means += [mean]
             covs += [cov]
-        return KFOutput(torch.stack(means, 1), torch.stack(covs, 1), torch.stack(Rs, 1), torch.stack(Hs, 1))
+        return torch.stack(means, 1), torch.stack(covs, 1), torch.stack(Rs, 1), torch.stack(Hs, 1)
 
     def _get_design_kwargs_for_time(
             self,

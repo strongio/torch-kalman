@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Tuple, Union, Sequence, Optional, Dict
+from typing import Tuple, Union, Optional, Dict, Iterator
 from warnings import warn
 
 import torch
@@ -9,39 +9,91 @@ import numpy as np
 
 from torch_kalman.utils.data import TimeSeriesDataset
 
-Selector = Union[int, slice, Sequence[int]]
 
-
-class StateBeliefOverTime(nn.Module):
+class Predictions(nn.Module):
     """
     The output of the KalmanFilter forward pass.
-
-    TODO: better name?
 
     Contains methods for evaluating the predictions (log_prob), converting them into dataframes (to_dataframe), and for
     sampling from the underlying distribution (sample_measurements).
     """
 
     def __init__(self,
-                 means: Tensor,
-                 covs: Tensor,
+                 state_means: Tensor,
+                 state_covs: Tensor,
                  R: Tensor,
                  H: Tensor,
-                 kf_step: 'KFStep'):
+                 kalman_filter: 'KalmanFilter'):
         super().__init__()
-        self.means = means
-        self.covs = covs
+        self.state_means = state_means
+        self.state_covs = state_covs
         self.H = H
         self.R = R
 
-        self.kf_step = kf_step
+        self.kalman_filter = kalman_filter
 
-        self._predictions = None
-        self._prediction_uncertainty = None
+        self._means = None
+        self._covs = None
 
-        self.num_groups, self.num_timesteps, self.state_size = self.means.shape
+        self.num_groups, self.num_timesteps, self.state_size = self.state_means.shape
 
-    def forward(self, obs: Tensor) -> Tensor:
+    def forward(self, *args, **kwargs):
+        return self.forecast(*args, **kwargs)
+
+    def forecast(self,
+                 horizon: int,
+                 **kwargs):
+        start_datetimes = kwargs.get('start_datetimes', None)
+        forecast_datetimes = kwargs.get('forecast_datetimes', None)
+        if start_datetimes is None:
+            if forecast_datetimes is not None:
+                raise
+            initial_state = self.get_last_update()
+        else:
+            initial_state = self.get_timeslice(forecast_datetimes, start_datetimes)
+        return self.kalman_filter(
+            input=None,
+            out_timesteps=horizon,
+            initial_state=initial_state,
+            **kwargs
+        )
+
+    def get_last_update(self) -> Tuple[Tensor, Tensor]:
+        raise NotImplementedError  # TODO
+
+    def get_timeslice(self, time_idx: np.ndarray, start_times: Optional[np.ndarray] = None) -> Tuple[Tensor, Tensor]:
+        raise NotImplementedError  # TODO
+
+    def __iter__(self) -> Iterator[Tensor]:
+        # for mean, cov = tuple(predictions)
+        yield self.means
+        yield self.covs
+
+    def __array__(self) -> Tensor:
+        # for torch.as_tensor and numpy.asarray
+        return self.means
+
+    @property
+    def means(self) -> Tensor:
+        if self._means is None:
+            self._means = self.H.matmul(self.state_means.unsqueeze(-1)).squeeze(-1)
+        return self._means
+
+    @property
+    def covs(self) -> Tensor:
+        if self._covs is None:
+            Ht = self.H.permute(0, 1, 3, 2)
+            self._covs = self.H.matmul(self.state_covs).matmul(Ht) + self.R
+            if (self._covs.diagonal(dim1=-2, dim2=-1) < 0).any():
+                warn(
+                    f"Negative variance. This can be caused by "
+                    f"`{type(self).__name__}().covs` not being positive-definite. Try stepping through each (group,time) "
+                    f"of this matrix to find the offending matrix (e.g. torch.cholesky returns an error); then inspect "
+                    f"the observations around this group/time."
+                )
+        return self._covs
+
+    def log_prob(self, obs: Tensor) -> Tensor:
         """
         Compute the log-probability of data (e.g. data that was originally fed into the KalmanFilter).
 
@@ -51,120 +103,11 @@ class StateBeliefOverTime(nn.Module):
         :return: A tensor with one element for each group X timestep indicating the log-probability.
         """
         num_groups, num_times, num_dist_dims = obs.shape
-        assert self.predictions.shape[2] == num_dist_dims
+        raise NotImplementedError
 
-        """
-        group into chunks for log-prob evaluation. the way indexing works makes this tricky, and slow if we just create 
-        a separate group X measure index for each separate time-slice. two shortcuts are used to mitigate this:
-        (1) the first N time-slices that are nan-free will all be evaluated as a chunk
-        (2) subsequent nan-free slices use `slice` notation instead of having to iterate through each group, checking
-            which measures were nan
-        For all other time-points, we need a separate (group-indices, time-index, measure-indices) tuple.
-        """
-
-        times_without_nan = list()
-        last_nonan_t = -1
-        lp_groups = defaultdict(list)
-        for t in range(num_times):
-            if torch.isnan(obs[:, t]).all():
-                # no log-prob needed
-                continue
-
-            if not torch.isnan(obs[:, t]).any():
-                # will be updated as block:
-                if last_nonan_t == (t - 1):
-                    last_nonan_t += 1
-                else:
-                    times_without_nan.append(t)
-                continue
-
-            for g in range(num_groups):
-                is_nan = torch.isnan(obs[g, t])
-                if is_nan.all():
-                    # no log-prob needed
-                    continue
-                measure_idx = self._which_valid_key(is_nan)
-                lp_groups[(t, measure_idx)].append(g)
-
-        lp_groups = [(gidx, t, midx) for (t, midx), gidx in lp_groups.items()]
-
-        # shortcuts:
-        if last_nonan_t >= 0:
-            gtm = slice(None), slice(last_nonan_t + 1), slice(None)
-            lp_groups.append(gtm)
-        if len(times_without_nan):
-            gtm = slice(None), times_without_nan, slice(None)
-            lp_groups.append(gtm)
-
-        # compute log-probs by dims available:
-        out = torch.zeros((num_groups, num_times))
-        for group_idx, time_idx, measure_idx in lp_groups:
-            if isinstance(time_idx, int):
-                # assignment is dimensionless in time; needed b/c group isn't a slice
-                out[group_idx, time_idx] = self.kf_step.likelihood(
-                    obs=obs,
-                    group_idx=group_idx,
-                    time_idx=(time_idx,),
-                    measure_idx=measure_idx
-                ).squeeze(-1)
-            else:
-                # time has dimension, but group is a slice so it's OK
-                out[group_idx, time_idx] = self.kf_step.likelihood(
-                    obs=obs,
-                    group_idx=group_idx,
-                    time_idx=time_idx,
-                    measure_idx=measure_idx
-                )
-
-        return out
-
-    # Information for Prediction ---------:
-    @property
-    def predictions(self) -> Tensor:
-        """
-        The predictions on the measurement scale -- i.e., appropriate for comparing to the input that was originally fed
-         into the KalmanFilter, e.g. via metrics like MSE.
-        """
-        if self._predictions is None:
-            self._predictions = self.H.matmul(self.means.unsqueeze(-1)).squeeze(-1)
-        return self._predictions
-
-    @property
-    def prediction_uncertainty(self) -> Tensor:
-        """
-        Uncertainty on the measurement scale, aka "system uncertainty".
-        """
-        if self._prediction_uncertainty is None:
-            Ht = self.H.permute(0, 1, 3, 2)
-            cov = self.H.matmul(self.covs).matmul(Ht) + self.R
-            if (cov < 0).any():
-                warn(
-                    f"negative values in `prediction_uncertainty`. This can be caused by "
-                    f"`{type(self).__name__}().covs` not being positive-definite. Try stepping through each group,time "
-                    f"of this matrix to find the offending matrix (e.g. torch.cholesky returns an error); then inspect "
-                    f"the observations around this group/time."
-                )
-        return self._prediction_uncertainty
-
-    def get_timeslice(self, indices: Dict[int, Selector]) -> 'StateBeliefOverTime':
-        """
-        For each group, get a time or slice of times. Often useful because means,covs 0-timestep will be the first dt
-        that each group data data, and all groups will be right-padded to be equal in length; but in some forecasting
-        contexts we want to take the *last* timestep for each group.
-
-        :param indices: A dictionary where the keys are group-indices and the values are for taking the time-slice
-        (e.g. an integer to get the specific timepoint, or a slice to get multiple timepoints).
-        :return: A new `StateBeliefOverTime`
-        """
-        if isinstance(indices, dict):
-            indices = list(indices.items())
-        means, covs, H, R = [], [], [], []
-        for g, t in indices:
-            means.append(self.means[g, t])
-            covs.append(self.covs[g, t])
-            H.append(self.H[g, t])
-            R.append(self.R[g, t])
-        return type(self)(means.stack(0), covs.stack(0), R=R.stack(0), H=H.stack(0), kf_step=self.kf_step)
+        # pred.means[mask.nonzero(as_tuple=True)].view(2, 2)
+        # import pdb
+        # pdb.set_trace()
 
     # Exporting to other Formats ---------:
     def to_dataframe(self,
@@ -228,7 +171,7 @@ class StateBeliefOverTime(nn.Module):
         out = []
         if type == 'predictions':
 
-            stds = torch.diagonal(self.prediction_uncertainty, dim1=-1, dim2=-2).sqrt()
+            stds = torch.diagonal(self.covs, dim1=-1, dim2=-2).sqrt()
             for i, measure in enumerate(self.design.measures):
                 # predicted:
                 df = _tensor_to_df(torch.stack([self.predictions[..., i], stds[..., i]], 2), measures=['mean', 'std'])
@@ -276,6 +219,7 @@ class StateBeliefOverTime(nn.Module):
         return concat(out, sort=True)
 
     def _components(self) -> Dict[Tuple[str, str, str], Tuple[Tensor, Tensor]]:
+        raise NotImplementedError
         states_per_measure = defaultdict(list)
         for state_belief in self.state_beliefs:
             for m, measure in enumerate(self.design.measures):

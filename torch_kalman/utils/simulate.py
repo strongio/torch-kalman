@@ -11,7 +11,6 @@ from torch_kalman.kalman_filter import KalmanFilter
 import numpy as np
 
 from torch_kalman.utils.data import TimeSeriesDataset
-from torch_kalman.utils.datetime import DEFAULT_START_DT
 
 
 def deterministic_sample_mvnorm(distribution: MultivariateNormal, eps: Optional[Tensor] = None) -> Tensor:
