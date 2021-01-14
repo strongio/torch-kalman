@@ -16,8 +16,7 @@ class TestTraining(unittest.TestCase):
         data = torch.zeros((2, 5, ndim))
         kf = KalmanFilter(
             processes=[LocalLevel(id=f'lm{i}').set_measure(str(i)) for i in range(ndim)],
-            measures=[str(i) for i in range(ndim)],
-            compiled=False
+            measures=[str(i) for i in range(ndim)]
         )
         pred = kf(data)
         log_lik1 = kf.kf_step.log_prob(data, *pred)
@@ -36,8 +35,7 @@ class TestTraining(unittest.TestCase):
         data[mask.nonzero(as_tuple=True)] = float('nan')
         kf = KalmanFilter(
             processes=[LocalLevel(id=f'lm{i}').set_measure(str(i)) for i in range(ndim)],
-            measures=[str(i) for i in range(ndim)],
-            compiled=False
+            measures=[str(i) for i in range(ndim)]
         )
         pred = kf(data)
         lp_method1 = pred.log_prob(data)
@@ -58,6 +56,40 @@ class TestTraining(unittest.TestCase):
                 self.assertAlmostEqual(lp_method1[g, t].item(), lp_gt, places=4)
                 lp_method2_sum += lp_gt
         self.assertAlmostEqual(lp_method1_sum, lp_method2_sum, places=3)
+
+    def test_training1(self, ndim: int = 2, num_groups: int = 10, num_times: int = 50):
+        """
+        simulated data with noise : MSE should get to pre-specified level
+        """
+        kf_generator = KalmanFilter(
+            processes=[LocalLevel(id=f'lm{i}').set_measure(str(i)) for i in range(ndim)],
+            measures=[str(i) for i in range(ndim)]
+        )
+        sim = kf_generator.simulate(out_timesteps=num_times, num_groups=num_groups)
+        data = sim.sample()
+
+        kf_learner = KalmanFilter(
+            processes=[LocalLevel(id=f'lm{i}').set_measure(str(i)) for i in range(ndim)],
+            measures=[str(i) for i in range(ndim)]
+        )
+
+        optimizer = torch.optim.LBFGS(kf_learner.parameters(), lr=.25)
+
+        def closure():
+            optimizer.zero_grad()
+            loss = - kf_learner(data).log_prob(data).mean()
+            loss.backward()
+            return loss
+
+        for i in range(10):
+            loss = optimizer.step(closure)
+            print(loss.item())
+
+    def test_training2(self, ndim: int = 2, num_groups: int = 10, num_times: int = 50):
+        """
+        # manually generated data (sin-wave, trend, etc.) with virtually no noise: MSE should be near zero
+        """
+        pass  # TODO
 
 
 class Foo:

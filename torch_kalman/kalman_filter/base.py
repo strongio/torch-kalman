@@ -8,6 +8,7 @@ from torch import nn, Tensor
 from torch_kalman.covariance import Covariance
 from torch_kalman.kalman_filter.gaussian import GaussianStep
 from torch_kalman.kalman_filter.predictions import Predictions
+from torch_kalman.kalman_filter.simulations import Simulations
 from torch_kalman.process.regression import Process
 
 
@@ -119,6 +120,46 @@ class KalmanFilter(nn.Module):
         finally:
             self._enable_cache(False)
         return Predictions(state_means=means, state_covs=covs, R=R, H=H, kalman_filter=self)
+
+    def simulate(self,
+                 out_timesteps: int,
+                 initial_state: Optional[Tuple[Tensor, Tensor]] = None,
+                 num_groups: Optional[int] = None,
+                 **kwargs):
+
+        design_kwargs = self._parse_design_kwargs(input=None, out_timesteps=out_timesteps, **kwargs)
+
+        with torch.no_grad():
+            if initial_state is None:
+                if num_groups is None:
+                    raise RuntimeError("Must pass initial_state or num_groups")
+                num_measures = len(self.script_module.measures)
+                mean, cov = self.script_module.get_initial_state(
+                    input=torch.zeros((num_groups, num_measures)),
+                    init_mean_kwargs=design_kwargs.pop('init_mean_kwargs'),
+                    init_cov_kwargs=design_kwargs['static_kwargs'].pop('initial_covariance', {})
+                )
+            else:
+                if num_groups is not None:
+                    raise RuntimeError("Cannot pass both num_groups and initial_state")
+                mean, cov = initial_state
+
+            kf_step = self.kf_step()
+
+            means: List[Tensor] = []
+            Hs: List[Tensor] = []
+            Rs: List[Tensor] = []
+            for t in range(out_timesteps):
+                mean = kf_step.distribution_cls(mean, cov).rsample()
+                F, H, Q, R = self.get_design_mats(
+                    num_groups=num_groups, design_kwargs=self._get_design_kwargs_for_time(t, **design_kwargs)
+                )
+                mean, cov = kf_step.predict(mean, .0001 * torch.eye(mean.shape[-1]), F=F, Q=Q)
+                means += [mean]
+                Rs += [R]
+                Hs += [H]
+
+        return Simulations(torch.stack(means, 1), H=torch.stack(Hs, 1), R=torch.stack(Rs, 1), kalman_filter=self)
 
 
 class ScriptKalmanFilter(nn.Module):

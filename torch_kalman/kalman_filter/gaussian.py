@@ -1,6 +1,4 @@
-import math
-import pdb
-from typing import Tuple, List
+from typing import Tuple
 
 import torch
 from torch import nn, Tensor
@@ -8,6 +6,8 @@ from torch.distributions.multivariate_normal import _batch_mahalanobis
 
 
 class GaussianStep(nn.Module):
+    distribution_cls = torch.distributions.MultivariateNormal
+
     def forward(self,
                 input: Tensor,
                 mean: Tensor,
@@ -76,4 +76,4 @@ class GaussianStep(nn.Module):
 
     @classmethod
     def log_prob(cls, obs: Tensor, obs_mean: Tensor, obs_cov: Tensor) -> Tensor:
-        return torch.distributions.MultivariateNormal(obs_mean, obs_cov).log_prob(obs)
+        return cls.distribution_cls(obs_mean, obs_cov).log_prob(obs)
