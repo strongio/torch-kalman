@@ -86,31 +86,37 @@ class Process(nn.Module):
             out.add(self.h_kwarg)
         return out
 
-    def forward(self, inputs: Dict[str, Tensor], cache: Dict[str, Tensor]) -> Tuple[Tensor, Tensor]:
+    def forward(self,
+                inputs: Dict[str, Tensor],
+                which: str,
+                cache: Dict[str, Tensor]) -> Tensor:
         if '_empty' not in cache:
             # jit doesn't like Optional[Tensor] in some situations
             cache['_empty'] = torch.empty(0)
 
-        # H
-        h_input = cache['_empty'] if self.h_kwarg == '' else inputs[self.h_kwarg]
-        h_key = self._get_cache_key(self.h_kwarg, h_input, prefix=f'{self.id}_h')
-        if h_key is not None:
-            if h_key not in cache:
-                cache[h_key] = self.h_forward(h_input)
-            H = cache[h_key]
-        else:
-            H = self.h_forward(h_input)
+        if which == 'h':
+            h_input = cache['_empty'] if self.h_kwarg == '' else inputs[self.h_kwarg]
+            h_key = self._get_cache_key(self.h_kwarg, h_input, prefix=f'{self.id}_h')
+            if h_key is not None:
+                if h_key not in cache:
+                    cache[h_key] = self.h_forward(h_input)
+                return cache[h_key]
+            else:
+                return self.h_forward(h_input)
 
         # F
-        f_input = cache['_empty'] if self.f_kwarg == '' else inputs[self.f_kwarg]
-        f_key = self._get_cache_key(self.f_kwarg, f_input, prefix=f'{self.id}_f')
-        if f_key is not None:
-            if f_key not in cache:
-                cache[f_key] = self.f_forward(f_input)
-            F = cache[f_key]
+        if which == 'f':
+            f_input = cache['_empty'] if self.f_kwarg == '' else inputs[self.f_kwarg]
+            f_key = self._get_cache_key(self.f_kwarg, f_input, prefix=f'{self.id}_f')
+            if f_key is not None:
+                if f_key not in cache:
+                    cache[f_key] = self.f_forward(f_input)
+                return cache[f_key]
+            else:
+                return self.f_forward(f_input)
+
         else:
-            F = self.f_forward(f_input)
-        return H, F
+            raise RuntimeError(f"Unrecognized which='{which}'.")
 
     def _get_cache_key(self, kwarg: str, input: Optional[Tensor], prefix: str) -> Optional[str]:
         """

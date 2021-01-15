@@ -228,26 +228,48 @@ class ScriptKalmanFilter(nn.Module):
                         num_groups: int,
                         design_kwargs: Dict[str, Dict[str, Tensor]],
                         cache: Dict[str, Tensor]) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+        _empty = ['_']
+        if 'base_F' not in cache:
+            cache['base_F'] = torch.zeros((num_groups, self.state_rank, self.state_rank))
+            for process in self.processes:
+                tv_kwargs = _empty
+                if process.time_varying_kwargs is not None:
+                    tv_kwargs = process.time_varying_kwargs
+                if process.f_kwarg not in tv_kwargs:
+                    _process_slice = slice(*self.process_to_slice[process.id])
+                    cache['base_F'][:, _process_slice, _process_slice] = \
+                        process(design_kwargs.get(process.id, {}), which='f', cache=cache)
+        if 'base_H' not in cache:
+            cache['base_H'] = torch.zeros((num_groups, len(self.measures), self.state_rank))
+            for process in self.processes:
+                tv_kwargs = _empty
+                if process.time_varying_kwargs is not None:
+                    tv_kwargs = process.time_varying_kwargs
+                if process.h_kwarg not in tv_kwargs:
+                    _process_slice = slice(*self.process_to_slice[process.id])
+                    cache['base_H'][:, self.measure_to_idx[process.measure], _process_slice] = \
+                        process(design_kwargs.get(process.id, {}), which='h', cache=cache)
 
-        F = torch.zeros((num_groups, self.state_rank, self.state_rank))
-        H = torch.zeros((num_groups, len(self.measures), self.state_rank))
+        H = cache['base_H'].clone()
+        F = cache['base_F'].clone()
         for process in self.processes:
-            if process.id in design_kwargs.keys():
-                this_process_kwargs = design_kwargs[process.id]
-            else:
-                this_process_kwargs = {}
-            pH, pF = process(this_process_kwargs, cache=cache)
+            if process.time_varying_kwargs is not None:
+                _process_slice = slice(*self.process_to_slice[process.id])
+                if process.h_kwarg in process.time_varying_kwargs:
+                    H[:, self.measure_to_idx[process.measure], _process_slice] = \
+                        process(design_kwargs.get(process.id, {}), which='h', cache=cache)
+                if process.f_kwarg in process.time_varying_kwargs:
+                    F[:, _process_slice, _process_slice] = \
+                        process(design_kwargs.get(process.id, {}), which='f', cache=cache)
 
-            _process_slice = slice(*self.process_to_slice[process.id])
-            H[:, self.measure_to_idx[process.measure], _process_slice] = pH
-            F[:, _process_slice, _process_slice] = pF
-
-        Q = self.process_covariance(design_kwargs.get('process_covariance', {}), cache=cache)
-        if len(Q.shape) == 2:
-            Q = Q.expand(num_groups, -1, -1)
         R = self.measure_covariance(design_kwargs.get('measure_covariance', {}), cache=cache)
         if len(R.shape) == 2:
             R = R.expand(num_groups, -1, -1)
+
+        # TODO: scale by measure cov?
+        Q = self.process_covariance(design_kwargs.get('process_covariance', {}), cache=cache)
+        if len(Q.shape) == 2:
+            Q = Q.expand(num_groups, -1, -1)
 
         return F, H, Q, R
 
