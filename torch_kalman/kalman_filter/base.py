@@ -122,6 +122,7 @@ class KalmanFilter(nn.Module):
                  out_timesteps: int,
                  initial_state: Optional[Tuple[Tensor, Tensor]] = None,
                  num_sims: Optional[int] = None,
+                 progress: bool = False,
                  **kwargs):
 
         design_kwargs = self._parse_design_kwargs(input=None, out_timesteps=out_timesteps, **kwargs)
@@ -143,11 +144,18 @@ class KalmanFilter(nn.Module):
 
             kf_step = self.kf_step()
 
+            times = range(out_timesteps)
+            if progress:
+                if progress is True:
+                    from tqdm.auto import tqdm
+                    progress = tqdm
+                times = progress(times)
+
             cache = {}
             means: List[Tensor] = []
             Hs: List[Tensor] = []
             Rs: List[Tensor] = []
-            for t in range(out_timesteps):
+            for t in times:
                 mean = kf_step.distribution_cls(mean, cov).rsample()
                 design_kwargs_t = self.script_module._get_design_kwargs_for_time(t, **design_kwargs)
                 F, H, Q, R = self.script_module.get_design_mats(

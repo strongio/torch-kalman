@@ -86,17 +86,22 @@ class TestTraining(unittest.TestCase):
 
         # train:
         kf_learner = _make_kf()
-        optimizer = torch.optim.LBFGS(kf_learner.parameters())
-        times = []
+        optimizer = torch.optim.LBFGS(kf_learner.parameters(), max_iter=10)
+        forward_times = []
+        backward_times = []
 
         def closure():
             optimizer.zero_grad()
             _start = time.time()
+            # print(f'[{datetime.datetime.now().time()}] forward...')
             pred = kf_learner(y, X=X)
-            times.append(time.time() - _start)
+            forward_times.append(time.time() - _start)
             loss = -pred.log_prob(y).mean()
+            _start = time.time()
+            # print(f'[{datetime.datetime.now().time()}] backward...')
             loss.backward()
-            # print(loss.item())
+            backward_times.append(time.time() - _start)
+            # print(f'[{datetime.datetime.now().time()}] {loss.item()}')
             return loss
 
         print("\nTraining for 5 epochs...")
@@ -104,7 +109,8 @@ class TestTraining(unittest.TestCase):
             loss = optimizer.step(closure)
             print("loss:", loss.item())
 
-        print("time:", np.nanmean(times))
+        # print("forward time:", np.nanmean(forward_times))
+        # print("backward time:", np.nanmean(backward_times))
 
         oracle_loss = -kf_generator(y, X=X).log_prob(y).mean()
         self.assertAlmostEqual(oracle_loss.item(), loss.item(), places=1)
