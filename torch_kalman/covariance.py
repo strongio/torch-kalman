@@ -3,15 +3,16 @@ from typing import List, Dict, Iterable, Optional
 import torch
 
 from torch import Tensor, nn, jit
-from torch_kalman.internals.utils import empty_list_of_str
 
 
 class Covariance(nn.Module):
     def __init__(self,
+                 id: str,
                  rank: int,
                  empty_idx: List[int] = (),
                  method: str = 'log_cholesky'):
         super(Covariance, self).__init__()
+        self.id = id
         self.rank = rank
         if len(empty_idx) == 0:
             empty_idx = [self.rank + 1]  # jit doesn't seem to like empty lists
@@ -26,8 +27,6 @@ class Covariance(nn.Module):
             raise NotImplementedError(method)
 
         #
-        self.cache: Dict[str, Tensor] = {'_null': torch.empty(0)}  # jit dislikes empty dicts
-        self._cache_enabled = False
 
         self.expected_kwargs: Optional[List[str]] = None
         self.time_varying_kwargs: Optional[List[str]] = None
@@ -35,12 +34,6 @@ class Covariance(nn.Module):
     @jit.unused
     def get_all_expected_kwargs(self) -> Iterable[str]:
         return (x for x in self.expected_kwargs or [])
-
-    @jit.unused
-    def enable_cache(self, enable: bool = True):
-        if enable:
-            self.cache.clear()
-        self._cache_enabled = enable
 
     @staticmethod
     def log_chol_to_chol(log_diag: torch.Tensor, off_diag: torch.Tensor) -> torch.Tensor:
@@ -56,22 +49,22 @@ class Covariance(nn.Module):
                 idx += 1
         return L
 
-    def forward(self, inputs: Dict[str, Tensor]) -> Tensor:
-        key = self._get_cache_key(inputs)
-        if self._cache_enabled and key is not None:
-            if key not in self.cache:
-                self.cache[key] = self._get_padded_cov(inputs)
-            cov = self.cache[key]
+    def forward(self, inputs: Dict[str, Tensor], cache: Dict[str, Tensor]) -> Tensor:
+        key = self._get_cache_key(inputs, prefix=self.id)
+        if key is not None:
+            if key not in cache:
+                cache[key] = self._get_padded_cov(inputs)
+            cov = cache[key]
         else:
             cov = self._get_padded_cov(inputs)
         return cov
 
-    def _get_cache_key(self, inputs: Dict[str, Tensor]) -> Optional[str]:
+    def _get_cache_key(self, inputs: Dict[str, Tensor], prefix: str) -> Optional[str]:
         """
         Subclasses could use `inputs` to determine the cache-key
         """
         if len(inputs) == 0:
-            return 'static'
+            return f'{prefix}_static'
         elif self.time_varying_kwargs is not None:
             if any([k in self.time_varying_kwargs for k in inputs]):
                 return None

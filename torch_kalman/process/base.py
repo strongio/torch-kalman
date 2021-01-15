@@ -9,10 +9,17 @@ class Process(nn.Module):
     def __init__(self,
                  id: str,
                  state_elements: Sequence[str],
+                 measure: Optional[str] = None,
                  h_module: Optional[nn.Module] = None,
                  h_tensor: Optional[Tensor] = None,
+                 h_kwarg: str = '',
                  f_modules: Optional[nn.ModuleDict] = None,
-                 f_tensors: Optional[Dict[str, Tensor]] = None):
+                 f_tensors: Optional[Dict[str, Tensor]] = None,
+                 f_kwarg: str = '',
+                 init_mean_kwargs: Optional[List[str]] = None,
+                 time_varying_kwargs: Optional[List[str]] = None,
+                 no_pcov_state_elements: Optional[List[str]] = None,
+                 no_icov_state_elements: Optional[List[str]] = None):
         """
         :param id: Unique identifier for the process
         :param state_elements: List of strings with the state-element names
@@ -43,28 +50,24 @@ class Process(nn.Module):
             raise TypeError("Exactly one of `h_module`, `h_tensor` must be passed.")
         self.h_module = h_module
         self.h_tensor = h_tensor
-        self.h_kwarg = ''
+        self.h_kwarg = h_kwarg
 
         # transition matrix:
         self.f_tensors = f_tensors
         self.f_modules = f_modules
-        self.f_kwarg = ''
+        self.f_kwarg = f_kwarg
 
-        # filled in by set_measure:
-        self.measure: str = ''
+        # can be populated later, as long as its before torch.jit.script
+        self.measure: str = '' if measure is None else measure
 
         # elements without process covariance, defaults to none
-        self.no_pcov_state_elements: List[str] = []
+        self.no_pcov_state_elements: Optional[List[str]] = no_pcov_state_elements
         # elements without initial covariance, defaults to none:
-        self.no_icov_state_elements: List[str] = []
+        self.no_icov_state_elements: Optional[List[str]] = no_icov_state_elements
 
         #
-        self.cache: Dict[str, Tensor] = {'_null': torch.empty(0)}  # jit dislikes empty dicts
-        self._cache_enabled = False
-
-        #
-        self.expected_init_mean_kwargs: Optional[List[str]] = None
-        self.time_varying_kwargs: Optional[List[str]] = None
+        self.expected_init_mean_kwargs: Optional[List[str]] = init_mean_kwargs
+        self.time_varying_kwargs: Optional[List[str]] = time_varying_kwargs
 
     def get_initial_state_mean(self, input: Optional[Dict[str, Tensor]] = None) -> Tensor:
         assert input is None or len(input) == 0  # not used by base class
@@ -83,34 +86,28 @@ class Process(nn.Module):
             out.add(self.h_kwarg)
         return out
 
-    @jit.ignore
-    def enable_cache(self, enable: bool = True):
-        if enable:
-            self.cache.clear()
-        self._cache_enabled = enable
+    def forward(self, inputs: Dict[str, Tensor], cache: Dict[str, Tensor]) -> Tuple[Tensor, Tensor]:
+        if '_empty' not in cache:
+            # jit doesn't like Optional[Tensor] in some situations
+            cache['_empty'] = torch.empty(0)
 
-    def set_measure(self, measure: str) -> 'Process':
-        self.measure = measure
-        return self
-
-    def forward(self, inputs: Dict[str, Tensor]) -> Tuple[Tensor, Tensor]:
         # H
-        h_input = None if self.h_kwarg == '' else inputs[self.h_kwarg]
-        h_key = self._get_cache_key(self.h_kwarg, h_input, prefix='h')
-        if self._cache_enabled and h_key is not None:
-            if h_key not in self.cache:
-                self.cache[h_key] = self.h_forward(h_input)
-            H = self.cache[h_key]
+        h_input = cache['_empty'] if self.h_kwarg == '' else inputs[self.h_kwarg]
+        h_key = self._get_cache_key(self.h_kwarg, h_input, prefix=f'{self.id}_h')
+        if h_key is not None:
+            if h_key not in cache:
+                cache[h_key] = self.h_forward(h_input)
+            H = cache[h_key]
         else:
             H = self.h_forward(h_input)
 
         # F
-        f_input = None if self.f_kwarg == '' else inputs[self.f_kwarg]
-        f_key = self._get_cache_key(self.f_kwarg, f_input, prefix='f')
-        if self._cache_enabled and f_key is not None:
-            if f_key not in self.cache:
-                self.cache[f_key] = self.f_forward(f_input)
-            F = self.cache[f_key]
+        f_input = cache['_empty'] if self.f_kwarg == '' else inputs[self.f_kwarg]
+        f_key = self._get_cache_key(self.f_kwarg, f_input, prefix=f'{self.id}_f')
+        if f_key is not None:
+            if f_key not in cache:
+                cache[f_key] = self.f_forward(f_input)
+            F = cache[f_key]
         else:
             F = self.f_forward(f_input)
         return H, F
@@ -124,7 +121,7 @@ class Process(nn.Module):
                 return None
         return f'{prefix}_static'
 
-    def h_forward(self, input: Optional[Tensor]) -> Tensor:
+    def h_forward(self, input: Tensor) -> Tensor:
         if self.h_module is None:
             assert self.h_tensor is not None
             H = self.h_tensor
@@ -146,28 +143,25 @@ class Process(nn.Module):
         # - (num_groups, state_size)
         # - (state_size, 1)
         # - (state_size, )
-        orig_h = H
-
-        valid = True
         if len(H.shape) > 3:
-            valid = False
+            return False
         else:
             if len(H.shape) == 3:
                 if H.shape[-1] == 1:
                     H = H.squeeze(-1)  # handle in next case
                 else:
-                    valid = False
+                    return False
             if len(H.shape) == 1:
                 if len(self.state_elements) == 1:
                     H = H.unsqueeze(-1)  # handle in next case
                 elif H.shape[0] != len(self.state_elements):
-                    valid = False
+                    return False
             if len(H.shape) == 2:
                 if H.shape[-1] != len(self.state_elements):
-                    valid = False
-        return valid
+                    return False
+        return True
 
-    def f_forward(self, input: Optional[Tensor]) -> Tensor:
+    def f_forward(self, input: Tensor) -> Tensor:
         #
         assignments: List[Tuple[Tuple[int, int], Tensor]] = []
         num_groups = 1

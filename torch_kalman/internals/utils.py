@@ -5,10 +5,6 @@ import torch
 import numpy as np
 
 
-def empty_list_of_str() -> List[str]:
-    return [x for x in [''] if x != '']
-
-
 def bifurcate(x: Iterable, lhs: Callable[[Any], bool]) -> Tuple[list, list]:
     """
     Split an iterable into two lists depending on a condition.

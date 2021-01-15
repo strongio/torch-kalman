@@ -150,7 +150,7 @@ class Predictions(nn.Module):
 
         is_valid = (numnan_flat == 0)
         if is_valid.any():
-            is_valid = is_valid.nonzero().unbind(1)
+            is_valid = is_valid.nonzero(as_tuple=True)
             lp_flat[is_valid] = self.kalman_filter.kf_step.log_prob(
                 obs_flat[is_valid],
                 means_flat[is_valid],

@@ -9,7 +9,10 @@ from .utils import SingleOutput, Bounded
 
 
 class LocalLevel(Process):
-    def __init__(self, id: str, decay: Optional[Tuple[float, float]] = None):
+    def __init__(self,
+                 id: str,
+                 measure: Optional[str] = None,
+                 decay: Optional[Tuple[float, float]] = None):
         """
         :param id: A unique identifier for this process.
         :param decay: If the process has decay, then the random walk will tend towards zero as we forecast out further
@@ -26,6 +29,7 @@ class LocalLevel(Process):
             transitions = {f'{se}->{se}': torch.ones(1)}
         super(LocalLevel, self).__init__(
             id=id,
+            measure=measure,
             state_elements=[se],
             f_modules=transitions if decay else None,
             f_tensors=None if decay else transitions,
@@ -37,6 +41,7 @@ class LocalTrend(Process):
 
     def __init__(self,
                  id: str,
+                 measure: Optional[str] = None,
                  decay_velocity: Optional[Tuple[float, float]] = (.95, 1.00),
                  decay_position: Optional[Tuple[float, float]] = None,
                  velocity_multi: float = 1.0):
@@ -69,6 +74,7 @@ class LocalTrend(Process):
 
         super(LocalTrend, self).__init__(
             id=id,
+            measure=measure,
             state_elements=['position', 'velocity'],
             f_modules=f_modules,
             f_tensors=f_tensors,

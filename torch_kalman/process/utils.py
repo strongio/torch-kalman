@@ -12,7 +12,7 @@ class SingleOutput(nn.Module):
         self.transform = transform
 
     def forward(self, input: Optional[Tensor] = None) -> Tensor:
-        if input is not None:
+        if not (input is None or input.numel() == 0):
             warn(f"{self} is ignoring `input`")
         out = self.param
         if self.transform is not None:
@@ -25,8 +25,7 @@ class Identity(nn.Module):
     Identity function
     """
 
-    def forward(self, input: Optional[Tensor]) -> Tensor:
-        assert input is not None
+    def forward(self, input: Tensor) -> Tensor:
         return input
 
 

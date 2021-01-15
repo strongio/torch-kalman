@@ -29,19 +29,23 @@ class KalmanFilter(nn.Module):
             **kwargs
         )
         if compiled:
+            for i, p in enumerate(self.script_module.processes):
+                self.script_module.processes[i] = torch.jit.script(p)
             self.script_module = torch.jit.script(self.script_module)
 
     @staticmethod
     def _validate(processes: Sequence[Process], measures: Sequence[str]):
         assert not isinstance(measures, str)
         for p in processes:
+            if isinstance(p, torch.jit.RecursiveScriptModule):
+                raise TypeError("Processes should not be wrapped in `torch.jit.script`, this will be done internally.")
             if p.measure:
                 if p.measure not in measures:
                     raise RuntimeError(f"'{p.id}' has measure {p.measure} not in `measures`.")
             else:
                 if len(measures) > 1:
-                    raise RuntimeError(f"Must call `set_measure()` on '{p.id}' since there are multiple measures.")
-                p.set_measure(measures[0])
+                    raise RuntimeError(f"Must set measure for '{p.id}' since there are multiple measures.")
+                p.measure = measures[0]
 
     def named_processes(self) -> Iterable[Tuple[str, Process]]:
         for process in self.script_module.processes:
@@ -88,71 +92,66 @@ class KalmanFilter(nn.Module):
         specific_key = f"{owner}__{key}"
         if specific_key in kwargs:
             return specific_key, kwargs[specific_key]
-        else:
+        elif key in kwargs:
             return key, kwargs[key]
-
-    def _enable_cache(self, enable: bool = True):
-        # TODO: also clear? shouldn't be a problem with gradient...
-        for _, proc in self.named_processes():
-            proc.enable_cache(enable)
-        for _, cov in self.named_covariances():
-            cov.enable_cache(enable)
+        else:
+            raise TypeError(f"Missing required keyword-arg `{key}` (or `{specific_key}`).")
 
     def forward(self,
                 input: Optional[Tensor],
                 n_step: int = 1,
                 out_timesteps: Optional[int] = None,
                 initial_state: Optional[Tuple[Tensor, Tensor]] = None,
+                _disable_cache: bool = False,
                 **kwargs) -> Predictions:
-        self._enable_cache(True)
 
         if out_timesteps is None and input is None:
             raise RuntimeError("If `input` is None must specify `out_timesteps`")
 
-        try:
-            means, covs, R, H = self.script_module(
-                input=input,
-                initial_state=initial_state,
-                n_step=n_step,
-                out_timesteps=out_timesteps,
-                **self._parse_design_kwargs(input=input, out_timesteps=out_timesteps or input.shape[1], **kwargs)
-            )
-        finally:
-            self._enable_cache(False)
+        means, covs, R, H = self.script_module(
+            input=input,
+            initial_state=initial_state,
+            n_step=n_step,
+            out_timesteps=out_timesteps,
+            _disable_cache=_disable_cache,
+            **self._parse_design_kwargs(input=input, out_timesteps=out_timesteps or input.shape[1], **kwargs)
+        )
         return Predictions(state_means=means, state_covs=covs, R=R, H=H, kalman_filter=self)
 
     def simulate(self,
                  out_timesteps: int,
                  initial_state: Optional[Tuple[Tensor, Tensor]] = None,
-                 num_groups: Optional[int] = None,
+                 num_sims: Optional[int] = None,
                  **kwargs):
 
         design_kwargs = self._parse_design_kwargs(input=None, out_timesteps=out_timesteps, **kwargs)
 
         with torch.no_grad():
             if initial_state is None:
-                if num_groups is None:
-                    raise RuntimeError("Must pass initial_state or num_groups")
+                if num_sims is None:
+                    raise RuntimeError("Must pass `initial_state` or `num_sims`")
                 num_measures = len(self.script_module.measures)
                 mean, cov = self.script_module.get_initial_state(
-                    input=torch.zeros((num_groups, num_measures)),
+                    input=torch.zeros((num_sims, num_measures)),
                     init_mean_kwargs=design_kwargs.pop('init_mean_kwargs'),
                     init_cov_kwargs=design_kwargs['static_kwargs'].pop('initial_covariance', {})
                 )
             else:
-                if num_groups is not None:
-                    raise RuntimeError("Cannot pass both num_groups and initial_state")
+                if num_sims is not None:
+                    raise RuntimeError("Cannot pass both `num_sims` and `initial_state`")
                 mean, cov = initial_state
 
             kf_step = self.kf_step()
 
+            cache = {}
             means: List[Tensor] = []
             Hs: List[Tensor] = []
             Rs: List[Tensor] = []
             for t in range(out_timesteps):
                 mean = kf_step.distribution_cls(mean, cov).rsample()
-                F, H, Q, R = self.get_design_mats(
-                    num_groups=num_groups, design_kwargs=self._get_design_kwargs_for_time(t, **design_kwargs)
+                design_kwargs_t = self.script_module._get_design_kwargs_for_time(t, **design_kwargs)
+                F, H, Q, R = self.script_module.get_design_mats(
+                    num_groups=num_sims, design_kwargs=design_kwargs_t, cache=cache
                 )
                 mean, cov = kf_step.predict(mean, .0001 * torch.eye(mean.shape[-1]), F=F, Q=Q)
                 means += [mean]
@@ -186,26 +185,25 @@ class ScriptKalmanFilter(nn.Module):
         self.no_icov_idx = []
         for p in processes:
             self.processes.append(p)
-            if not p.measure:
-                raise RuntimeError(f"Must call `set_measure()` on '{p.id}'")
+            assert p.measure, f"{p.id} does not have its `measure` set"
             self.process_to_slice[p.id] = (self.state_rank, self.state_rank + len(p.state_elements))
 
             for i, se in enumerate(p.state_elements):
-                if se in p.no_pcov_state_elements:
+                if p.no_pcov_state_elements is not None and se in p.no_pcov_state_elements:
                     self.no_pcov_idx.append(self.state_rank + i)
-                if se in p.no_icov_state_elements:
+                if p.no_icov_state_elements is not None and se in p.no_icov_state_elements:
                     self.no_icov_idx.append(self.state_rank + i)
             self.state_rank += len(p.state_elements)
 
         # covariances:
         if process_covariance is None:
-            process_covariance = Covariance(rank=self.state_rank, empty_idx=self.no_pcov_idx)
+            process_covariance = Covariance(id='process', rank=self.state_rank, empty_idx=self.no_pcov_idx)
         self.process_covariance = process_covariance
         if measure_covariance is None:
-            measure_covariance = Covariance(rank=len(self.measures))
+            measure_covariance = Covariance(id='measure', rank=len(self.measures))
         self.measure_covariance = measure_covariance
         if initial_covariance is None:
-            initial_covariance = Covariance(rank=self.state_rank, empty_idx=self.no_icov_idx)
+            initial_covariance = Covariance(id='initial', rank=self.state_rank, empty_idx=self.no_icov_idx)
         self.initial_covariance = initial_covariance
 
     def get_initial_state(self,
@@ -221,14 +219,15 @@ class ScriptKalmanFilter(nn.Module):
             mean[:, _process_slice] = p.get_initial_state_mean(init_mean_kwargs.get(p.id, {}))
 
         # initial cov:
-        cov = self.initial_covariance(init_cov_kwargs)
+        cov = self.initial_covariance(init_cov_kwargs, cache={})
         if len(cov.shape) == 2:
             cov = cov.expand(num_groups, -1, -1)
         return mean, cov
 
     def get_design_mats(self,
                         num_groups: int,
-                        design_kwargs: Dict[str, Dict[str, Tensor]]) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+                        design_kwargs: Dict[str, Dict[str, Tensor]],
+                        cache: Dict[str, Tensor]) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
 
         F = torch.zeros((num_groups, self.state_rank, self.state_rank))
         H = torch.zeros((num_groups, len(self.measures), self.state_rank))
@@ -237,16 +236,16 @@ class ScriptKalmanFilter(nn.Module):
                 this_process_kwargs = design_kwargs[process.id]
             else:
                 this_process_kwargs = {}
-            pH, pF = process(this_process_kwargs)
+            pH, pF = process(this_process_kwargs, cache=cache)
 
             _process_slice = slice(*self.process_to_slice[process.id])
             H[:, self.measure_to_idx[process.measure], _process_slice] = pH
             F[:, _process_slice, _process_slice] = pF
 
-        Q = self.process_covariance(design_kwargs.get('process_covariance', {}))
+        Q = self.process_covariance(design_kwargs.get('process_covariance', {}), cache=cache)
         if len(Q.shape) == 2:
             Q = Q.expand(num_groups, -1, -1)
-        R = self.measure_covariance(design_kwargs.get('measure_covariance', {}))
+        R = self.measure_covariance(design_kwargs.get('measure_covariance', {}), cache=cache)
         if len(R.shape) == 2:
             R = R.expand(num_groups, -1, -1)
 
@@ -259,7 +258,8 @@ class ScriptKalmanFilter(nn.Module):
                 init_mean_kwargs: Dict[str, Dict[str, Tensor]],
                 n_step: int = 1,
                 out_timesteps: Optional[int] = None,
-                initial_state: Optional[Tuple[Tensor, Tensor]] = None) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+                initial_state: Optional[Tuple[Tensor, Tensor]] = None,
+                _disable_cache: bool = False) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
 
         if initial_state is None:
             assert input is not None
@@ -283,6 +283,8 @@ class ScriptKalmanFilter(nn.Module):
                 out_timesteps = len(inputs)
             num_groups = inputs[0].shape[0]
 
+        cache = {}
+
         # build design-mats:
         Fs: List[Tensor] = []
         Hs: List[Tensor] = []
@@ -290,7 +292,9 @@ class ScriptKalmanFilter(nn.Module):
         Rs: List[Tensor] = []
         for t in range(out_timesteps):
             design_kwargs = self._get_design_kwargs_for_time(t, static_kwargs, time_varying_kwargs)
-            F, H, Q, R = self.get_design_mats(num_groups=num_groups, design_kwargs=design_kwargs)
+            if _disable_cache:
+                cache = {}
+            F, H, Q, R = self.get_design_mats(num_groups=num_groups, design_kwargs=design_kwargs, cache=cache)
             Fs += [F]
             Hs += [H]
             Qs += [Q]
@@ -311,6 +315,7 @@ class ScriptKalmanFilter(nn.Module):
                 mean, cov = self.kf_step.predict(mean, cov, F=Fs[tu + h], Q=Qs[tu + h])
             means += [mean]
             covs += [cov]
+
         return torch.stack(means, 1), torch.stack(covs, 1), torch.stack(Rs, 1), torch.stack(Hs, 1)
 
     def _get_design_kwargs_for_time(

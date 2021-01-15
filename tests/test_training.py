@@ -1,12 +1,12 @@
+import time
 import unittest
-from typing import Type
 
 import numpy as np
 import torch
 from parameterized import parameterized
 
 from torch_kalman.kalman_filter import KalmanFilter
-from torch_kalman.process import LocalLevel
+from torch_kalman.process import LocalLevel, LinearModel
 
 
 class TestTraining(unittest.TestCase):
@@ -15,7 +15,7 @@ class TestTraining(unittest.TestCase):
     def test_gaussian_log_prob(self, ndim: int = 1):
         data = torch.zeros((2, 5, ndim))
         kf = KalmanFilter(
-            processes=[LocalLevel(id=f'lm{i}').set_measure(str(i)) for i in range(ndim)],
+            processes=[LocalLevel(id=f'lm{i}', measure=str(i)) for i in range(ndim)],
             measures=[str(i) for i in range(ndim)]
         )
         pred = kf(data)
@@ -34,7 +34,7 @@ class TestTraining(unittest.TestCase):
             mask = torch.randn((num_groups, num_times)) > 1.
         data[mask.nonzero(as_tuple=True)] = float('nan')
         kf = KalmanFilter(
-            processes=[LocalLevel(id=f'lm{i}').set_measure(str(i)) for i in range(ndim)],
+            processes=[LocalLevel(id=f'lm{i}', measure=str(i)) for i in range(ndim)],
             measures=[str(i) for i in range(ndim)]
         )
         pred = kf(data)
@@ -57,99 +57,60 @@ class TestTraining(unittest.TestCase):
                 lp_method2_sum += lp_gt
         self.assertAlmostEqual(lp_method1_sum, lp_method2_sum, places=3)
 
-    def test_training1(self, ndim: int = 2, num_groups: int = 10, num_times: int = 50):
+    def test_training1(self, ndim: int = 2, num_groups: int = 150, num_times: int = 24):
         """
-        simulated data with noise : MSE should get to pre-specified level
+        simulated data with known parameters, fitted loss should approach the loss given known params
         """
-        kf_generator = KalmanFilter(
-            processes=[LocalLevel(id=f'lm{i}').set_measure(str(i)) for i in range(ndim)],
-            measures=[str(i) for i in range(ndim)]
-        )
-        sim = kf_generator.simulate(out_timesteps=num_times, num_groups=num_groups)
-        data = sim.sample()
+        torch.manual_seed(123)
 
-        kf_learner = KalmanFilter(
-            processes=[LocalLevel(id=f'lm{i}').set_measure(str(i)) for i in range(ndim)],
-            measures=[str(i) for i in range(ndim)]
-        )
+        def _make_kf():
+            return KalmanFilter(
+                processes=[
+                              LocalLevel(id=f'll{i}', measure=str(i))
+                              for i in range(ndim)
+                          ] + [
+                              LinearModel(id=f'lm{i}', predictors=['x1', 'x2', 'x3', 'x4', 'x5'], measure=str(i))
+                              for i in range(ndim)
+                          ],
+                measures=[str(i) for i in range(ndim)]
+            )
 
-        optimizer = torch.optim.LBFGS(kf_learner.parameters(), lr=.25)
+        # simulate:
+        X = torch.randn((num_groups, num_times, 5))
+        kf_generator = _make_kf()
+        with torch.no_grad():
+            kf_generator.state_dict()['script_module.process_covariance.cholesky_log_diag'] -= 2.
+            sim = kf_generator.simulate(out_timesteps=num_times, num_sims=num_groups, X=X)
+            y = sim.sample()
+        assert not y.requires_grad
+
+        # train:
+        kf_learner = _make_kf()
+        optimizer = torch.optim.LBFGS(kf_learner.parameters())
+        times = []
 
         def closure():
             optimizer.zero_grad()
-            loss = - kf_learner(data).log_prob(data).mean()
+            _start = time.time()
+            pred = kf_learner(y, X=X)
+            times.append(time.time() - _start)
+            loss = -pred.log_prob(y).mean()
             loss.backward()
+            # print(loss.item())
             return loss
 
-        for i in range(10):
+        print("\nTraining for 5 epochs...")
+        for i in range(5):
             loss = optimizer.step(closure)
-            print(loss.item())
+            print("loss:", loss.item())
+
+        print("time:", np.nanmean(times))
+
+        oracle_loss = -kf_generator(y, X=X).log_prob(y).mean()
+        self.assertAlmostEqual(oracle_loss.item(), loss.item(), places=1)
 
     def test_training2(self, ndim: int = 2, num_groups: int = 10, num_times: int = 50):
         """
         # manually generated data (sin-wave, trend, etc.) with virtually no noise: MSE should be near zero
         """
         pass  # TODO
-
-
-class Foo:
-    config = {
-        'num_groups': 4,
-        'num_timesteps': int(30 * 2.5),
-        'dt_unit': 'D'
-    }
-
-    def _train_kf(self, data: torch.Tensor, num_epochs: int = 8, cls: Type['KalmanFilter'] = KalmanFilter):
-        kf = cls(
-            measures=['y'],
-            processes=[
-                LocalLevel(id='local_level').add_measure('y'),
-                Season(id='day_in_week', seasonal_period=7, dt_unit='D').add_measure('y')
-            ]
-        )
-        kf.opt = LBFGS(kf.parameters())
-
-        start_datetimes = (
-                np.zeros(self.config['num_groups'], dtype='timedelta64') + DEFAULT_START_DT
-        )
-
-        def closure():
-            kf.opt.zero_grad()
-            pred = kf(data, start_datetimes=start_datetimes)
-            loss = -pred.log_prob(data).mean()
-            loss.backward()
-            return loss
-
-        print(f"Will train for {num_epochs} epochs...")
-        loss = float('nan')
-        for i in range(num_epochs):
-            new_loss = kf.opt.step(closure)
-            print(f"EPOCH {i}, LOSS {new_loss.item()}, DELTA {loss - new_loss.item()}")
-            loss = new_loss.item()
-
-        return kf(data, start_datetimes=start_datetimes).predictions
-
-    def test_training_from_sim(self):
-        sim_data = _simulate(**self.config, noise=0.1)
-        predictions = self._train_kf(sim_data)
-        se = (sim_data - predictions) ** 2
-        self.assertLess(se.mean().item(), .4)
-
-    def test_tobit_training(self):
-        class TobitFilter(KalmanFilter):
-            family = CensoredGaussian
-
-        sim_data = _simulate(**self.config, noise=0.1)
-        predictions = self._train_kf(sim_data, cls=TobitFilter, num_epochs=5)
-        se = (sim_data - predictions) ** 2
-        self.assertLess(se.mean().item(), .4)
-
-    def test_training_from_manual_sim(self):
-        sim_data = (
-                torch.cumsum(torch.randn(self.config['num_timesteps']), 0) +
-                torch.sin(torch.arange(1., self.config['num_timesteps'] + 1., 1.) / 10.)
-        )
-        sim_data = sim_data[None, :, None] + torch.randn((self.config['num_groups'], self.config['num_timesteps'], 1))
-        predictions = self._train_kf(sim_data, num_epochs=5)
-        se = (sim_data - predictions) ** 2
-        self.assertLess(se.mean().item(), 5.0)

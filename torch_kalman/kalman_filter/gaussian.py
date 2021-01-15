@@ -27,6 +27,7 @@ class GaussianStep(nn.Module):
 
     def update(self, input: Tensor, mean: Tensor, cov: Tensor, H: Tensor, R: Tensor) -> Tuple[Tensor, Tensor]:
         state_dim = mean.shape[-1]
+
         isnan = torch.isnan(input)
         if isnan.all():
             return mean, cov
@@ -34,7 +35,8 @@ class GaussianStep(nn.Module):
             nandims_by_group = torch.sum(isnan, dim=-1)
             if ((nandims_by_group > 0) & (nandims_by_group < state_dim)).any():
                 raise NotImplementedError  # TODO: partial nans
-            no_nan_idx = (nandims_by_group == 0).nonzero().unbind(1)  # jit doesn't support as_tuple=True
+            no_nan_idx = (nandims_by_group == 0)
+            # assert len(mean.shape)==2; no_nan_idx = no_nan_idx.nonzero()[:,0]
             new_mean = mean.clone()
             new_cov = cov.clone()
             new_mean[no_nan_idx], new_cov[no_nan_idx] = self._update(
