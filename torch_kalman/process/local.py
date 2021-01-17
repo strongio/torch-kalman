@@ -44,14 +44,14 @@ class LocalTrend(Process):
                  measure: Optional[str] = None,
                  decay_velocity: Optional[Tuple[float, float]] = (.95, 1.00),
                  decay_position: Optional[Tuple[float, float]] = None,
-                 velocity_multi: float = 1.0):
+                 velocity_multi: float = 0.1):
         """
         :param id: A unique identifier for this process.
         :param decay_velocity: If set, then the trend will decay to zero as we forecast out further. The default is
         to allow the trend to decay somewhere between .95 (moderate decay) and 1.00 (no decay), with the exact value
          being a learned parameter.
         :param decay_position: See `decay` in `LocalLevel`. Default is no decay.
-        :param velocity_multi: A multiplier on the velocity, so that
+        :param velocity_multi: Default 0.1. A multiplier on the velocity, so that
         `next_position = position + velocity_multi * velocity`. A value of << 1.0 can be helpful since the
         trend has such a large effect on the prediction, so that large values can lead to exploding predictions.
         """

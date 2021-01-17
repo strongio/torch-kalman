@@ -8,9 +8,25 @@ from torch import nn
 import numpy as np
 from torch_kalman.kalman_filter import KalmanFilter
 from torch_kalman.process import LinearModel, LocalLevel, NN
+from torch_kalman.process.season import FourierSeason
 
 
 class TestProcess(TestCase):
+    def test_fourier_season(self):
+        series = torch.sin(2. * 3.1415 * torch.arange(0., 7.) / 7.)
+        data = torch.stack([series.roll(-i).repeat(3) for i in range(6)]).unsqueeze(-1)
+        start_datetimes = np.array([np.datetime64('2019-04-18') + np.timedelta64(i, 'D') for i in range(6)])
+        kf = KalmanFilter(
+            processes=[FourierSeason(id='day_of_week', period=7, dt_unit='D', K=3)],
+            measures=['y']
+        )
+        kf.state_dict()['script_module.processes.0.init_mean'][:] = torch.tensor([1., 0., 0., 0., 0., 0.])
+        kf.state_dict()['script_module.measure_covariance.cholesky_log_diag'] -= 2
+        pred = kf(data, start_datetimes=start_datetimes)
+        pred.means - data
+        for g in range(6):
+            self.assertLess(torch.abs(pred.means[g] - data[g]).mean(), .01)
+
     def test_decay(self):
         data = torch.zeros((2, 5, 1))
         kf = KalmanFilter(processes=[LocalLevel(id='lm', decay=(.95, 1.))], measures=['y'])

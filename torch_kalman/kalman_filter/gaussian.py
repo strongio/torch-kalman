@@ -26,6 +26,7 @@ class GaussianStep(nn.Module):
         return mean, cov
 
     def update(self, input: Tensor, mean: Tensor, cov: Tensor, H: Tensor, R: Tensor) -> Tuple[Tensor, Tensor]:
+        assert len(input.shape) > 1
         state_dim = mean.shape[-1]
 
         isnan = torch.isnan(input)

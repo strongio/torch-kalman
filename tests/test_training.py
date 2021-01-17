@@ -6,7 +6,8 @@ import torch
 from parameterized import parameterized
 
 from torch_kalman.kalman_filter import KalmanFilter
-from torch_kalman.process import LocalLevel, LinearModel
+from torch_kalman.process import LocalLevel, LinearModel, LocalTrend
+from torch_kalman.process.season import FourierSeason
 
 
 class TestTraining(unittest.TestCase):
@@ -119,4 +120,38 @@ class TestTraining(unittest.TestCase):
         """
         # manually generated data (sin-wave, trend, etc.) with virtually no noise: MSE should be near zero
         """
-        pass  # TODO
+        weekly = torch.sin(2. * 3.1415 * torch.arange(0., 7.) / 7.)
+        data = torch.stack([weekly.roll(-i).repeat(3) + torch.linspace(0, 10, 7 * 3) for i in range(6)]).unsqueeze(-1)
+        # data += .01 * torch.randn_like(data)
+        start_datetimes = np.array([np.datetime64('2019-04-14') + np.timedelta64(i, 'D') for i in range(6)])
+        kf = KalmanFilter(
+            processes=[
+                LocalTrend(id='trend'),
+                FourierSeason(id='day_of_week', period=7, dt_unit='D', K=3)
+            ],
+            measures=['y']
+        )
+
+        # train:
+        kf.state_dict()['script_module.measure_covariance.cholesky_log_diag'] -= 2
+        optimizer = torch.optim.LBFGS([p for n, p in kf.named_parameters() if 'measure_covariance' not in n],
+                                      lr=.1,
+                                      max_iter=10)
+
+        def closure():
+            optimizer.zero_grad()
+            _start = time.time()
+            # print(f'[{datetime.datetime.now().time()}] forward...')
+            pred = kf(data, start_datetimes=start_datetimes)
+            loss = -pred.log_prob(data).mean()
+            _start = time.time()
+            loss.backward()
+            return loss
+
+        print("\nTraining for 10 epochs...")
+        for i in range(10):
+            loss = optimizer.step(closure)
+            print("loss:", loss.item())
+
+        means, _ = kf(data, start_datetimes=start_datetimes)
+        self.assertLess(torch.mean((means - data) ** 2), .001)

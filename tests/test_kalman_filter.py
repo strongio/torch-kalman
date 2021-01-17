@@ -60,7 +60,7 @@ class TestKalmanFilter(TestCase):
             measures=['y']
         )
         # runs:
-        self.assertIsInstance(torch_kf(torch.tensor([[[-5., 5., 1.]]])), Predictions)
+        self.assertIsInstance(torch_kf(torch.tensor([[-5., 5., 1.]]).unsqueeze(-1)), Predictions)
 
         # not compile-able:
         not_compilable = Process(id='not_compilable',
@@ -82,7 +82,7 @@ class TestKalmanFilter(TestCase):
             measures=['y'],
             compiled=False
         )
-        self.assertIsInstance(torch_kf(torch.tensor([[[-5., 5., 1.]]])), Predictions)
+        self.assertIsInstance(torch_kf(torch.tensor([[-5., 5., 1.]]).unsqueeze(-1)), Predictions)
 
     @parameterized.expand([(0,), (1,), (2,), (3,)])
     @torch.no_grad()
@@ -92,7 +92,7 @@ class TestKalmanFilter(TestCase):
 
         # make torch kf:
         torch_kf = KalmanFilter(
-            processes=[LocalTrend(id='lt', decay_velocity=None, measure='y')],
+            processes=[LocalTrend(id='lt', decay_velocity=None, measure='y', velocity_multi=1.)],
             measures=['y'],
             compiled=n_step > 0
         )
@@ -273,10 +273,10 @@ class TestKalmanFilter(TestCase):
     def test_current_time(self):
         _state = {}
 
-        def make_season(current_time: torch.Tensor):
-            self.assertEqual(current_time, _state['call_counter'])
+        def make_season(current_timestep: torch.Tensor):
+            self.assertEqual(current_timestep, _state['call_counter'])
             _state['call_counter'] += 1
-            return current_time % 7
+            return current_timestep % 7
 
         class Season(Process):
             def __init__(self, id: str):
@@ -286,8 +286,8 @@ class TestKalmanFilter(TestCase):
                     state_elements=['x'],
                     f_tensors={'x->x': torch.ones(1)}
                 )
-                self.h_kwarg = 'current_time'
-                self.time_varying_kwargs = ['current_time']
+                self.h_kwarg = 'current_timestep'
+                self.time_varying_kwargs = ['current_timestep']
 
         torch_kf = KalmanFilter(
             processes=[Season(id='s1')],
