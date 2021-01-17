@@ -3,6 +3,7 @@ from typing import Tuple, Sequence, List, Dict, Optional, Iterable
 import torch
 
 from torch import nn, Tensor, jit
+from torch_kalman.internals.utils import get_owned_kwarg
 
 
 class Process(nn.Module):
@@ -75,16 +76,17 @@ class Process(nn.Module):
         return self.init_mean
 
     @jit.ignore
-    def get_all_expected_kwargs(self) -> Iterable[str]:
-        out = set()
+    def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, str, Tensor]]:
         if self.expected_init_mean_kwargs:
-            for x in self.expected_init_mean_kwargs:
-                out.add(x)
-        if self.f_kwarg != '':
-            out.add(self.f_kwarg)
-        if self.h_kwarg != '':
-            out.add(self.h_kwarg)
-        return out
+            for key in self.expected_init_mean_kwargs:
+                found_key, value = get_owned_kwarg(self.id, key, kwargs)
+                yield found_key, key, 'init_mean', value
+        for key in [self.f_kwarg, self.h_kwarg]:
+            if key == '':
+                continue
+            found_key, value = get_owned_kwarg(self.id, key, kwargs)
+            key_type = 'time_varying' if key in self.time_varying_kwargs else 'static'
+            yield found_key, key, key_type, value
 
     def forward(self,
                 inputs: Dict[str, Tensor],

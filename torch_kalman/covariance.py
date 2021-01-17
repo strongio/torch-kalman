@@ -1,8 +1,9 @@
-from typing import List, Dict, Iterable, Optional
+from typing import List, Dict, Iterable, Optional, Tuple
 
 import torch
 
 from torch import Tensor, nn, jit
+from torch_kalman.internals.utils import get_owned_kwarg
 
 
 class Covariance(nn.Module):
@@ -31,9 +32,12 @@ class Covariance(nn.Module):
         self.expected_kwargs: Optional[List[str]] = None
         self.time_varying_kwargs: Optional[List[str]] = None
 
-    @jit.unused
-    def get_all_expected_kwargs(self) -> Iterable[str]:
-        return (x for x in self.expected_kwargs or [])
+    @jit.ignore
+    def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, str, Tensor]]:
+        for key in (self.expected_kwargs or []):
+            found_key, value = get_owned_kwarg(self.id, key, kwargs)
+            key_type = 'time_varying' if key in self.time_varying_kwargs else 'static'
+            yield found_key, key, key_type, value
 
     @staticmethod
     def log_chol_to_chol(log_diag: torch.Tensor, off_diag: torch.Tensor) -> torch.Tensor:

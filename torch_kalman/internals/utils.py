@@ -1,8 +1,18 @@
-from typing import Union, Any, Callable, Iterable, Tuple, Sequence, List, Dict
+from typing import Union, Any, Callable, Iterable, Tuple, Sequence
 
 import torch
 
 import numpy as np
+
+
+def get_owned_kwarg(owner: str, key: str, kwargs: dict) -> tuple:
+    specific_key = f"{owner}__{key}"
+    if specific_key in kwargs:
+        return specific_key, kwargs[specific_key]
+    elif key in kwargs:
+        return key, kwargs[key]
+    else:
+        raise TypeError(f"Missing required keyword-arg `{key}` (or `{specific_key}`).")
 
 
 def bifurcate(x: Iterable, lhs: Callable[[Any], bool]) -> Tuple[list, list]:

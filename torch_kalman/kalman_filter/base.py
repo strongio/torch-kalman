@@ -63,21 +63,21 @@ class KalmanFilter(nn.Module):
         time_varying_kwargs = defaultdict(dict)
         init_mean_kwargs = defaultdict(dict)
         unused = set(kwargs)
-        kwargs.update(input=input, current_time=torch.tensor(list(range(out_timesteps))).view(1, -1, 1))
+        kwargs.update(input=input, current_timestep=torch.tensor(list(range(out_timesteps))).view(1, -1, 1))
         for submodule_nm, submodule in list(self.named_processes()) + list(self.named_covariances()):
-            for key in submodule.get_all_expected_kwargs():
-                found_key, value = self._get_design_kwarg(submodule_nm, key, kwargs)
+            for found_key, key_name, key_type, value in submodule.get_kwargs(kwargs):
                 unused.discard(found_key)
-                if key in (getattr(submodule, 'expected_init_mean_kwargs') or []):
-                    init_mean_kwargs[submodule_nm][key] = value
-                if key in (submodule.time_varying_kwargs or []):
-                    if len(value.shape) < 3:
-                        raise RuntimeError(f"{submodule_nm} lists `{found_key}` as time-varying, but input has ndim <3")
-                    time_varying_kwargs[submodule_nm][key] = value.unbind(1)
+                if key_type == 'init_mean':
+                    init_mean_kwargs[submodule_nm][key_name] = value
+                elif key_type == 'time_varying':
+                    time_varying_kwargs[submodule_nm][key_name] = value.unbind(1)
+                elif key_type == 'static':
+                    static_kwargs[submodule_nm][key_name] = value
                 else:
-                    if len(value.shape) >= 3:
-                        raise RuntimeError(f"{submodule_nm} lists `{found_key}` as static, but input has ndim >=3")
-                    static_kwargs[submodule_nm][key] = value
+                    raise RuntimeError(
+                        f"'{submodule_nm}' gave unknown key_type {key_type}; expected 'init_mean', 'time_varying', "
+                        f"or 'static'"
+                    )
 
         if unused:
             warn(f"There are unused keyword arguments:\n{unused}")
@@ -86,16 +86,6 @@ class KalmanFilter(nn.Module):
             'time_varying_kwargs': dict(time_varying_kwargs),
             'init_mean_kwargs': dict(init_mean_kwargs)
         }
-
-    @staticmethod
-    def _get_design_kwarg(owner: str, key: str, kwargs: dict) -> Tuple[str, Tensor]:
-        specific_key = f"{owner}__{key}"
-        if specific_key in kwargs:
-            return specific_key, kwargs[specific_key]
-        elif key in kwargs:
-            return key, kwargs[key]
-        else:
-            raise TypeError(f"Missing required keyword-arg `{key}` (or `{specific_key}`).")
 
     def forward(self,
                 input: Optional[Tensor],
@@ -308,6 +298,10 @@ class ScriptKalmanFilter(nn.Module):
                 raise RuntimeError("If `input` is None must pass `out_timesteps`")
             num_groups = mean1step.shape[0]
         else:
+            if len(input.shape) != 3:
+                raise ValueError(f"Expected len(input.shape) == 3 (group,time,measure)")
+            if input.shape[-1] != len(self.measures):
+                raise ValueError(f"Expected input.shape[-1] == {len(self.measures)} (len(self.measures))")
             inputs = input.unbind(1)
             if out_timesteps is None:
                 out_timesteps = len(inputs)
