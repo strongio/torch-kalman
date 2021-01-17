@@ -9,6 +9,7 @@ import torch
 from parameterized import parameterized
 
 from torch import nn
+from torch_kalman.internals.utils import get_nan_groups
 
 from torch_kalman.kalman_filter import KalmanFilter
 
@@ -23,23 +24,52 @@ from torch_kalman.process.utils import SingleOutput
 class TestKalmanFilter(TestCase):
     @parameterized.expand(itertools.product([1, 2, 3], [1, 2, 3]))
     @torch.no_grad()
-    def test_nans(self, ndim: int = 1, n_step: int = 1):
+    def test_nans(self, ndim: int = 3, n_step: int = 1):
         ntimes = 4 + n_step
-        data = torch.ones((3, ntimes, ndim)) * 10
-        data[0, 2, 0] = float('nan')
+        data = torch.ones((5, ntimes, ndim)) * 10
+        data[0, 2, 0:(ndim - 1)] = float('nan')
+        data[2, 2, 0] = float('nan')
+
+        # test critical helper fun:
+        get_nan_groups2 = torch.jit.script(get_nan_groups)
+        nan_groups = {2}
+        if ndim > 1:
+            nan_groups.add(0)
+        for t in range(ntimes):
+            for group_idx, valid_idx in get_nan_groups2(torch.isnan(data[:, t])):
+                if t == 2:
+                    if valid_idx is None:
+                        self.assertEqual(len(group_idx), data.shape[0] - len(nan_groups))
+                        self.assertFalse(bool(set(group_idx.tolist()).intersection(nan_groups)))
+                    else:
+                        self.assertLess(len(valid_idx), ndim)
+                        self.assertGreater(len(valid_idx), 0)
+                        if len(valid_idx) == 1:
+                            if ndim == 2:
+                                self.assertSetEqual(set(valid_idx.tolist()), {1})
+                                self.assertSetEqual(set(group_idx.tolist()), nan_groups)
+                            else:
+                                self.assertSetEqual(set(valid_idx.tolist()), {ndim - 1})
+                                self.assertSetEqual(set(group_idx.tolist()), {0})
+                        else:
+                            self.assertSetEqual(set(valid_idx.tolist()), {1, 2})
+                            self.assertSetEqual(set(group_idx.tolist()), {2})
+                else:
+                    self.assertIsNone(valid_idx)
+
+        # test `update`
+        # TODO: measure dim vs. state-dim
+
+        # test integration:
         kf = KalmanFilter(
             processes=[LocalLevel(id=f'lm{i}', measure=str(i)) for i in range(ndim)],
-            measures=[str(i) for i in range(ndim)]
+            measures=[str(i) for i in range(ndim)],
+            compiled=True
         )
-        if ndim == 1:
-            obs_means, obs_covs = kf(data, n_step=n_step)
-            self.assertFalse(torch.isnan(obs_means).any())
-            self.assertFalse(torch.isnan(obs_covs).any())
-            self.assertEqual(tuple(obs_means.shape), (3, ntimes, ndim))
-        else:
-            pass  # TODO
-            # with self.assertRaises(NotImplementedError, msg=(ndim, n_step)):
-            #     obs_means, obs_covs = kf(data, n_step=n_step)
+        obs_means, obs_covs = kf(data, n_step=n_step)
+        self.assertFalse(torch.isnan(obs_means).any())
+        self.assertFalse(torch.isnan(obs_covs).any())
+        self.assertEqual(tuple(obs_means.shape), (5, ntimes, ndim))
 
     @torch.no_grad()
     def test_jit(self):
@@ -338,17 +368,3 @@ class TestKalmanFilter(TestCase):
         self.assertTupleEqual(tuple(pred_time3.covs.shape), (2, 1, ndim, ndim))
         self.assertTrue((pred_time3.state_means == pred.state_means[:, 2, :]).all())
         self.assertTrue((pred_time3.state_covs == pred.state_covs[:, 2, :, :]).all())
-
-        pred_last_dim = pred[..., [-1]]
-        self.assertTupleEqual(tuple(pred_last_dim.covs.shape), (2, 5, 1, 1))
-        self.assertTrue((pred_last_dim.state_means == pred.state_means[:, :, [ndim - 1]]).all())
-        self.assertTrue(
-            (pred_last_dim.state_covs == pred.state_covs[:, :, ndim - 1, ndim - 1].unsqueeze(-1).unsqueeze(-1)).all()
-        )
-
-        pred_last_dim = pred[:, :, [-1]]
-        self.assertTupleEqual(tuple(pred_last_dim.covs.shape), (2, 5, 1, 1))
-        self.assertTrue((pred_last_dim.state_means == pred.state_means[:, :, [ndim - 1]]).all())
-        self.assertTrue(
-            (pred_last_dim.state_covs == pred.state_covs[:, :, ndim - 1, ndim - 1].unsqueeze(-1).unsqueeze(-1)).all()
-        )

@@ -6,6 +6,7 @@ import torch
 from torch import nn, Tensor
 
 import numpy as np
+from torch_kalman.internals.utils import get_nan_groups
 
 from torch_kalman.utils.data import TimeSeriesDataset
 
@@ -82,41 +83,36 @@ class Predictions(nn.Module):
         }
         cls = type(self)
         for k, v in kwargs.items():
-            if k == 'state_means':
-                if len(v.shape) != 3:
-                    raise TypeError(
-                        f"Indexing/slicing into a `{cls.__name__}` object should be done in a way that preserves its "
-                        f"3/4D shape; but `means` got shape `{v.shape}`."
-                    )
-            elif v.shape[-1] != v.shape[-2]:
-                # handle symmetry
-                if isinstance(item, tuple):
-                    if item[0] is Ellipsis and len(item) == 2:
-                        # `(..., idx)`, so missed 3rd dim
-                        kwargs[k] = v[..., item[1], :]
-                        continue
-                    elif len(item) == 3:
-                        # `(g, t, idx)` is implicitly `(g, t, idx, :)`, so missed 4th dim
-                        kwargs[k] = v[..., item[2]]
-                        continue
-                raise TypeError(
-                    f"Indexing/slicing into a `{cls.__name__}` object resulted in symetrical matrix `{k}` "
-                    f"having shape {v.shape}. Try `predictions[...,idx]`."
-                )
+            expected_shape = getattr(self, k).shape
+            if len(v.shape) != len(expected_shape):
+                raise TypeError(f"Expected {k} to have shape {expected_shape} but got {v.shape}.")
+            if v.shape[-1] != expected_shape[-1]:
+                raise TypeError(f"Cannot index into non-batch dims of {cls.__name__}")
+            if k == 'H' and v.shape[-2] != self.H.shape[-2]:
+                raise TypeError(f"Cannot index into non-batch dims of {cls.__name__}")
         kwargs['kalman_filter'] = self.kalman_filter
         return cls(**kwargs)
+
+    @classmethod
+    def observe(cls, state_means: Tensor, state_covs: Tensor, R: Tensor, H: Tensor) -> Tuple[Tensor, Tensor]:
+        means = H.matmul(state_means.unsqueeze(-1)).squeeze(-1)
+        pargs = list(range(len(H.shape)))
+        pargs[-2:] = reversed(pargs[-2:])
+        Ht = H.permute(*pargs)
+        assert R.shape[-1] == R.shape[-2], f"R is not symmetrical (shape is {R.shape})"
+        covs = H.matmul(state_covs).matmul(Ht) + R
+        return means, covs
 
     @property
     def means(self) -> Tensor:
         if self._means is None:
-            self._means = self.H.matmul(self.state_means.unsqueeze(-1)).squeeze(-1)
+            self._means, self._covs = self.observe(self.state_means, self.state_covs, self.R, self.H)
         return self._means
 
     @property
     def covs(self) -> Tensor:
         if self._covs is None:
-            Ht = self.H.permute(0, 1, 3, 2)
-            self._covs = self.H.matmul(self.state_covs).matmul(Ht) + self.R
+            self._means, self._covs = self.observe(self.state_means, self.state_covs, self.R, self.H)
             if (self._covs.diagonal(dim1=-2, dim2=-1) < 0).any():
                 warn(
                     f"Negative variance. This can be caused by "
@@ -137,25 +133,39 @@ class Predictions(nn.Module):
         """
         assert len(obs.shape) == 3
         assert obs.shape[-1] == self.means.shape[-1]
-        ndim = obs.shape[-1]
+        n_measure_dim = obs.shape[-1]
+        n_state_dim = self.state_means.shape[-1]
 
-        obs_flat = obs.view(-1, ndim)
-        means_flat = self.means.view(-1, ndim)
-        covs_flat = self.covs.view(-1, ndim, ndim)
+        obs_flat = obs.view(-1, n_measure_dim)
+        state_means_flat = self.state_means.view(-1, n_state_dim)
+        state_covs_flat = self.state_covs.view(-1, n_state_dim, n_state_dim)
+        H_flat = self.H.view(-1, n_measure_dim, n_state_dim)
+        R_flat = self.R.view(-1, n_measure_dim, n_measure_dim)
+        means_flat = self.means.view(-1, n_measure_dim)
+        covs_flat = self.covs.view(-1, n_measure_dim, n_measure_dim)
 
         lp_flat = torch.zeros(obs_flat.shape[0])
-        numnan_flat = torch.isnan(obs_flat).sum(-1)
-        if not set(numnan_flat.unique().tolist()).issubset({0, ndim}):
-            raise NotImplementedError
-
-        is_valid = (numnan_flat == 0)
-        if is_valid.any():
-            is_valid = is_valid.nonzero(as_tuple=True)
-            lp_flat[is_valid] = self.kalman_filter.kf_step.log_prob(
-                obs_flat[is_valid],
-                means_flat[is_valid],
-                covs_flat[is_valid]
+        for gt_idx, valid_idx in get_nan_groups(torch.isnan(obs_flat)):
+            if valid_idx is None:
+                gt_obs = obs_flat[gt_idx]
+                gt_means_flat = means_flat[gt_idx]
+                gt_covs_flat = covs_flat[gt_idx]
+            else:
+                mask1d = torch.meshgrid(gt_idx, valid_idx)
+                mask2d = torch.meshgrid(gt_idx, valid_idx, valid_idx)
+                gt_means_flat, gt_covs_flat = self.observe(
+                    state_means=state_means_flat[gt_idx],
+                    state_covs=state_covs_flat[gt_idx],
+                    R=R_flat[mask2d],
+                    H=H_flat[mask1d]
+                )
+                gt_obs = obs_flat[mask1d]
+            lp_flat[gt_idx] = self.kalman_filter.kf_step.log_prob(
+                obs=gt_obs,
+                obs_mean=gt_means_flat,
+                obs_cov=gt_covs_flat
             )
+
         return lp_flat.view(obs.shape[0:2])
 
     # Exporting to other Formats ---------:

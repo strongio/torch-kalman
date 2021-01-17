@@ -1,8 +1,9 @@
-from typing import Tuple
+from typing import Tuple, List, Dict, Optional
 
 import torch
 from torch import nn, Tensor
 from torch.distributions.multivariate_normal import _batch_mahalanobis
+from torch_kalman.internals.utils import get_nan_groups
 
 
 class GaussianStep(nn.Module):
@@ -27,22 +28,31 @@ class GaussianStep(nn.Module):
 
     def update(self, input: Tensor, mean: Tensor, cov: Tensor, H: Tensor, R: Tensor) -> Tuple[Tensor, Tensor]:
         assert len(input.shape) > 1
-        state_dim = mean.shape[-1]
+        if len(input.shape) != 2:
+            raise NotImplementedError
 
         isnan = torch.isnan(input)
         if isnan.all():
             return mean, cov
         if isnan.any():
-            nandims_by_group = torch.sum(isnan, dim=-1)
-            if ((nandims_by_group > 0) & (nandims_by_group < state_dim)).any():
-                raise NotImplementedError  # TODO: partial nans
-            no_nan_idx = (nandims_by_group == 0)
-            # assert len(mean.shape)==2; no_nan_idx = no_nan_idx.nonzero()[:,0]
             new_mean = mean.clone()
             new_cov = cov.clone()
-            new_mean[no_nan_idx], new_cov[no_nan_idx] = self._update(
-                input=input[no_nan_idx], mean=mean[no_nan_idx], cov=cov[no_nan_idx], H=H[no_nan_idx], R=R[no_nan_idx]
-            )
+            for groups, val_idx in get_nan_groups(isnan):
+                if val_idx is None:
+                    new_mean[groups], new_cov[groups] = self._update(
+                        input=input[groups], mean=mean[groups], cov=cov[groups], H=H[groups], R=R[groups]
+                    )
+                else:
+                    # masks:
+                    m1d = torch.meshgrid(groups, val_idx)
+                    m2d = torch.meshgrid(groups, val_idx, val_idx)
+                    new_mean[groups], new_cov[groups] = self._update(
+                        input=input[m1d[0], m1d[1]],
+                        mean=mean[groups],
+                        cov=cov[groups],
+                        H=H[m1d[0], m1d[1]],
+                        R=R[m2d[0], m2d[1], m2d[2]]
+                    )
             return new_mean, new_cov
         else:
             return self._update(input=input, mean=mean, cov=cov, H=H, R=R)

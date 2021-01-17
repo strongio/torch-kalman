@@ -1,8 +1,30 @@
-from typing import Union, Any, Callable, Iterable, Tuple, Sequence
+from typing import Union, Any, Callable, Iterable, Tuple, Sequence, List, Optional
 
 import torch
 
 import numpy as np
+
+
+def get_nan_groups(isnan: torch.Tensor) -> List[Tuple[torch.Tensor, Optional[torch.Tensor]]]:
+    """
+    Iterable of (group_idx, valid_idx) tuples that can be passed to torch.meshgrid. If no valid, then not returned; if
+    all valid then (group_idx, None) is returned; can skip call to meshgrid.
+    """
+    assert len(isnan.shape) == 2
+    state_dim = isnan.shape[-1]
+    out: List[Tuple[torch.Tensor, Optional[torch.Tensor]]] = []
+    for nan_combo in torch.unique(isnan, dim=0):
+        num_nan = nan_combo.sum()
+        if num_nan < state_dim:
+            c1 = (isnan * nan_combo[None, :]).sum(1) == num_nan
+            c2 = (~isnan * ~nan_combo[None, :]).sum(1) == (state_dim - num_nan)
+            group_idx = (c1 & c2).nonzero().view(-1)
+            if num_nan == 0:
+                valid_idx = None
+            else:
+                valid_idx = (~nan_combo).nonzero().view(-1)
+            out.append((group_idx, valid_idx))
+    return out
 
 
 def get_owned_kwarg(owner: str, key: str, kwargs: dict) -> tuple:

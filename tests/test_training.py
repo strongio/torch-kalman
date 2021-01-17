@@ -30,12 +30,12 @@ class TestTraining(unittest.TestCase):
     @torch.no_grad()
     def test_log_prob_with_missings(self, ndim: int = 1, num_groups: int = 1, num_times: int = 5):
         data = torch.randn((num_groups, num_times, ndim))
-        mask = torch.randn((num_groups, num_times)) > 1.
+        mask = torch.randn_like(data) > 1.
         while mask.all() or not mask.any():
-            mask = torch.randn((num_groups, num_times)) > 1.
+            mask = torch.randn_like(data) > 1.
         data[mask.nonzero(as_tuple=True)] = float('nan')
         kf = KalmanFilter(
-            processes=[LocalLevel(id=f'lm{i}', measure=str(i)) for i in range(ndim)],
+            processes=[LocalTrend(id=f'lm{i}', measure=str(i)) for i in range(ndim)],
             measures=[str(i) for i in range(ndim)]
         )
         pred = kf(data)
@@ -52,8 +52,16 @@ class TestTraining(unittest.TestCase):
                 isvalid_gt = ~torch.isnan(data_gt).squeeze(0).squeeze(0)
                 if not isvalid_gt.any():
                     continue
-                isvalid_gt = isvalid_gt.nonzero(as_tuple=False).squeeze(-1)
-                lp_gt = kf.kf_step.log_prob(data_gt[..., isvalid_gt], *pred_gt[..., isvalid_gt]).item()
+                if isvalid_gt.all():
+                    lp_gt = kf.kf_step.log_prob(data_gt, *pred_gt).item()
+                else:
+                    pred_gtm = pred_gt.observe(
+                        state_means=pred_gt.state_means,
+                        state_covs=pred_gt.state_covs,
+                        R=pred_gt.R[..., isvalid_gt, :][..., isvalid_gt],
+                        H=pred_gt.H[..., isvalid_gt, :]
+                    )
+                    lp_gt = kf.kf_step.log_prob(data_gt[..., isvalid_gt], *pred_gtm).item()
                 self.assertAlmostEqual(lp_method1[g, t].item(), lp_gt, places=4)
                 lp_method2_sum += lp_gt
         self.assertAlmostEqual(lp_method1_sum, lp_method2_sum, places=3)
@@ -63,6 +71,8 @@ class TestTraining(unittest.TestCase):
         simulated data with known parameters, fitted loss should approach the loss given known params
         """
         torch.manual_seed(123)
+
+        # TODO: include nans
 
         def _make_kf():
             return KalmanFilter(
@@ -116,14 +126,15 @@ class TestTraining(unittest.TestCase):
         oracle_loss = -kf_generator(y, X=X).log_prob(y).mean()
         self.assertAlmostEqual(oracle_loss.item(), loss.item(), places=1)
 
-    def test_training2(self, ndim: int = 2, num_groups: int = 10, num_times: int = 50):
+    def test_training2(self, num_groups: int = 50):
         """
         # manually generated data (sin-wave, trend, etc.) with virtually no noise: MSE should be near zero
         """
         weekly = torch.sin(2. * 3.1415 * torch.arange(0., 7.) / 7.)
-        data = torch.stack([weekly.roll(-i).repeat(3) + torch.linspace(0, 10, 7 * 3) for i in range(6)]).unsqueeze(-1)
-        # data += .01 * torch.randn_like(data)
-        start_datetimes = np.array([np.datetime64('2019-04-14') + np.timedelta64(i, 'D') for i in range(6)])
+        data = torch.stack([
+            weekly.roll(-i).repeat(3) + torch.linspace(0, 10, 7 * 3) for i in range(num_groups)
+        ]).unsqueeze(-1)
+        start_datetimes = np.array([np.datetime64('2019-04-14') + np.timedelta64(i, 'D') for i in range(num_groups)])
         kf = KalmanFilter(
             processes=[
                 LocalTrend(id='trend'),
@@ -135,7 +146,7 @@ class TestTraining(unittest.TestCase):
         # train:
         kf.state_dict()['script_module.measure_covariance.cholesky_log_diag'] -= 2
         optimizer = torch.optim.LBFGS([p for n, p in kf.named_parameters() if 'measure_covariance' not in n],
-                                      lr=.1,
+                                      lr=.25,
                                       max_iter=10)
 
         def closure():
@@ -153,5 +164,8 @@ class TestTraining(unittest.TestCase):
             loss = optimizer.step(closure)
             print("loss:", loss.item())
 
-        means, _ = kf(data, start_datetimes=start_datetimes)
-        self.assertLess(torch.mean((means - data) ** 2), .001)
+        pred = kf(data, start_datetimes=start_datetimes)
+        # MSE should be virtually zero
+        self.assertLess(torch.mean((pred.means - data) ** 2), .01)
+        # trend should be identified:
+        self.assertAlmostEqual(pred.state_means[:, :, 1].mean().item(), 5., places=1)
