@@ -340,7 +340,8 @@ class ScriptKalmanFilter(nn.Module):
             # tu: the time of the update
             tu = ts - n_step
             if tu >= 0:
-                mean1step, cov1step = self.kf_step.update(inputs[tu], mean1step, cov1step, H=Hs[tu], R=Rs[tu])
+                if tu < len(inputs):  # TODO: add unit-test
+                    mean1step, cov1step = self.kf_step.update(inputs[tu], mean1step, cov1step, H=Hs[tu], R=Rs[tu])
                 mean1step, cov1step = self.kf_step.predict(mean1step, cov1step, F=Fs[tu], Q=Qs[tu])
             mean, cov = mean1step, cov1step
             for h in range(1, n_step):
