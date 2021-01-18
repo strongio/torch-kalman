@@ -134,7 +134,7 @@ class KalmanFilter(nn.Module):
                     input=torch.zeros((num_sims, num_measures)),
                     init_mean_kwargs=design_kwargs.pop('init_mean_kwargs'),
                     init_cov_kwargs=design_kwargs['static_kwargs'].pop('initial_covariance', {}),
-                    R=None  # TODO
+                    measure_cov=None  # TODO
                 )
             else:
                 if num_sims is not None:
@@ -217,8 +217,10 @@ class ScriptKalmanFilter(nn.Module):
                           input: Tensor,
                           init_mean_kwargs: Dict[str, Dict[str, Tensor]],
                           init_cov_kwargs: Dict[str, Tensor],
-                          R: Tensor) -> Tuple[Tensor, Tensor]:
+                          measure_cov: Tensor) -> Tuple[Tensor, Tensor]:
         num_groups = input.shape[0]
+
+        measure_scaling = self._get_measure_scaling(measure_cov)
 
         # initial state mean:
         mean = torch.zeros(num_groups, self.state_rank)
@@ -226,11 +228,14 @@ class ScriptKalmanFilter(nn.Module):
             _process_slice = slice(*self.process_to_slice[p.id])
             mean[:, _process_slice] = p.get_initial_state_mean(init_mean_kwargs.get(p.id, {}))
 
+        mean = mean * measure_scaling
+
         # initial cov:
         cov = self.initial_covariance(init_cov_kwargs, cache={})
         if len(cov.shape) == 2:
             cov = cov.expand(num_groups, -1, -1)
-        cov = self._scale_by_measure_var(cov, R)
+        diag_multi = torch.diag_embed(measure_scaling)
+        cov = diag_multi @ cov @ diag_multi
         return mean, cov
 
     def get_design_mats(self,
@@ -280,20 +285,19 @@ class ScriptKalmanFilter(nn.Module):
         Q = self.process_covariance(design_kwargs.get('process_covariance', {}), cache=cache)
         if len(Q.shape) == 2:
             Q = Q.expand(num_groups, -1, -1)
-        Q = self._scale_by_measure_var(Q, R)
-        # TODO: also do this for init var
+        diag_multi = torch.diag_embed(self._get_measure_scaling(R))
+        Q = diag_multi @ Q @ diag_multi
 
         return F, H, Q, R
 
-    def _scale_by_measure_var(self, cov: Tensor, R: Tensor) -> Tensor:
-        Rdiag = R.diagonal(dim1=-2, dim2=-1)
-        diag_multi = torch.zeros(cov.shape[0:2])
+    def _get_measure_scaling(self, measure_cov: Tensor) -> Tensor:
+        Rdiag = measure_cov.diagonal(dim1=-2, dim2=-1)
+        multi = torch.zeros(measure_cov.shape[0:-2] + (self.state_rank,))
         for process in self.processes:
             pidx = self.process_to_slice[process.id]
-            diag_multi[:, slice(*pidx)] = Rdiag[:, self.measure_to_idx[process.measure]].sqrt().unsqueeze(-1)
-        assert (diag_multi > 0).all()
-        diag_multi = torch.diag_embed(diag_multi)
-        return diag_multi @ cov @ diag_multi
+            multi[:, slice(*pidx)] = Rdiag[:, self.measure_to_idx[process.measure]].sqrt().unsqueeze(-1)
+        assert (multi > 0).all()
+        return multi
 
     def forward(self,
                 input: Optional[Tensor],
@@ -332,7 +336,7 @@ class ScriptKalmanFilter(nn.Module):
                     input=input,
                     init_mean_kwargs=init_mean_kwargs,
                     init_cov_kwargs=init_cov_kwargs,
-                    R=R
+                    measure_cov=R
                 )
 
         mean1step, cov1step = initial_state

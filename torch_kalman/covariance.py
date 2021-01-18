@@ -27,8 +27,6 @@ class Covariance(nn.Module):
         else:
             raise NotImplementedError(method)
 
-        #
-
         self.expected_kwargs: Optional[List[str]] = None
         self.time_varying_kwargs: Optional[List[str]] = None
 
@@ -77,8 +75,11 @@ class Covariance(nn.Module):
     def _get_padded_cov(self, inputs: Dict[str, Tensor]) -> Tensor:
         if self.method == 'log_cholesky':
             L = self.log_chol_to_chol(self.cholesky_log_diag, self.cholesky_off_diag)
+            mini_cov = L @ L.t()
+            if torch.isclose(mini_cov.diagonal(dim1=-2, dim2=-1), torch.zeros(1)).any():
+                raise RuntimeError(f"`{self}` has zero-variance for some elements. decrease the learning rate?")
             # TODO: predicting diagonal multis. ideally cache the base matrix and only recompute multis?
-            return pad_covariance(L @ L.t(), [int(i not in self.empty_idx) for i in range(self.rank)])
+            return pad_covariance(mini_cov, [int(i not in self.empty_idx) for i in range(self.rank)])
         else:
             raise NotImplementedError
 

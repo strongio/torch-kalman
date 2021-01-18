@@ -136,7 +136,7 @@ kf_first = KalmanFilter(measures=measures_pp, processes=processes)
 # When we call our KalmanFilter, we get predictions (a `StateBeliefOverTime`) which come with a mean and covariance, and so can be evaluated against the actual data using a (negative) log-probability critierion.
 
 # +
-kf_first.opt = LBFGS(kf_first.parameters(), lr=.25, max_iter=10, line_search_fn='strong_wolfe')
+kf_first.opt = LBFGS(kf_first.parameters(), max_iter=10, line_search_fn='strong_wolfe')
 
 def closure():
     kf_first.opt.zero_grad()
@@ -157,12 +157,11 @@ for epoch in range(25):
         )
         val_loss = -pred.log_prob(dataset_val.tensors[0]).mean().item()
     print(f"EPOCH {epoch}, TRAIN LOSS {train_loss}, VAL LOSS {val_loss}")
+
+
 # -
 
 # #### Visualize the Results
-
-dataset_all.tensors[0].shape
-
 
 # +
 def inverse_transform(df: pd.DataFrame, col_means: pd.Series) -> pd.DataFrame:
@@ -225,7 +224,7 @@ kf_pred = KalmanFilter(
     ]
 )
 
-kf_pred.opt = LBFGS(kf_pred.parameters(), lr=.20, max_iter=10)
+kf_pred.opt = LBFGS(kf_pred.parameters(), max_iter=10, line_search_fn='strong_wolfe')
 
 def closure():
     kf_pred.opt.zero_grad()

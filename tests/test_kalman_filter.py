@@ -139,7 +139,7 @@ class TestKalmanFilter(TestCase):
 
         # make filterpy kf:
         filter_kf = filterpy_KalmanFilter(dim_x=2, dim_z=1)
-        filter_kf.x, filter_kf.P = torch_kf.script_module.get_initial_state(data, init_mean_kwargs, {}, R=R)
+        filter_kf.x, filter_kf.P = torch_kf.script_module.get_initial_state(data, init_mean_kwargs, {}, measure_cov=R)
         filter_kf.x = filter_kf.x.detach().numpy().T
         filter_kf.P = filter_kf.P.detach().numpy().squeeze(0)
         filter_kf.Q = Q.numpy().squeeze(0)
