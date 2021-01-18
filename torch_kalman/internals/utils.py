@@ -37,24 +37,6 @@ def get_owned_kwarg(owner: str, key: str, kwargs: dict) -> tuple:
         raise TypeError(f"Missing required keyword-arg `{key}` (or `{specific_key}`).")
 
 
-def bifurcate(x: Iterable, lhs: Callable[[Any], bool]) -> Tuple[list, list]:
-    """
-    Split an iterable into two lists depending on a condition.
-
-    :param x: An iterable.
-    :param lhs: A function that takes an element of x; when this returns True, the element is added to the left output,
-      when this returns False, the element is added to the right output.
-    :return: Two lists.
-    """
-    l, r = [], []
-    for el in x:
-        if lhs(el):
-            l.append(el)
-        else:
-            r.append(el)
-    return l, r
-
-
 def zpad(x: Any, n: int) -> str:
     return str(x).rjust(n, "0")
 

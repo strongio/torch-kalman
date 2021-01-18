@@ -209,10 +209,10 @@ class Predictions(nn.Module):
                 "Expected `batch` to be a TimeSeriesDataset, or a dictionary with 'start_times' and 'group_names'."
             )
 
-        dt_helper = None  # TODO
-
         def _tensor_to_df(tens, measures):
-            times = dt_helper.make_grid(batch_info['start_times'], tens.shape[1])
+            offsets = np.arange(0, tens.shape[1]) * (batch_info['dt_unit'] if batch_info['dt_unit'] else 1)
+            times = batch_info['start_times'][:, None] + offsets
+
             return TimeSeriesDataset.tensor_to_dataframe(
                 tensor=tens,
                 times=times,
@@ -275,24 +275,21 @@ class Predictions(nn.Module):
 
         return concat(out, sort=True)
 
+    @torch.no_grad()
     def _components(self) -> Dict[Tuple[str, str, str], Tuple[Tensor, Tensor]]:
-        raise NotImplementedError
-        states_per_measure = defaultdict(list)
-        for state_belief in self.state_beliefs:
-            for m, measure in enumerate(self.kalman_filter.measures):
-                H = state_belief.H[:, m, :].data
-                m = H * state_belief.means.data
-                std = H * torch.diagonal(state_belief.covs.data, dim1=-2, dim2=-1).sqrt()
-                states_per_measure[measure].append((m, std))
-
         out = {}
-        for measure, means_and_stds in states_per_measure.items():
-            means, stds = zip(*means_and_stds)
-            means = torch.stack(means).permute(1, 0, 2)
-            stds = torch.stack(stds).permute(1, 0, 2)
-            for s, (process_name, state_element) in enumerate(self.design.state_elements):
-                if ~torch.isclose(means[:, :, s].abs().max(), torch.zeros(1)):
-                    out[(measure, process_name, state_element)] = (means[:, :, s], stds[:, :, s])
+        for midx, measure in enumerate(self.kalman_filter.measures):
+            H = self.H[..., midx, :]
+            means = H * self.state_means
+            stds = H * torch.diagonal(self.state_covs, dim1=-2, dim2=-1).sqrt()
+
+            se_idx = 0
+            for process_name, process in self.kalman_filter.named_processes():
+                for state_element in process.state_elements:
+                    if not torch.isclose(means[:, :, se_idx], torch.zeros(1)).all():
+                        out[(measure, process_name, state_element)] = (means[:, :, se_idx], stds[:, :, se_idx])
+                    se_idx += 1
+
         return out
 
     @staticmethod

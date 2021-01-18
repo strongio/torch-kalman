@@ -133,7 +133,8 @@ class KalmanFilter(nn.Module):
                 mean, cov = self.script_module.get_initial_state(
                     input=torch.zeros((num_sims, num_measures)),
                     init_mean_kwargs=design_kwargs.pop('init_mean_kwargs'),
-                    init_cov_kwargs=design_kwargs['static_kwargs'].pop('initial_covariance', {})
+                    init_cov_kwargs=design_kwargs['static_kwargs'].pop('initial_covariance', {}),
+                    R=None  # TODO
                 )
             else:
                 if num_sims is not None:
@@ -215,7 +216,8 @@ class ScriptKalmanFilter(nn.Module):
     def get_initial_state(self,
                           input: Tensor,
                           init_mean_kwargs: Dict[str, Dict[str, Tensor]],
-                          init_cov_kwargs: Dict[str, Tensor]) -> Tuple[Tensor, Tensor]:
+                          init_cov_kwargs: Dict[str, Tensor],
+                          R: Tensor) -> Tuple[Tensor, Tensor]:
         num_groups = input.shape[0]
 
         # initial state mean:
@@ -228,12 +230,15 @@ class ScriptKalmanFilter(nn.Module):
         cov = self.initial_covariance(init_cov_kwargs, cache={})
         if len(cov.shape) == 2:
             cov = cov.expand(num_groups, -1, -1)
+        cov = self._scale_by_measure_var(cov, R)
         return mean, cov
 
     def get_design_mats(self,
                         num_groups: int,
                         design_kwargs: Dict[str, Dict[str, Tensor]],
-                        cache: Dict[str, Tensor]) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+                        cache: Optional[Dict[str, Tensor]] = None) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+        if cache is None:
+            cache = {}
         _empty = ['_']
         if 'base_F' not in cache:
             cache['base_F'] = torch.zeros((num_groups, self.state_rank, self.state_rank))
@@ -272,12 +277,23 @@ class ScriptKalmanFilter(nn.Module):
         if len(R.shape) == 2:
             R = R.expand(num_groups, -1, -1)
 
-        # TODO: scale by measure cov?
         Q = self.process_covariance(design_kwargs.get('process_covariance', {}), cache=cache)
         if len(Q.shape) == 2:
             Q = Q.expand(num_groups, -1, -1)
+        Q = self._scale_by_measure_var(Q, R)
+        # TODO: also do this for init var
 
         return F, H, Q, R
+
+    def _scale_by_measure_var(self, cov: Tensor, R: Tensor) -> Tensor:
+        Rdiag = R.diagonal(dim1=-2, dim2=-1)
+        diag_multi = torch.zeros(cov.shape[0:2])
+        for process in self.processes:
+            pidx = self.process_to_slice[process.id]
+            diag_multi[:, slice(*pidx)] = Rdiag[:, self.measure_to_idx[process.measure]].sqrt().unsqueeze(-1)
+        assert (diag_multi > 0).all()
+        diag_multi = torch.diag_embed(diag_multi)
+        return diag_multi @ cov @ diag_multi
 
     def forward(self,
                 input: Optional[Tensor],
@@ -289,31 +305,38 @@ class ScriptKalmanFilter(nn.Module):
                 initial_state: Optional[Tuple[Tensor, Tensor]] = None,
                 _disable_cache: bool = False) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
 
-        if initial_state is None:
-            assert input is not None
-            mean1step, cov1step = self.get_initial_state(
-                input=input,
-                init_mean_kwargs=init_mean_kwargs,
-                init_cov_kwargs=static_kwargs.pop('initial_covariance', {})
-            )
-        else:
-            mean1step, cov1step = initial_state
-
         assert n_step > 0
+
+        init_cov_kwargs = static_kwargs.pop('initial_covariance', {})
+
         if input is None:
-            inputs = []
             if out_timesteps is None:
                 raise RuntimeError("If `input` is None must pass `out_timesteps`")
-            num_groups = mean1step.shape[0]
+            if initial_state is None:
+                raise RuntimeError("If `input` is None must pass `initial_state`")
+            inputs = []
         else:
             if len(input.shape) != 3:
                 raise ValueError(f"Expected len(input.shape) == 3 (group,time,measure)")
             if input.shape[-1] != len(self.measures):
                 raise ValueError(f"Expected input.shape[-1] == {len(self.measures)} (len(self.measures))")
+
             inputs = input.unbind(1)
             if out_timesteps is None:
                 out_timesteps = len(inputs)
-            num_groups = inputs[0].shape[0]
+
+            if initial_state is None:
+                design_kwargs = self._get_design_kwargs_for_time(0, static_kwargs, time_varying_kwargs)
+                *_, R = self.get_design_mats(num_groups=inputs[0].shape[0], design_kwargs=design_kwargs)
+                initial_state = self.get_initial_state(
+                    input=input,
+                    init_mean_kwargs=init_mean_kwargs,
+                    init_cov_kwargs=init_cov_kwargs,
+                    R=R
+                )
+
+        mean1step, cov1step = initial_state
+        num_groups = mean1step.shape[0]
 
         cache = {}
 

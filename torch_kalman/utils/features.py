@@ -3,8 +3,6 @@ from typing import Union
 import numpy as np
 import torch
 
-from torch_kalman.utils.datetime import DateTimeHelper
-
 
 def fourier_model_mat(datetimes: np.ndarray,
                       K: int,
@@ -33,8 +31,8 @@ def fourier_model_mat(datetimes: np.ndarray,
             raise ValueError("Unrecognized `period`.")
 
     period_int = period.view('int64')
-    dt_helper = DateTimeHelper(dt_unit=np.datetime_data(period)[0])
-    time = dt_helper.validate_datetimes(datetimes).view('int64')
+    time = datetimes / period
+    raise NotImplementedError
 
     output_dataframe = (output_fmt.lower() == 'dataframe')
     if output_dataframe:

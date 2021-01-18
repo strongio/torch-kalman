@@ -1,12 +1,13 @@
 # ---
 # jupyter:
 #   jupytext:
+#     cell_metadata_json: true
 #     formats: ipynb,py:light
 #     text_representation:
 #       extension: .py
 #       format_name: light
-#       format_version: '1.4'
-#       jupytext_version: 1.1.1
+#       format_version: '1.5'
+#       jupytext_version: 1.6.0
 #   kernelspec:
 #     display_name: Python 3
 #     language: python
@@ -24,7 +25,7 @@ import torch
 from torch.optim import LBFGS
 
 from torch_kalman.kalman_filter import KalmanFilter
-from torch_kalman.process import LocalLevel, LocalTrend, FourierSeason, LinearModel
+from torch_kalman.process import LocalLevel, LocalTrend, LinearModel, FourierSeason
 from torch_kalman.utils.data import TimeSeriesDataset
 
 import numpy as np
@@ -79,13 +80,13 @@ df_aq_weekly = df_aq.\
 SPLIT_DT = np.datetime64('2016-02-22') 
 
 # get means/stds for preprocessing:
-col_means = df_aq_weekly.loc[df_aq_weekly['date'] < SPLIT_DT,:].mean()
-col_stds = df_aq_weekly.loc[df_aq_weekly['date'] < SPLIT_DT,:].std()
+col_means = df_aq_weekly.loc[df_aq_weekly['date'] < SPLIT_DT,:].mean(numeric_only=True)
+col_stds = df_aq_weekly.loc[df_aq_weekly['date'] < SPLIT_DT,:].std(numeric_only=True)
 # -
 
 df_aq_weekly.loc[:,['date','station','SO2','PM10','TEMP','PRES','DEWP']]
 
-# + {"hidePrompt": true, "cell_type": "markdown"}
+# + [markdown] {"hidePrompt": true}
 # #### Prepare our Dataset
 #
 # One of the key advantages of `torch-kalman` is the ability to train on a batch of time-serieses, instead of training a separate model for each individually. The `TimeSeriesDataset` is similar to PyTorch's native `TensorDataset`, with some useful metadata on the batch of time-serieses (the station names, the dates for each).
@@ -102,8 +103,7 @@ dataset_all = TimeSeriesDataset.from_dataframe(
     dt_unit='W',
     measure_colnames=measures_pp,
     group_colname='station', 
-    time_colname='date',
-    pad_X=0.0
+    time_colname='date'
 )
 
 # Train/Val split:
@@ -118,20 +118,12 @@ dataset_train, dataset_val
 processes = []
 for measure in measures_pp:
     processes.extend([
-        LocalTrend(
-            id=f'{measure}_trend', multi=.01
-        ).add_measure(measure),
-        LocalLevel(
-            id=f'{measure}_local_level',
-            decay=(.90,1.00)
-        ).add_measure(measure),
-        FourierSeason(
-            id=f'{measure}_day_in_year', seasonal_period=365.25 / 7., dt_unit='W', K=2, fixed=True
-        ).add_measure(measure)
+        LocalTrend(id=f'{measure}_trend', measure=measure),
+        LocalLevel(id=f'{measure}_local_level', decay=(.90,1.00), measure=measure),
+        FourierSeason(id=f'{measure}_day_in_year', period=365.25 / 7., dt_unit='W', K=2, measure=measure)
     ])
-kf_first = KalmanFilter(measures=measures_pp, 
-                      processes=processes, 
-                      measure_var_predict=('seasonal',dict(K=2,period='yearly',dt_unit='W')))
+kf_first = KalmanFilter(measures=measures_pp, processes=processes)
+                      #measure_var_predict=('seasonal',dict(K=2,period='yearly',dt_unit='W')))
 
 # Here we're showing off a few useful features of `torch-kalman`:
 #
@@ -144,7 +136,7 @@ kf_first = KalmanFilter(measures=measures_pp,
 # When we call our KalmanFilter, we get predictions (a `StateBeliefOverTime`) which come with a mean and covariance, and so can be evaluated against the actual data using a (negative) log-probability critierion.
 
 # +
-kf_first.opt = LBFGS(kf_first.parameters(), lr=.20, max_eval=10)
+kf_first.opt = LBFGS(kf_first.parameters(), lr=.25, max_iter=10, line_search_fn='strong_wolfe')
 
 def closure():
     kf_first.opt.zero_grad()
@@ -156,7 +148,7 @@ def closure():
     loss.backward()
     return loss
 
-for epoch in range(15):
+for epoch in range(25):
     train_loss = kf_first.opt.step(closure).item()
     with torch.no_grad():
         pred = kf_first(
@@ -165,11 +157,12 @@ for epoch in range(15):
         )
         val_loss = -pred.log_prob(dataset_val.tensors[0]).mean().item()
     print(f"EPOCH {epoch}, TRAIN LOSS {train_loss}, VAL LOSS {val_loss}")
-
-
 # -
 
 # #### Visualize the Results
+
+dataset_all.tensors[0].shape
+
 
 # +
 def inverse_transform(df: pd.DataFrame, col_means: pd.Series) -> pd.DataFrame:
@@ -227,17 +220,17 @@ for _dataset in (dataset_all, dataset_train, dataset_val):
 kf_pred = KalmanFilter(
     measures=measures_pp,
     processes=processes + [
-        LinearModel(id=f'{m}_predictors', covariates=predictors_pp).add_measure(m) 
+        LinearModel(id=f'{m}_predictors', predictors=predictors_pp, measure=m)
         for m in measures_pp
     ]
 )
 
-kf_pred.opt = LBFGS(kf_pred.parameters(), lr=.20, max_eval=10)
+kf_pred.opt = LBFGS(kf_pred.parameters(), lr=.20, max_iter=10)
 
 def closure():
     kf_pred.opt.zero_grad()
     y, X = dataset_train.tensors
-    pred = kf_pred(y, predictors=X, start_datetimes=dataset_train.start_datetimes)
+    pred = kf_pred(y, X=X, start_datetimes=dataset_train.start_datetimes)
     loss = -pred.log_prob(y).mean()
     loss.backward()
     return loss
@@ -246,7 +239,7 @@ for epoch in range(20):
     train_loss = kf_pred.opt.step(closure).item()
     y, X = dataset_val.tensors
     with torch.no_grad():
-        pred = kf_pred(y, predictors=X, start_datetimes=dataset_val.start_datetimes)
+        pred = kf_pred(y, X=X, start_datetimes=dataset_val.start_datetimes)
         val_loss = -pred.log_prob(y).mean().item()
     print(f"EPOCH {epoch}, TRAIN LOSS {train_loss}, VAL LOSS {val_loss}")
 
@@ -255,7 +248,7 @@ y, _ = dataset_train.tensors # only input air-pollutant data from 'train' period
 _, X = dataset_all.tensors # but provide exogenous predictors from both 'train' and 'validation' periods
 pred = kf_pred(
     y, 
-    predictors=X, 
+    X=X, 
     start_datetimes=dataset_train.start_datetimes,
     out_timesteps=X.shape[1]
 )

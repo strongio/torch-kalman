@@ -1,3 +1,4 @@
+import datetime
 import itertools
 
 from typing import Sequence, Any, Union, Optional, Tuple
@@ -9,24 +10,9 @@ from torch import Tensor
 from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
 
 from torch_kalman.internals.utils import ragged_cat, true1d_idx
-from torch_kalman.utils.datetime import DateTimeHelper
 
 
-class NiceRepr:
-    # TODO: might not need this class anymore
-    _repr_attrs = None
-
-    def __repr__(self) -> str:
-        kwargs = []
-        for k in self._repr_attrs:
-            v = getattr(self, k)
-            if isinstance(v, Tensor):
-                v = v.size()
-            kwargs.append("{}={!r}".format(k, v))
-        return "{}({})".format(type(self).__name__, ", ".join(kwargs))
-
-
-class TimeSeriesDataset(NiceRepr, TensorDataset):
+class TimeSeriesDataset(TensorDataset):
     """
     TimeSeriesDataset includes additional information about each of the Tensors' dimensions: the name for each group in
     the first dimension, the start (date)time (and optionally datetime-unit) for the second dimension, and the name of
@@ -36,7 +22,6 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
     tensors. So when using TimeSeriesDataset, use `TimeSeriesDataLoader` (or just use
     `DataLoader(collate_fn=TimeSeriesDataset.collate)`).
     """
-    supported_dt_units = {'Y', 'D', 'h', 'm', 's'}
     _repr_attrs = ('sizes', 'measures')
 
     def __init__(self,
@@ -64,19 +49,39 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         self.measures = tuple(tuple(m) for m in measures)
         self.all_measures = tuple(itertools.chain.from_iterable(self.measures))
         self.group_names = group_names
-        self._dt_helper = DateTimeHelper(dt_unit=dt_unit)
-        self.start_times = self._dt_helper.validate_datetimes(start_times)
+        self.dt_unit = None
+        if dt_unit:
+            if not isinstance(dt_unit, np.timedelta64):
+                dt_unit = np.timedelta64(1, dt_unit)
+            self.dt_unit = dt_unit
+        if self.dt_unit:
+            start_times = np.asanyarray(start_times)
+            assert len(start_times.shape) == 1
+            if isinstance(start_times[0], (np.datetime64, datetime.datetime)):
+                start_times = np.array(start_times, dtype='datetime64')
+            else:
+                raise ValueError("`dt_unit` is not None but `start_times` is not an array of datetimes")
+        else:
+            if not isinstance(start_times[0], int) and not start_times[0].is_integer():
+                raise ValueError("`dt_unit` is None but `start_times` does not appear to be integers.")
+        self.start_times = start_times
         super().__init__(*tensors)
 
-    @property
-    def dt_unit(self) -> str:
-        return self._dt_helper.dt_unit
+    def __repr__(self) -> str:
+        kwargs = []
+        for k in self._repr_attrs:
+            v = getattr(self, k)
+            if isinstance(v, Tensor):
+                v = v.size()
+            kwargs.append("{}={!r}".format(k, v))
+        return "{}({})".format(type(self).__name__, ", ".join(kwargs))
 
     @property
     def sizes(self) -> Sequence:
         return [t.size() for t in self.tensors]
 
     # Subsetting ------------------------:
+    @torch.no_grad()
     def train_val_split(self,
                         train_frac: float = None,
                         dt: Union[np.datetime64, dict] = None) -> Tuple['TimeSeriesDataset', 'TimeSeriesDataset']:
@@ -114,7 +119,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         # train:
         train_tensors = []
         for i, tens in enumerate(self.tensors):
-            train = tens.data.clone()
+            train = tens.clone()
             train[np.where(self.times(i) >= split_times[:, None])] = float('nan')
             if i == 0:
                 not_all_nan = (~torch.isnan(train)).sum((0, 2))
@@ -289,6 +294,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         )
 
     @staticmethod
+    @torch.no_grad()
     def tensor_to_dataframe(tensor: Tensor,
                             times: np.ndarray,
                             group_names: Sequence,
@@ -297,7 +303,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
                             measures: Sequence[str]) -> 'DataFrame':
         from pandas import DataFrame, concat
 
-        tensor = tensor.data.numpy()
+        tensor = tensor.numpy()
         assert tensor.shape[0] == len(group_names)
         assert tensor.shape[0] == len(times)
         assert tensor.shape[1] <= times.shape[1]
@@ -332,7 +338,8 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
                        measure_colnames: Optional[Sequence[str]] = None,
                        X_colnames: Optional[Sequence[str]] = None,
                        y_colnames: Optional[Sequence[str]] = None,
-                       pad_X: Optional[float] = None) -> 'TimeSeriesDataset':
+                       pad_X: Optional[float] = None,
+                       dtype: torch.dtype = torch.float32) -> 'TimeSeriesDataset':
 
         if measure_colnames is None:
             if X_colnames is None or y_colnames is None:
@@ -375,10 +382,10 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
 
         # second pass organizes into tensor
         time_len = max(time_idx[-1] + 1 for time_idx in time_idxs)
-        tens = torch.empty((len(arrays), time_len, len(measure_colnames)))
+        tens = torch.empty((len(arrays), time_len, len(measure_colnames)), dtype=dtype)
         tens[:] = np.nan
         for i, (array, time_idx) in enumerate(zip(arrays, time_idxs)):
-            tens[i, time_idx, :] = Tensor(array)
+            tens[i, time_idx, :] = torch.tensor(array, dtype=dtype)
 
         dataset = cls(
             tens,
@@ -391,7 +398,7 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         if X_colnames is not None:
             dataset = dataset.split_measures(y_colnames, X_colnames)
             y, X = dataset.tensors
-            # don't use nan-padding on the predictor tensor:
+            # don't use nan-padding on the y tensor:
             if pad_X is not None:
                 for i, time_idx in enumerate(time_idxs):
                     X[i, time_idx.max():, :] = pad_X
@@ -423,7 +430,8 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
             num_timesteps = max(tensor.shape[1] for tensor in self.tensors)
         else:
             num_timesteps = self.tensors[which].shape[1]
-        return self._dt_helper.make_grid(self.start_times, num_timesteps)
+        offsets = np.arange(0, num_timesteps) * (self.dt_unit if self.dt_unit else 1)
+        return self.start_times[:, None] + offsets
 
     def datetimes(self) -> np.ndarray:
         return self.times()
@@ -439,7 +447,8 @@ class TimeSeriesDataset(NiceRepr, TensorDataset):
         """
         times = self.times(which=0)
         last_measured_idx = self._last_measured_idx()
-        return np.array([t[idx] for t, idx in zip(times, last_measured_idx)], dtype=f'datetime64[{self.dt_unit}]')
+        raise NotImplementedError
+        # return np.array([t[idx] for t, idx in zip(times, last_measured_idx)], dtype=f'datetime64[{self.dt_unit}]')
 
     def _last_measured_idx(self) -> np.ndarray:
         """
@@ -492,26 +501,3 @@ class TimeSeriesDataLoader(DataLoader):
             ]
         )
         return cls(dataset=dataset, **kwargs)
-
-
-def bmat_idx(*args) -> Tuple:
-    """
-    Create indices for tensor assignment that act like slices. E.g., batch[:,[1,2,3],[1,2,3]] does not select the upper
-    3x3 sub-matrix over batches, but batch[bmat_idx(slice(None),[1,2,3],[1,2,3])] does.
-
-    :param args: Each arg is a sequence of integers. The first N args can be slices, and the last N args can be slices.
-    :return: A tuple that can be used for matrix/tensor-selection.
-    """
-
-    if len(args) == 0:
-        return ()
-    elif isinstance(args[-1], slice):
-        # trailing slices can't be passed to np._ix, but can be appended to its results
-        return bmat_idx(*args[:-1]) + (args[-1],)
-    elif isinstance(args[0], slice):
-        # leading slices can't be passed to np._ix, but can be prepended to its results
-        return (args[0],) + bmat_idx(*args[1:])
-    else:
-        if any(isinstance(arg, slice) for arg in args[1:]):
-            raise ValueError("Only the first/last contiguous args can be slices, not middle args.")
-        return np.ix_(*args)
