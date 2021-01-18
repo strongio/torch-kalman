@@ -40,7 +40,6 @@ class TimesToFourier(nn.Module):
         self.seasonal_period = float(seasonal_period)
 
     def forward(self, times: torch.Tensor):
-        # import pdb;pdb.set_trace()
         return fourier_tensor(times, seasonal_period=self.seasonal_period, K=self.K).view(times.shape[0], self.K * 2)
 
 

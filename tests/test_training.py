@@ -72,7 +72,7 @@ class TestTraining(unittest.TestCase):
         """
         torch.manual_seed(123)
 
-        # TODO: include nans
+        # TODO: include nans; make sure performance doesn't take significant hit w/partial nans
 
         def _make_kf():
             return KalmanFilter(

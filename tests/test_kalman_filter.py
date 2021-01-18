@@ -61,6 +61,8 @@ class TestKalmanFilter(TestCase):
         # TODO: measure dim vs. state-dim
 
         # test integration:
+        # TODO: make missing dim highly correlated with observed dims. upward trend in observed should get reflected in
+        #       unobserved state
         kf = KalmanFilter(
             processes=[LocalLevel(id=f'lm{i}', measure=str(i)) for i in range(ndim)],
             measures=[str(i) for i in range(ndim)],

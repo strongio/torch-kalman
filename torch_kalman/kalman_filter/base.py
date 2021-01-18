@@ -33,6 +33,14 @@ class KalmanFilter(nn.Module):
                 self.script_module.processes[i] = torch.jit.script(p)
             self.script_module = torch.jit.script(self.script_module)
 
+    @property
+    def measures(self) -> Sequence[str]:
+        return self.script_module.measures
+
+    @property
+    def processes(self) -> Sequence[Process]:
+        return self.script_module.processes
+
     @staticmethod
     def _validate(processes: Sequence[Process], measures: Sequence[str]):
         assert not isinstance(measures, str)
@@ -41,7 +49,7 @@ class KalmanFilter(nn.Module):
                 raise TypeError("Processes should not be wrapped in `torch.jit.script`, this will be done internally.")
             if p.measure:
                 if p.measure not in measures:
-                    raise RuntimeError(f"'{p.id}' has measure {p.measure} not in `measures`.")
+                    raise RuntimeError(f"'{p.id}' has measure '{p.measure}' not in `measures`.")
             else:
                 if len(measures) > 1:
                     raise RuntimeError(f"Must set measure for '{p.id}' since there are multiple measures.")
@@ -195,13 +203,13 @@ class ScriptKalmanFilter(nn.Module):
 
         # covariances:
         if process_covariance is None:
-            process_covariance = Covariance(id='process', rank=self.state_rank, empty_idx=self.no_pcov_idx)
+            process_covariance = Covariance(id='process_cov', rank=self.state_rank, empty_idx=self.no_pcov_idx)
         self.process_covariance = process_covariance
         if measure_covariance is None:
-            measure_covariance = Covariance(id='measure', rank=len(self.measures))
+            measure_covariance = Covariance(id='measure_cov', rank=len(self.measures))
         self.measure_covariance = measure_covariance
         if initial_covariance is None:
-            initial_covariance = Covariance(id='initial', rank=self.state_rank, empty_idx=self.no_icov_idx)
+            initial_covariance = Covariance(id='initial_cov', rank=self.state_rank, empty_idx=self.no_icov_idx)
         self.initial_covariance = initial_covariance
 
     def get_initial_state(self,

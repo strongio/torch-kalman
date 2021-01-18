@@ -136,20 +136,18 @@ class Predictions(nn.Module):
         n_measure_dim = obs.shape[-1]
         n_state_dim = self.state_means.shape[-1]
 
-        obs_flat = obs.view(-1, n_measure_dim)
+        obs_flat = obs.reshape(-1, n_measure_dim)
         state_means_flat = self.state_means.view(-1, n_state_dim)
         state_covs_flat = self.state_covs.view(-1, n_state_dim, n_state_dim)
         H_flat = self.H.view(-1, n_measure_dim, n_state_dim)
         R_flat = self.R.view(-1, n_measure_dim, n_measure_dim)
-        means_flat = self.means.view(-1, n_measure_dim)
-        covs_flat = self.covs.view(-1, n_measure_dim, n_measure_dim)
 
         lp_flat = torch.zeros(obs_flat.shape[0])
         for gt_idx, valid_idx in get_nan_groups(torch.isnan(obs_flat)):
             if valid_idx is None:
                 gt_obs = obs_flat[gt_idx]
-                gt_means_flat = means_flat[gt_idx]
-                gt_covs_flat = covs_flat[gt_idx]
+                gt_means_flat = self.means.view(-1, n_measure_dim)[gt_idx]
+                gt_covs_flat = self.covs.view(-1, n_measure_dim, n_measure_dim)[gt_idx]
             else:
                 mask1d = torch.meshgrid(gt_idx, valid_idx)
                 mask2d = torch.meshgrid(gt_idx, valid_idx, valid_idx)
@@ -196,9 +194,9 @@ class Predictions(nn.Module):
             }
             for measure_group, tensor in zip(dataset.measures, dataset.tensors):
                 for i, measure in enumerate(measure_group):
-                    if measure in self.design.measures:
+                    if measure in self.kalman_filter.measures:
                         batch_info['named_tensors'][measure] = tensor[..., [i]]
-            missing = set(self.design.measures) - set(dataset.all_measures)
+            missing = set(self.kalman_filter.measures) - set(dataset.all_measures)
             if missing:
                 raise ValueError(
                     f"Some measures in the design aren't in the dataset.\n"
@@ -231,9 +229,9 @@ class Predictions(nn.Module):
         if type == 'predictions':
 
             stds = torch.diagonal(self.covs, dim1=-1, dim2=-2).sqrt()
-            for i, measure in enumerate(self.design.measures):
+            for i, measure in enumerate(self.kalman_filter.measures):
                 # predicted:
-                df = _tensor_to_df(torch.stack([self.predictions[..., i], stds[..., i]], 2), measures=['mean', 'std'])
+                df = _tensor_to_df(torch.stack([self.means[..., i], stds[..., i]], 2), measures=['mean', 'std'])
                 if multi is not None:
                     df['lower'] = df['mean'] - multi * df['std']
                     df['upper'] = df['mean'] + multi * df.pop('std')
@@ -258,9 +256,9 @@ class Predictions(nn.Module):
 
             # residuals:
             named_tensors = batch_info.get('named_tensors', {})
-            for i, measure in enumerate(self.design.measures):
+            for i, measure in enumerate(self.kalman_filter.measures):
                 orig_tensor = named_tensors.get(measure)
-                predictions = self.predictions[..., [i]]
+                predictions = self.means[..., [i]]
                 if orig_tensor.shape[1] < predictions.shape[1]:
                     orig_aligned = predictions.data.clone()
                     orig_aligned[:] = float('nan')
@@ -281,7 +279,7 @@ class Predictions(nn.Module):
         raise NotImplementedError
         states_per_measure = defaultdict(list)
         for state_belief in self.state_beliefs:
-            for m, measure in enumerate(self.design.measures):
+            for m, measure in enumerate(self.kalman_filter.measures):
                 H = state_belief.H[:, m, :].data
                 m = H * state_belief.means.data
                 std = H * torch.diagonal(state_belief.covs.data, dim1=-2, dim2=-1).sqrt()
