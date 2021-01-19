@@ -44,6 +44,12 @@ class TimesToFourier(nn.Module):
 
 
 class FourierSeason(_Season, _RegressionBase):
+    """
+    A process which captures seasonal patterns using fourier serieses. Essentially a `LinearModel` where the
+    model-matrix construction is done for you. Best suited for static seasonal patterns; for evolving ones `TBATS` is
+    recommended.
+    """
+
     def __init__(self,
                  id: str,
                  dt_unit: str,
@@ -53,16 +59,15 @@ class FourierSeason(_Season, _RegressionBase):
                  process_variance: bool = False,
                  decay: Optional[Tuple[float, float]] = None):
         """
-
-        :param id:
+        :param id: A unique identifier for this process
         :param dt_unit: A string indicating the time-units used in the kalman-filter -- i.e., how far we advance with
         every timestep. Passed to `numpy.timedelta64(1, dt_unit)`.
         :param period: The number of `dt_units` it takes to get through a full season. Does not have to be an integer
         (e.g. 365.25 for yearly season on daily-data).
         :param K: The number of the fourier components
-        :param measure:
-        :param process_variance:
-        :param decay:
+        :param measure: The name of the measure for this process.
+        :param process_variance: TODO
+        :param decay: TODO
         """
         self.dt_unit_ns = self._get_dt_unit_ns(dt_unit)
         self.period = period
@@ -86,6 +91,10 @@ class FourierSeason(_Season, _RegressionBase):
 
 
 class DiscreteSeason(Process):
+    """
+    TODO
+    """
+
     def __init__(self,
                  id: str,
                  num_seasons: int,
@@ -115,6 +124,10 @@ class DiscreteSeason(Process):
 
 
 class TBATS(Process):
+    """
+    TODO
+    """
+
     def __init__(self,
                  id: str,
                  period: float,

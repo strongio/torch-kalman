@@ -133,6 +133,8 @@ class TestTraining(unittest.TestCase):
         """
         # manually generated data (sin-wave, trend, etc.) with virtually no noise: MSE should be near zero
         """
+        torch.manual_seed(123)
+
         weekly = torch.sin(2. * 3.1415 * torch.arange(0., 7.) / 7.)
         data = torch.stack([
             weekly.roll(-i).repeat(3) + torch.linspace(0, 10, 7 * 3) for i in range(num_groups)
@@ -148,7 +150,7 @@ class TestTraining(unittest.TestCase):
 
         # train:
         optimizer = torch.optim.LBFGS([p for n, p in kf.named_parameters() if 'measure_covariance' not in n],
-                                      lr=.25,
+                                      lr=.20,
                                       max_iter=10)
 
         def closure():

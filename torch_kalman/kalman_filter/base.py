@@ -14,6 +14,10 @@ from torch_kalman.process.regression import Process
 
 
 class KalmanFilter(nn.Module):
+    """
+    The KalmanFilter is a `nn.Module` which generates predictions and forecasts using a state-space model. Processes
+    are used to specify how latent-states translate into the measurable data being forecasted.
+    """
     script_cls = ScriptKalmanFilter
     kf_step = GaussianStep
 

@@ -259,13 +259,6 @@ for epoch in range(12):
     print(f"EPOCH {epoch}, TRAIN LOSS {train_loss}, VAL LOSS {val_loss}")
 ```
 
-    /Users/jacobdink/Documents/python-projects/torch-kalman/torch_kalman/internals/utils.py:21: UserWarning: This overload of nonzero is deprecated:
-    	nonzero()
-    Consider using one of the following signatures instead:
-    	nonzero(*, bool as_tuple) (Triggered internally at  /Users/distiller/project/conda/conda-bld/pytorch_1603740477510/work/torch/csrc/utils/python_arg_parser.cpp:882.)
-      group_idx = (c1 & c2).nonzero().view(-1)
-
-
     EPOCH 0, TRAIN LOSS 2.3094546794891357, VAL LOSS -0.5816877484321594
     EPOCH 1, TRAIN LOSS -0.6860888004302979, VAL LOSS -0.4119633436203003
     EPOCH 2, TRAIN LOSS -0.8100854754447937, VAL LOSS -0.4584827125072479

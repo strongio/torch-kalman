@@ -13,10 +13,11 @@ from torch_kalman.utils.data import TimeSeriesDataset
 
 class Predictions(nn.Module):
     """
-    The output of the KalmanFilter forward pass.
+    The output of the KalmanFilter forward pass, containing the underlying state means and covariances, as well as the
+    predicted observations and covariances.
 
-    Contains methods for evaluating the predictions (log_prob), converting them into dataframes (to_dataframe), and for
-    sampling from the underlying distribution (sample_measurements).
+    Contains methods for evaluating the predictions (log_prob), converting them into dataframes (to_dataframe), and
+    forecasting beyond these predictions (forecast).
     """
 
     def __init__(self,
@@ -43,15 +44,14 @@ class Predictions(nn.Module):
 
     def forecast(self,
                  horizon: int,
+                 forecast_starts: Optional[np.ndarray] = None,
+                 series_starts: Optional[np.ndarray] = None,
                  **kwargs):
-        start_datetimes = kwargs.get('start_datetimes', None)
-        forecast_datetimes = kwargs.get('forecast_datetimes', None)
-        if start_datetimes is None:
-            if forecast_datetimes is not None:
-                raise
+
+        if forecast_starts is None:
             initial_state = self.get_last_update()
         else:
-            initial_state = self.get_timeslice(forecast_datetimes, start_datetimes)
+            initial_state = self.get_timeslice(forecast_starts, series_starts)
         return self.kalman_filter(
             input=None,
             out_timesteps=horizon,

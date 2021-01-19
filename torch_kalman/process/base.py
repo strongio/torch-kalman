@@ -7,6 +7,11 @@ from torch_kalman.internals.utils import get_owned_kwarg
 
 
 class Process(nn.Module):
+    """
+    The Process is defined by the state-elements it generates predictions for. It generates three kinds of predictions:
+    (1) the initial state, (2) the observation matrix, (3) the transition matrix.
+    """
+
     def __init__(self,
                  id: str,
                  state_elements: Sequence[str],
@@ -22,19 +27,28 @@ class Process(nn.Module):
                  no_pcov_state_elements: Optional[List[str]] = None,
                  no_icov_state_elements: Optional[List[str]] = None):
         """
+
         :param id: Unique identifier for the process
         :param state_elements: List of strings with the state-element names
+        :param measure: The name of the measure for this process.
         :param h_module: A torch.nn.Module which, when called (default with no input; can be overridden in subclasses
         with self.h_kwarg), will produce the 'observation' matrix: a XXXX. Only one of h_module or h_tensor should be
         passed.
         :param h_tensor: A tensor that is the 'observation' matrix (see `h_module`). Only one of h_module or h_tensor
         should be  passed.
+        :param h_kwarg: TODO
         :param f_modules: A torch.nn.ModuleDict; each element specifying a transition between state-elements. The keys
         specify the state-elements in the format '{from_el}->{to_el}'. The values are torch.nn.Modules which, when
         called (default with no input; can be overridden in subclasses with self.f_kwarg), will produce that element
         for the transition matrix.
         :param f_tensors: A dictionary of tensors, specifying elements of the F-matrix. See `f_modules` for key format.
+        :param f_kwarg: TODO
+        :param init_mean_kwargs: TODO
+        :param time_varying_kwargs: TODO
+        :param no_pcov_state_elements: TODO
+        :param no_icov_state_elements: TODO
         """
+
         super(Process, self).__init__()
         self.id = id
 

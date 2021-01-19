@@ -7,6 +7,10 @@ from torch_kalman.internals.utils import get_nan_groups
 
 
 class GaussianStep(nn.Module):
+    """
+    Used internally by `KalmanFilter` to apply the kalman-filtering algorithm. Subclasses can implement additional
+    logic such as outlier-rejection, censoring, etc.
+    """
     distribution_cls = torch.distributions.MultivariateNormal
 
     def forward(self,

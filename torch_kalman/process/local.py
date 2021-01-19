@@ -9,6 +9,10 @@ from .utils import SingleOutput, Bounded
 
 
 class LocalLevel(Process):
+    """
+    A process representing a random-walk.
+    """
+
     def __init__(self,
                  id: str,
                  measure: Optional[str] = None,
@@ -17,9 +21,9 @@ class LocalLevel(Process):
         :param id: A unique identifier for this process.
         :param decay: If the process has decay, then the random walk will tend towards zero as we forecast out further
         (note that this means you should center your time-series, or you should include another process that does not
-        have this property). Decay can be between 0 and 1, but values < .50 (or even .90) can often be too rapid and
-        you will run into trouble with vanishing gradients. When passing a pair of floats, the nn.Module will assign a
-        parameter representing the decay as a learned parameter somewhere between these bounds.
+        have this decaying behavior). Decay can be between 0 and 1, but values < .50 (or even .90) can often be too
+        rapid and you will run into trouble with vanishing gradients. When passing a pair of floats, the nn.Module will
+        assign a parameter representing the decay as a learned parameter somewhere between these bounds.
         """
         se = 'position'
         if decay:
@@ -38,6 +42,9 @@ class LocalLevel(Process):
 
 
 class LocalTrend(Process):
+    """
+    A process representing an evolving trend.
+    """
 
     def __init__(self,
                  id: str,

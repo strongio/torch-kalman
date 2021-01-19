@@ -4,6 +4,11 @@ from torch_kalman.kalman_filter.predictions import Predictions
 
 
 class Simulations(Predictions):
+    """
+    The output of `KalmanFilter.simulate()` -- trajectories of simulated states. Call `sample()` to convert into a
+    Tensor of simulated observed-values.
+    """
+
     def __init__(self, state_means: Tensor, H: Tensor, R: Tensor, kalman_filter: 'KalmanFilter'):
         num_groups, num_times, state_dim = state_means.shape
         super(Simulations, self).__init__(
