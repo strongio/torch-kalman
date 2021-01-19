@@ -191,14 +191,14 @@ class ScriptKalmanFilter(nn.Module):
         self.measure_to_idx = {m: i for i, m in enumerate(self.measures)}
 
         # processes:
-        self.processes = nn.ModuleList()
+        self.processes = nn.ModuleDict()
         self.process_to_slice: Dict[str, Tuple[int, int]] = {}
         self.state_rank = 0
         self.no_pcov_idx = []
         self.no_icov_idx = []
         for p in processes:
-            self.processes.append(p)
             assert p.measure, f"{p.id} does not have its `measure` set"
+            self.processes[p.id] = p
             self.process_to_slice[p.id] = (self.state_rank, self.state_rank + len(p.state_elements))
 
             for i, se in enumerate(p.state_elements):
@@ -232,9 +232,9 @@ class ScriptKalmanFilter(nn.Module):
 
         # initial state mean:
         mean = torch.zeros(num_groups, self.state_rank)
-        for p in self.processes:
-            _process_slice = slice(*self.process_to_slice[p.id])
-            mean[:, _process_slice] = p.get_initial_state_mean(init_mean_kwargs.get(p.id, {}))
+        for pid, p in self.processes.items():
+            _process_slice = slice(*self.process_to_slice[pid])
+            mean[:, _process_slice] = p.get_initial_state_mean(init_mean_kwargs.get(pid, {}))
 
         mean = mean * measure_scaling
 
@@ -255,36 +255,36 @@ class ScriptKalmanFilter(nn.Module):
         _empty = ['_']
         if 'base_F' not in cache:
             cache['base_F'] = torch.zeros((num_groups, self.state_rank, self.state_rank))
-            for process in self.processes:
+            for pid, process in self.processes.items():
                 tv_kwargs = _empty
                 if process.time_varying_kwargs is not None:
                     tv_kwargs = process.time_varying_kwargs
                 if process.f_kwarg not in tv_kwargs:
-                    _process_slice = slice(*self.process_to_slice[process.id])
+                    _process_slice = slice(*self.process_to_slice[pid])
                     cache['base_F'][:, _process_slice, _process_slice] = \
-                        process(design_kwargs.get(process.id, {}), which='f', cache=cache)
+                        process(design_kwargs.get(pid, {}), which='f', cache=cache)
         if 'base_H' not in cache:
             cache['base_H'] = torch.zeros((num_groups, len(self.measures), self.state_rank))
-            for process in self.processes:
+            for pid, process in self.processes.items():
                 tv_kwargs = _empty
                 if process.time_varying_kwargs is not None:
                     tv_kwargs = process.time_varying_kwargs
                 if process.h_kwarg not in tv_kwargs:
-                    _process_slice = slice(*self.process_to_slice[process.id])
+                    _process_slice = slice(*self.process_to_slice[pid])
                     cache['base_H'][:, self.measure_to_idx[process.measure], _process_slice] = \
-                        process(design_kwargs.get(process.id, {}), which='h', cache=cache)
+                        process(design_kwargs.get(pid, {}), which='h', cache=cache)
 
         H = cache['base_H'].clone()
         F = cache['base_F'].clone()
-        for process in self.processes:
+        for pid, process in self.processes.items():
             if process.time_varying_kwargs is not None:
-                _process_slice = slice(*self.process_to_slice[process.id])
+                _process_slice = slice(*self.process_to_slice[pid])
                 if process.h_kwarg in process.time_varying_kwargs:
                     H[:, self.measure_to_idx[process.measure], _process_slice] = \
-                        process(design_kwargs.get(process.id, {}), which='h', cache=cache)
+                        process(design_kwargs.get(pid, {}), which='h', cache=cache)
                 if process.f_kwarg in process.time_varying_kwargs:
                     F[:, _process_slice, _process_slice] = \
-                        process(design_kwargs.get(process.id, {}), which='f', cache=cache)
+                        process(design_kwargs.get(pid, {}), which='f', cache=cache)
 
         R = self.measure_covariance(design_kwargs.get('measure_covariance', {}), cache=cache)
         if len(R.shape) == 2:
@@ -302,8 +302,8 @@ class ScriptKalmanFilter(nn.Module):
         Rdiag = measure_cov.diagonal(dim1=-2, dim2=-1)
         if self._scale_by_measure_var:
             multi = torch.zeros(measure_cov.shape[0:-2] + (self.state_rank,))
-            for process in self.processes:
-                pidx = self.process_to_slice[process.id]
+            for pid, process in self.processes.items():
+                pidx = self.process_to_slice[pid]
                 multi[:, slice(*pidx)] = Rdiag[:, self.measure_to_idx[process.measure]].sqrt().unsqueeze(-1)
             assert (multi > 0).all()
         else:
