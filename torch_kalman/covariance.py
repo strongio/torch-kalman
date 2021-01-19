@@ -76,8 +76,10 @@ class Covariance(nn.Module):
         if self.method == 'log_cholesky':
             L = self.log_chol_to_chol(self.cholesky_log_diag, self.cholesky_off_diag)
             mini_cov = L @ L.t()
-            if torch.isclose(mini_cov.diagonal(dim1=-2, dim2=-1), torch.zeros(1)).any():
-                raise RuntimeError(f"`{self}` has zero-variance for some elements. decrease the learning rate?")
+            if torch.isclose(mini_cov.diagonal(dim1=-2, dim2=-1), torch.zeros(1), atol=1e-10).any():
+                raise RuntimeError(
+                    f"`{self.id}` has zero-variance for some elements. decrease the learning rate? Values:\n{mini_cov}"
+                )
             # TODO: predicting diagonal multis. ideally cache the base matrix and only recompute multis?
             return pad_covariance(mini_cov, [int(i not in self.empty_idx) for i in range(self.rank)])
         else:

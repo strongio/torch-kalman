@@ -144,7 +144,7 @@ class TestTraining(unittest.TestCase):
         )
 
         # train:
-        kf.state_dict()['script_module.measure_covariance.cholesky_log_diag'] -= 2
+        kf.state_dict()['script_module.measure_covariance.cholesky_log_diag'] -= 1
         optimizer = torch.optim.LBFGS([p for n, p in kf.named_parameters() if 'measure_covariance' not in n],
                                       lr=.25,
                                       max_iter=10)

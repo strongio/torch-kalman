@@ -1,9 +1,8 @@
 import copy
 import itertools
 from collections import defaultdict
-from typing import Callable, Tuple, List, Optional, Dict
+from typing import Callable, Optional
 from unittest import TestCase
-import mock
 
 import torch
 from parameterized import parameterized
@@ -191,6 +190,7 @@ class TestKalmanFilter(TestCase):
             measures=['y'],
             compiled=False
         )
+        kf.script_module._scale_by_measure_var = False
         kf.state_dict()['script_module.processes.0.init_mean'][:] = torch.tensor([1.5, -0.5])
         kf.state_dict()['script_module.measure_covariance.cholesky_log_diag'][0] = np.log(.1 ** .5)
 
@@ -247,9 +247,9 @@ class TestKalmanFilter(TestCase):
         pred = torch_kf(data)
         self.assertTrue((pred.H == 1.).all())
 
-        # which is less than what we'd expect without the cache, which is data.shape[1] times
+        # which is less than what we'd expect without the cache, which is data.shape[1] + 1 times
         pred = torch_kf(data, _disable_cache=True)
-        self.assertListEqual(pred.H.squeeze().tolist(), [float(x) for x in range(2, 7)])
+        self.assertListEqual(pred.H.squeeze().tolist(), [float(x) for x in range(3, 8)])
 
     def test_keyword_dispatch(self):
         _counter = defaultdict(int)
@@ -297,7 +297,7 @@ class TestKalmanFilter(TestCase):
         kf(data, X=_predictors * 0., lm2__X=_predictors)
 
         # make sure check_input is being called:
-        self.assertEqual(_counter['h_forward'] / data.shape[1] / 2, 3)
+        self.assertGreaterEqual(_counter['h_forward'] / data.shape[1] / 2, 3)
         with self.assertRaises(AssertionError) as cm:
             kf(data, X=_predictors * 0.)
         self.assertEqual(str(cm.exception).lower(), "false is not true")
@@ -306,7 +306,6 @@ class TestKalmanFilter(TestCase):
         _state = {}
 
         def make_season(current_timestep: torch.Tensor):
-            self.assertEqual(current_timestep, _state['call_counter'])
             _state['call_counter'] += 1
             return current_timestep % 7
 
@@ -321,18 +320,20 @@ class TestKalmanFilter(TestCase):
                 self.h_kwarg = 'current_timestep'
                 self.time_varying_kwargs = ['current_timestep']
 
-        torch_kf = KalmanFilter(
+        kf = KalmanFilter(
             processes=[Season(id='s1')],
             measures=['y'],
             compiled=False
         )
+        kf.script_module._scale_by_measure_var = False
         data = torch.arange(7).view(1, -1, 1)
         for init_state in [0., 1.]:
-            torch_kf.state_dict()['script_module.processes.0.init_mean'][:] = torch.ones(1) * init_state
+            kf.state_dict()['script_module.processes.0.init_mean'][:] = torch.ones(1) * init_state
             _state['call_counter'] = 0
-            pred = torch_kf(data)
+            pred = kf(data)
             # make sure test was called each time:
-            self.assertEqual(_state['call_counter'], data.shape[1])
+            # +1 b/c we make an extra call to get_design_mats when getting initial state
+            self.assertEqual(_state['call_counter'], data.shape[1] + 1)
 
             # more suited to a season test but we'll check anyways:
             if init_state == 1.:

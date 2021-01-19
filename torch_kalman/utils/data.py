@@ -54,15 +54,15 @@ class TimeSeriesDataset(TensorDataset):
             if not isinstance(dt_unit, np.timedelta64):
                 dt_unit = np.timedelta64(1, dt_unit)
             self.dt_unit = dt_unit
+        start_times = np.asanyarray(start_times)
         if self.dt_unit:
-            start_times = np.asanyarray(start_times)
             assert len(start_times.shape) == 1
             if isinstance(start_times[0], (np.datetime64, datetime.datetime)):
                 start_times = np.array(start_times, dtype='datetime64')
             else:
                 raise ValueError("`dt_unit` is not None but `start_times` is not an array of datetimes")
         else:
-            if not isinstance(start_times[0], int) and not start_times[0].is_integer():
+            if not isinstance(start_times[0], int) and not float(start_times[0]).is_integer():
                 raise ValueError("`dt_unit` is None but `start_times` does not appear to be integers.")
         self.start_times = start_times
         super().__init__(*tensors)

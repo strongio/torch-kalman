@@ -20,6 +20,7 @@ class TestProcess(TestCase):
             processes=[FourierSeason(id='day_of_week', period=7, dt_unit='D', K=3)],
             measures=['y']
         )
+        kf.script_module._scale_by_measure_var = False
         kf.state_dict()['script_module.processes.0.init_mean'][:] = torch.tensor([1., 0., 0., 0., 0., 0.])
         kf.state_dict()['script_module.measure_covariance.cholesky_log_diag'] -= 2
         pred = kf(data, start_datetimes=start_datetimes)
