@@ -41,13 +41,13 @@ class KalmanFilter(nn.Module):
 
         # covariances:
         if process_covariance is None:
-            process_covariance = Covariance.from_processes(processes, cov_type='process')
+            process_covariance = Covariance.for_processes(processes, cov_type='process')
 
         if measure_covariance is None:
-            measure_covariance = Covariance.from_measures(measures)
+            measure_covariance = Covariance.for_measures(measures)
 
         if initial_covariance is None:
-            initial_covariance = Covariance.from_processes(processes, cov_type='initial')
+            initial_covariance = Covariance.for_processes(processes, cov_type='initial')
 
         self.script_module = self.script_cls(
             kf_step=self.kf_step(),

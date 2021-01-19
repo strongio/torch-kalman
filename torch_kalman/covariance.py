@@ -11,7 +11,7 @@ from torch_kalman.process.base import Process
 
 class Covariance(nn.Module):
     @classmethod
-    def from_processes(cls, processes: Sequence[Process], cov_type: str, **kwargs) -> 'Covariance':
+    def for_processes(cls, processes: Sequence[Process], cov_type: str, **kwargs) -> 'Covariance':
         assert cov_type in {'process', 'initial'}
         state_rank = 0
         no_cov_idx = []
@@ -26,7 +26,7 @@ class Covariance(nn.Module):
         return cls(rank=state_rank, empty_idx=no_cov_idx, id=f'{cov_type}_covariance', **kwargs)
 
     @classmethod
-    def from_measures(cls, measures: Sequence[str], **kwargs) -> 'Covariance':
+    def for_measures(cls, measures: Sequence[str], **kwargs) -> 'Covariance':
         if 'method' not in kwargs and len(measures) > 5:
             kwargs['method'] = 'low_rank'
         if 'init_diag_multi' not in kwargs:

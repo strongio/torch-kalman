@@ -45,7 +45,7 @@ torch.manual_seed(2021-1-18);
 # ## Installation
 #
 # ```
-# pip install https://github.com/strongio/torch-kalman#egg=torch_kalman
+# pip install git+https://github.com/strongio/torch-kalman.git#egg=torch_kalman
 # ```
 
 # ## Example: Beijing Multi-Site Air-Quality Dataset
@@ -136,7 +136,7 @@ group_names_to_group_ids = {g : i for i,g in enumerate(dataset_all.group_names)}
 kf_first = KalmanFilter(
     measures=measures_pp, 
     processes=processes,
-    measure_covariance=Covariance.from_measures(measures_pp, var_predict={'group_ids' : predict_variance})
+    measure_covariance=Covariance.for_measures(measures_pp, var_predict={'group_ids' : predict_variance})
 )
 # -
 
@@ -144,11 +144,11 @@ kf_first = KalmanFilter(
 #
 # - We are training on a multivarite time-series: that is, our time-series has two measures (SO2 and PM10) and our model will capture correlations across these.
 # - We are going to train on, and predictor for, multiple time-serieses (i.e. multiple stations) at once. 
-# - We are allowing the amount of noise in the measure (i.e., the measure variance) to vary with the seasons, by passing 'seasonal' alias to `measure_var_predict`. (The `measure_var_predict` argument takes any `torch.nn.Module` that can be used for prediction, but 'seasonal' is an alias that tells the `KalmanFilter` to use a seasonal NN.)
+# - We are predicting the variance from the groups -- i.e., we are giving each group its own variance-estimate.
 #
 # #### Train our Model
 #
-# When we call our KalmanFilter, we get predictions (a `StateBeliefOverTime`) which come with a mean and covariance, and so can be evaluated against the actual data using a (negative) log-probability critierion.
+# When we call our KalmanFilter, we get predictions which come with a mean and covariance, and so can be evaluated against the actual data using a (negative) log-probability critierion.
 
 # +
 kf_first.opt = LBFGS(kf_first.parameters(), max_iter=10, line_search_fn='strong_wolfe')
@@ -241,7 +241,7 @@ kf_pred = KalmanFilter(
         LinearModel(id=f'{m}_predictors', predictors=predictors_pp, measure=m)
         for m in measures_pp
     ],
-    measure_covariance=Covariance.from_measures(measures_pp, var_predict={'group_ids' : deepcopy(predict_variance)})
+    measure_covariance=Covariance.for_measures(measures_pp, var_predict={'group_ids' : deepcopy(predict_variance)})
 )
 
 kf_pred.opt = LBFGS(kf_pred.parameters(), max_iter=10, line_search_fn='strong_wolfe')
@@ -293,5 +293,3 @@ df_components = pred.to_dataframe(dataset_all, type='components')
 print(pred.plot(df_components.query("group=='Changping'"), split_dt=SPLIT_DT))
 # -
 print(pred.plot(df_components.query("(group=='Changping') & (process.str.endswith('predictors'))"), split_dt=SPLIT_DT))
-
-

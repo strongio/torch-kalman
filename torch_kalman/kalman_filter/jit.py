@@ -1,6 +1,4 @@
-from collections import defaultdict
-from typing import Tuple, List, Optional, Sequence, Dict, Iterable
-from warnings import warn
+from typing import Tuple, List, Optional, Sequence, Dict
 
 import torch
 from torch import nn, Tensor
@@ -122,12 +120,12 @@ class ScriptKalmanFilter(nn.Module):
         return F, H, Q, R
 
     def _get_measure_scaling(self, measure_cov: Tensor) -> Tensor:
-        Rdiag = measure_cov.diagonal(dim1=-2, dim2=-1)
         if self._scale_by_measure_var:
+            measure_var = measure_cov.diagonal(dim1=-2, dim2=-1)
             multi = torch.zeros(measure_cov.shape[0:-2] + (self.state_rank,))
             for pid, process in self.processes.items():
                 pidx = self.process_to_slice[pid]
-                multi[:, slice(*pidx)] = Rdiag[:, self.measure_to_idx[process.measure]].sqrt().unsqueeze(-1)
+                multi[..., slice(*pidx)] = measure_var[..., self.measure_to_idx[process.measure]].sqrt().unsqueeze(-1)
             assert (multi > 0).all()
         else:
             multi = torch.ones(measure_cov.shape[0:-2] + (self.state_rank,))
