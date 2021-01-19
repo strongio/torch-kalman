@@ -21,7 +21,7 @@
 # ```
 # %matplotlib inline
 
-import copy
+from copy import deepcopy
 
 import torch
 from torch.optim import LBFGS
@@ -136,7 +136,7 @@ group_names_to_group_ids = {g : i for i,g in enumerate(dataset_all.group_names)}
 kf_first = KalmanFilter(
     measures=measures_pp, 
     processes=processes,
-    measure_covariance=Covariance(rank=len(measures_pp), var_predict_modules={'group_ids' : predict_variance})
+    measure_covariance=Covariance.from_measures(measures_pp, var_predict={'group_ids' : predict_variance})
 )
 # -
 
@@ -237,10 +237,11 @@ for _dataset in (dataset_all, dataset_train, dataset_val):
 # +
 kf_pred = KalmanFilter(
     measures=measures_pp,
-    processes=[copy.deepcopy(p) for p in processes] + [
+    processes=[deepcopy(p) for p in processes] + [
         LinearModel(id=f'{m}_predictors', predictors=predictors_pp, measure=m)
         for m in measures_pp
-    ]
+    ],
+    measure_covariance=Covariance.from_measures(measures_pp, var_predict={'group_ids' : deepcopy(predict_variance)})
 )
 
 kf_pred.opt = LBFGS(kf_pred.parameters(), max_iter=10, line_search_fn='strong_wolfe')
@@ -248,7 +249,12 @@ kf_pred.opt = LBFGS(kf_pred.parameters(), max_iter=10, line_search_fn='strong_wo
 def closure():
     kf_pred.opt.zero_grad()
     y, X = dataset_train.tensors
-    pred = kf_pred(y, X=X, start_datetimes=dataset_train.start_datetimes)
+    pred = kf_pred(
+        y, 
+        X=X, 
+        start_datetimes=dataset_train.start_datetimes, 
+        group_ids=[group_names_to_group_ids[g] for g in dataset_train.group_names]
+    )
     loss = -pred.log_prob(y).mean()
     loss.backward()
     return loss
@@ -257,7 +263,12 @@ for epoch in range(15):
     train_loss = kf_pred.opt.step(closure).item()
     y, X = dataset_val.tensors
     with torch.no_grad():
-        pred = kf_pred(y, X=X, start_datetimes=dataset_val.start_datetimes)
+        pred = kf_pred(
+            y, 
+            X=X, 
+            start_datetimes=dataset_val.start_datetimes, 
+            group_ids=[group_names_to_group_ids[g] for g in dataset_val.group_names]
+        )
         val_loss = -pred.log_prob(y).mean().item()
     print(f"EPOCH {epoch}, TRAIN LOSS {train_loss}, VAL LOSS {val_loss}")
 
@@ -269,7 +280,8 @@ with torch.no_grad():
         y, 
         X=X, 
         start_datetimes=dataset_train.start_datetimes,
-        out_timesteps=X.shape[1]
+        out_timesteps=X.shape[1],
+        group_ids=[group_names_to_group_ids[g] for g in dataset_val.group_names]
     )
 
 print(

@@ -7,25 +7,55 @@ from torch import nn, Tensor
 
 from torch_kalman.covariance import Covariance
 from torch_kalman.kalman_filter.gaussian import GaussianStep
+from torch_kalman.kalman_filter.jit import ScriptKalmanFilter
 from torch_kalman.kalman_filter.predictions import Predictions
 from torch_kalman.kalman_filter.simulations import Simulations
 from torch_kalman.process.regression import Process
 
 
 class KalmanFilter(nn.Module):
+    script_cls = ScriptKalmanFilter
     kf_step = GaussianStep
 
     def __init__(self,
                  processes: Sequence[Process],
                  measures: Sequence[str],
+                 process_covariance: Optional[Covariance] = None,
+                 measure_covariance: Optional[Covariance] = None,
+                 initial_covariance: Optional[Covariance] = None,
                  compiled: bool = True,
                  **kwargs):
+        """
+        :param processes: A list of `Process` modules.
+        :param measures: A list of strings specifying the names of the dimensions of the time-series being measured.
+        :param process_covariance: A module created with `Covariance.from_processes(processes, cov_type='process')`.
+        :param measure_covariance: A module created with `Covariance.from_measures(measures)`.
+        :param initial_covariance: A module created with `Covariance.from_processes(processes, cov_type='initial')`.
+        :param compiled: Should the core modules be passed through torch.jit.script to compile them to TorchScript?
+        Can be disabled if compilation issues arise.
+        :param kwargs: Further arguments passed to ScriptKalmanFilter's child-classes (base-class takes no kwargs).
+        """
         super(KalmanFilter, self).__init__()
+
         self._validate(processes, measures)
-        self.script_module = ScriptKalmanFilter(
+
+        # covariances:
+        if process_covariance is None:
+            process_covariance = Covariance.from_processes(processes, cov_type='process')
+
+        if measure_covariance is None:
+            measure_covariance = Covariance.from_measures(measures)
+
+        if initial_covariance is None:
+            initial_covariance = Covariance.from_processes(processes, cov_type='initial')
+
+        self.script_module = self.script_cls(
             kf_step=self.kf_step(),
             processes=processes,
             measures=measures,
+            process_covariance=process_covariance,
+            measure_covariance=measure_covariance,
+            initial_covariance=initial_covariance,
             **kwargs
         )
         if compiled:
@@ -171,237 +201,3 @@ class KalmanFilter(nn.Module):
                 Hs += [H]
 
         return Simulations(torch.stack(means, 1), H=torch.stack(Hs, 1), R=torch.stack(Rs, 1), kalman_filter=self)
-
-
-class ScriptKalmanFilter(nn.Module):
-
-    def __init__(self,
-                 kf_step: 'GaussianStep',
-                 processes: Sequence[Process],
-                 measures: Sequence[str],
-                 process_covariance: Optional[Covariance] = None,
-                 measure_covariance: Optional[Covariance] = None,
-                 initial_covariance: Optional[Covariance] = None):
-        super(ScriptKalmanFilter, self).__init__()
-
-        self.kf_step = kf_step
-
-        # measures:
-        self.measures = measures
-        self.measure_to_idx = {m: i for i, m in enumerate(self.measures)}
-
-        # processes:
-        self.processes = nn.ModuleDict()
-        self.process_to_slice: Dict[str, Tuple[int, int]] = {}
-        self.state_rank = 0
-        self.no_pcov_idx = []
-        self.no_icov_idx = []
-        for p in processes:
-            assert p.measure, f"{p.id} does not have its `measure` set"
-            self.processes[p.id] = p
-            self.process_to_slice[p.id] = (self.state_rank, self.state_rank + len(p.state_elements))
-
-            for i, se in enumerate(p.state_elements):
-                if p.no_pcov_state_elements is not None and se in p.no_pcov_state_elements:
-                    self.no_pcov_idx.append(self.state_rank + i)
-                if p.no_icov_state_elements is not None and se in p.no_icov_state_elements:
-                    self.no_icov_idx.append(self.state_rank + i)
-            self.state_rank += len(p.state_elements)
-
-        # covariances:
-        if process_covariance is None:
-            process_covariance = Covariance(rank=self.state_rank, empty_idx=self.no_pcov_idx, init_diag_multi=.01)
-        self.process_covariance = process_covariance.set_id('process_covariance')
-        if measure_covariance is None:
-            measure_covariance = Covariance(rank=len(self.measures), init_diag_multi=1.)
-        self.measure_covariance = measure_covariance.set_id('measure_covariance')
-        if initial_covariance is None:
-            initial_covariance = Covariance(rank=self.state_rank, empty_idx=self.no_icov_idx, method='low_rank')
-        self.initial_covariance = initial_covariance.set_id('initial_covariance')
-        # can disable for debugging/tests:
-        self._scale_by_measure_var = True
-
-    def get_initial_state(self,
-                          input: Tensor,
-                          init_mean_kwargs: Dict[str, Dict[str, Tensor]],
-                          init_cov_kwargs: Dict[str, Tensor],
-                          measure_cov: Tensor) -> Tuple[Tensor, Tensor]:
-        num_groups = input.shape[0]
-
-        measure_scaling = self._get_measure_scaling(measure_cov)
-
-        # initial state mean:
-        mean = torch.zeros(num_groups, self.state_rank)
-        for pid, p in self.processes.items():
-            _process_slice = slice(*self.process_to_slice[pid])
-            mean[:, _process_slice] = p.get_initial_state_mean(init_mean_kwargs.get(pid, {}))
-
-        mean = mean * measure_scaling
-
-        # initial cov:
-        cov = self.initial_covariance(init_cov_kwargs, cache={})
-        if len(cov.shape) == 2:
-            cov = cov.expand(num_groups, -1, -1)
-        diag_multi = torch.diag_embed(measure_scaling)
-        cov = diag_multi @ cov @ diag_multi
-        return mean, cov
-
-    def get_design_mats(self,
-                        num_groups: int,
-                        design_kwargs: Dict[str, Dict[str, Tensor]],
-                        cache: Optional[Dict[str, Tensor]] = None) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-        if cache is None:
-            cache = {}
-        _empty = ['_']
-        if 'base_F' not in cache:
-            cache['base_F'] = torch.zeros((num_groups, self.state_rank, self.state_rank))
-            for pid, process in self.processes.items():
-                tv_kwargs = _empty
-                if process.time_varying_kwargs is not None:
-                    tv_kwargs = process.time_varying_kwargs
-                if process.f_kwarg not in tv_kwargs:
-                    _process_slice = slice(*self.process_to_slice[pid])
-                    cache['base_F'][:, _process_slice, _process_slice] = \
-                        process(design_kwargs.get(pid, {}), which='f', cache=cache)
-        if 'base_H' not in cache:
-            cache['base_H'] = torch.zeros((num_groups, len(self.measures), self.state_rank))
-            for pid, process in self.processes.items():
-                tv_kwargs = _empty
-                if process.time_varying_kwargs is not None:
-                    tv_kwargs = process.time_varying_kwargs
-                if process.h_kwarg not in tv_kwargs:
-                    _process_slice = slice(*self.process_to_slice[pid])
-                    cache['base_H'][:, self.measure_to_idx[process.measure], _process_slice] = \
-                        process(design_kwargs.get(pid, {}), which='h', cache=cache)
-
-        H = cache['base_H'].clone()
-        F = cache['base_F'].clone()
-        for pid, process in self.processes.items():
-            if process.time_varying_kwargs is not None:
-                _process_slice = slice(*self.process_to_slice[pid])
-                if process.h_kwarg in process.time_varying_kwargs:
-                    H[:, self.measure_to_idx[process.measure], _process_slice] = \
-                        process(design_kwargs.get(pid, {}), which='h', cache=cache)
-                if process.f_kwarg in process.time_varying_kwargs:
-                    F[:, _process_slice, _process_slice] = \
-                        process(design_kwargs.get(pid, {}), which='f', cache=cache)
-
-        R = self.measure_covariance(design_kwargs.get('measure_covariance', {}), cache=cache)
-        if len(R.shape) == 2:
-            R = R.expand(num_groups, -1, -1)
-
-        Q = self.process_covariance(design_kwargs.get('process_covariance', {}), cache=cache)
-        if len(Q.shape) == 2:
-            Q = Q.expand(num_groups, -1, -1)
-        diag_multi = torch.diag_embed(self._get_measure_scaling(R))
-        Q = diag_multi @ Q @ diag_multi
-
-        return F, H, Q, R
-
-    def _get_measure_scaling(self, measure_cov: Tensor) -> Tensor:
-        Rdiag = measure_cov.diagonal(dim1=-2, dim2=-1)
-        if self._scale_by_measure_var:
-            multi = torch.zeros(measure_cov.shape[0:-2] + (self.state_rank,))
-            for pid, process in self.processes.items():
-                pidx = self.process_to_slice[pid]
-                multi[:, slice(*pidx)] = Rdiag[:, self.measure_to_idx[process.measure]].sqrt().unsqueeze(-1)
-            assert (multi > 0).all()
-        else:
-            multi = torch.ones(measure_cov.shape[0:-2] + (self.state_rank,))
-        return multi
-
-    def forward(self,
-                input: Optional[Tensor],
-                static_kwargs: Dict[str, Dict[str, Tensor]],
-                time_varying_kwargs: Dict[str, Dict[str, List[Tensor]]],
-                init_mean_kwargs: Dict[str, Dict[str, Tensor]],
-                n_step: int = 1,
-                out_timesteps: Optional[int] = None,
-                initial_state: Optional[Tuple[Tensor, Tensor]] = None,
-                _disable_cache: bool = False) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-
-        assert n_step > 0
-
-        init_cov_kwargs = static_kwargs.pop('initial_covariance', {})
-        design_cache = {}
-
-        if input is None:
-            if out_timesteps is None:
-                raise RuntimeError("If `input` is None must pass `out_timesteps`")
-            if initial_state is None:
-                raise RuntimeError("If `input` is None must pass `initial_state`")
-            inputs = []
-        else:
-            if len(input.shape) != 3:
-                raise ValueError(f"Expected len(input.shape) == 3 (group,time,measure)")
-            if input.shape[-1] != len(self.measures):
-                raise ValueError(f"Expected input.shape[-1] == {len(self.measures)} (len(self.measures))")
-
-            inputs = input.unbind(1)
-            if out_timesteps is None:
-                out_timesteps = len(inputs)
-
-            if initial_state is None:
-                design_kwargs = self._get_design_kwargs_for_time(0, static_kwargs, time_varying_kwargs)
-                *_, R = self.get_design_mats(
-                    num_groups=inputs[0].shape[0], design_kwargs=design_kwargs, cache=design_cache
-                )
-                initial_state = self.get_initial_state(
-                    input=input,
-                    init_mean_kwargs=init_mean_kwargs,
-                    init_cov_kwargs=init_cov_kwargs,
-                    measure_cov=R
-                )
-
-        mean1step, cov1step = initial_state
-        num_groups = mean1step.shape[0]
-
-        # build design-mats:
-        Fs: List[Tensor] = []
-        Hs: List[Tensor] = []
-        Qs: List[Tensor] = []
-        Rs: List[Tensor] = []
-        for t in range(out_timesteps):
-            design_kwargs = self._get_design_kwargs_for_time(t, static_kwargs, time_varying_kwargs)
-            if _disable_cache:
-                design_cache = {}
-            F, H, Q, R = self.get_design_mats(num_groups=num_groups, design_kwargs=design_kwargs, cache=design_cache)
-            Fs += [F]
-            Hs += [H]
-            Qs += [Q]
-            Rs += [R]
-
-        # generate predictions:
-        means: List[Tensor] = []
-        covs: List[Tensor] = []
-        for ts in range(out_timesteps):
-            # ts: the time of the state
-            # tu: the time of the update
-            tu = ts - n_step
-            if tu >= 0:
-                if tu < len(inputs):  # TODO: add unit-test
-                    mean1step, cov1step = self.kf_step.update(inputs[tu], mean1step, cov1step, H=Hs[tu], R=Rs[tu])
-                mean1step, cov1step = self.kf_step.predict(mean1step, cov1step, F=Fs[tu], Q=Qs[tu])
-            mean, cov = mean1step, cov1step
-            for h in range(1, n_step):
-                mean, cov = self.kf_step.predict(mean, cov, F=Fs[tu + h], Q=Qs[tu + h])
-            means += [mean]
-            covs += [cov]
-
-        return torch.stack(means, 1), torch.stack(covs, 1), torch.stack(Rs, 1), torch.stack(Hs, 1)
-
-    def _get_design_kwargs_for_time(
-            self,
-            time: int,
-            static_kwargs: Dict[str, Dict[str, Tensor]],
-            time_varying_kwargs: Dict[str, Dict[str, List[Tensor]]]
-    ) -> Dict[str, Dict[str, Tensor]]:
-        design_kwargs = static_kwargs.copy()
-        for id_, id_tv_kwargs in time_varying_kwargs.items():
-            if id_ not in design_kwargs.keys():
-                design_kwargs[id_] = {}
-            else:
-                design_kwargs[id_] = design_kwargs[id_].copy()
-            for k, v in id_tv_kwargs.items():
-                design_kwargs[id_][k] = v[time]
-        return design_kwargs

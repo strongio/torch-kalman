@@ -371,3 +371,10 @@ class TestKalmanFilter(TestCase):
         self.assertTupleEqual(tuple(pred_time3.covs.shape), (2, 1, ndim, ndim))
         self.assertTrue((pred_time3.state_means == pred.state_means[:, 2, :]).all())
         self.assertTrue((pred_time3.state_covs == pred.state_covs[:, 2, :, :]).all())
+
+    @torch.no_grad()
+    def test_no_proc_variance(self):
+        kf = KalmanFilter(processes=[LinearModel(id='lm', predictors=['x1', 'x2'])], measures=['y'])
+        cov = kf.script_module.process_covariance({}, {})
+        self.assertEqual(cov.shape[-1], 2)
+        self.assertTrue((cov == 0).all())

@@ -1,5 +1,5 @@
 import math
-from typing import List, Dict, Iterable, Optional, Tuple, Sequence
+from typing import List, Dict, Iterable, Optional, Tuple, Sequence, Union
 from warnings import warn
 
 import torch
@@ -10,10 +10,33 @@ from torch_kalman.process.base import Process
 
 
 class Covariance(nn.Module):
+    @classmethod
+    def from_processes(cls, processes: Sequence[Process], cov_type: str, **kwargs) -> 'Covariance':
+        assert cov_type in {'process', 'initial'}
+        state_rank = 0
+        no_cov_idx = []
+        for p in processes:
+            no_cov_elements = getattr(p, f'no_{cov_type[0]}cov_state_elements') or []
+            for i, se in enumerate(p.state_elements):
+                if se in no_cov_elements:
+                    no_cov_idx.append(state_rank + i)
+            state_rank += len(p.state_elements)
+        if cov_type == 'process' and 'init_diag_multi' not in kwargs:
+            kwargs['init_diag_multi'] = .01
+        return cls(rank=state_rank, empty_idx=no_cov_idx, id=f'{cov_type}_covariance', **kwargs)
+
+    @classmethod
+    def from_measures(cls, measures: Sequence[str], **kwargs) -> 'Covariance':
+        if 'method' not in kwargs and len(measures) > 5:
+            kwargs['method'] = 'low_rank'
+        if 'init_diag_multi' not in kwargs:
+            kwargs['init_diag_multi'] = 1.0
+        return cls(rank=len(measures), id='measure_covariance', **kwargs)
+
     def __init__(self,
                  rank: int,
                  empty_idx: List[int] = (),
-                 var_predict_modules: Optional[nn.ModuleDict] = None,
+                 var_predict: Union[nn.Module, nn.ModuleDict] = None,
                  time_varying_kwargs: Optional[List[str]] = None,
                  id: Optional[str] = None,
                  method: str = 'log_cholesky',
@@ -22,12 +45,14 @@ class Covariance(nn.Module):
         """
         :param rank: The number of elements along the diagonal.
         :param empty_idx: In some cases (e.g. process-covariance) we will
-        :param var_predict_modules: A dictionary where the values are nn.Modules that will predict a (log) multiplier
-        for the variance. These should output real-values with shape `(num_groups, self.param_rank)`; these values will
-         then be converted to multipliers by applying `torch.exp` (i.e. don't pass the output through a softplus). The
-         key(s) of this dictionary is used to identify the keyword-arg that will be passed to the KalmanFilter's
-         `forward` pass (e.g. `{'group_ids' : Embedding()}` would allow you to call the KalmanFilter with
-         `forward(*args, group_ids=group_ids)` and predict group-specific variances.
+        :param var_predict: A nn.Module (or dictionary of these) that will predict a (log) multiplier for the variance.
+        These should output real-values with shape `(num_groups, self.param_rank)`; these values will then be
+        converted to multipliers by applying `torch.exp` (i.e. don't pass the output through a softplus). If a single
+        Module is passed, you should pass `{self.id}__predictors` to the KalmanFilter's `forward` pass to supply
+        predictors. If a dictionary of module(s) is passed, the key(s) of this dictionary is used to identify the
+        keyword-arg that will be passed to the KalmanFilter's `forward` method (e.g. `{'group_ids' : Embedding()}`
+        would allow you to call the KalmanFilter with `forward(*args, group_ids=group_ids)` and predict group-specific
+        variances).
         :param time_varying_kwargs: If `var_predict_modules` is specified, we need to specify which (if any) of the
         keyword-args contain inputs that vary with each timestep.
         :param id: Identifier for this covariance. Typically left `None` and set when passed to the KalmanFilter.
@@ -73,9 +98,17 @@ class Covariance(nn.Module):
         else:
             raise NotImplementedError(method)
 
-        if isinstance(var_predict_modules, dict):
-            var_predict_modules = nn.ModuleDict(var_predict_modules)
-        self.var_predict_modules = var_predict_modules
+        self.var_predict_modules: Optional[nn.ModuleDict] = None
+        if isinstance(var_predict, nn.ModuleDict):
+            self.var_predict_modules = var_predict
+        elif isinstance(var_predict, nn.Module):
+            self.var_predict_modules = nn.ModuleDict({'predictors': var_predict})
+        elif isinstance(var_predict, dict):
+            self.var_predict_modules = nn.ModuleDict(var_predict)
+        elif var_predict is not None:
+            raise ValueError(
+                f"If `var_predict` is passed, should be a nn.Module or dictionary of these. Got {type(var_predict)}"
+            )
 
         self.expected_kwargs: Optional[List[str]] = None
         self.time_varying_kwargs = time_varying_kwargs
@@ -90,7 +123,7 @@ class Covariance(nn.Module):
 
     @jit.ignore
     def set_id(self, id: str) -> 'Covariance':
-        if self.id:
+        if self.id and id != self.id:
             warn(f"Id already set to {self.id}, overwriting")
         self.id = id
         return self
