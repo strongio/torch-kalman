@@ -29,8 +29,8 @@ class KalmanFilter(nn.Module):
             **kwargs
         )
         if compiled:
-            for i, p in enumerate(self.script_module.processes):
-                self.script_module.processes[i] = torch.jit.script(p)
+            for pid, p in self.script_module.processes.items():
+                self.script_module.processes[pid] = torch.jit.script(p)
             self.script_module = torch.jit.script(self.script_module)
 
     @property
@@ -56,8 +56,8 @@ class KalmanFilter(nn.Module):
                 p.measure = measures[0]
 
     def named_processes(self) -> Iterable[Tuple[str, Process]]:
-        for process in self.script_module.processes:
-            yield process.id, process
+        for pid in self.script_module.processes:
+            yield pid, self.script_module.processes[pid]
 
     def named_covariances(self) -> Iterable[Tuple[str, Covariance]]:
         return [
@@ -210,14 +210,14 @@ class ScriptKalmanFilter(nn.Module):
 
         # covariances:
         if process_covariance is None:
-            process_covariance = Covariance(id='process_cov', rank=self.state_rank, empty_idx=self.no_pcov_idx)
-        self.process_covariance = process_covariance
+            process_covariance = Covariance(rank=self.state_rank, empty_idx=self.no_pcov_idx)
+        self.process_covariance = process_covariance.set_id('process_covariance')
         if measure_covariance is None:
-            measure_covariance = Covariance(id='measure_cov', rank=len(self.measures))
-        self.measure_covariance = measure_covariance
+            measure_covariance = Covariance(rank=len(self.measures))
+        self.measure_covariance = measure_covariance.set_id('measure_covariance')
         if initial_covariance is None:
-            initial_covariance = Covariance(id='initial_cov', rank=self.state_rank, empty_idx=self.no_icov_idx)
-        self.initial_covariance = initial_covariance
+            initial_covariance = Covariance(rank=self.state_rank, empty_idx=self.no_icov_idx, method='low_rank')
+        self.initial_covariance = initial_covariance.set_id('initial_covariance')
         # can disable for debugging/tests:
         self._scale_by_measure_var = True
 

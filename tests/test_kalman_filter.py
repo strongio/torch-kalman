@@ -191,7 +191,7 @@ class TestKalmanFilter(TestCase):
             compiled=False
         )
         kf.script_module._scale_by_measure_var = False
-        kf.state_dict()['script_module.processes.0.init_mean'][:] = torch.tensor([1.5, -0.5])
+        kf.state_dict()['script_module.processes.lm.init_mean'][:] = torch.tensor([1.5, -0.5])
         kf.state_dict()['script_module.measure_covariance.cholesky_log_diag'][0] = np.log(.1 ** .5)
 
         num_times = 100
@@ -328,7 +328,7 @@ class TestKalmanFilter(TestCase):
         kf.script_module._scale_by_measure_var = False
         data = torch.arange(7).view(1, -1, 1)
         for init_state in [0., 1.]:
-            kf.state_dict()['script_module.processes.0.init_mean'][:] = torch.ones(1) * init_state
+            kf.state_dict()['script_module.processes.s1.init_mean'][:] = torch.ones(1) * init_state
             _state['call_counter'] = 0
             pred = kf(data)
             # make sure test was called each time:
