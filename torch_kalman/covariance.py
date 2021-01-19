@@ -15,7 +15,8 @@ class Covariance(nn.Module):
                  time_varying_kwargs: Optional[List[str]] = None,
                  id: Optional[str] = None,
                  empty_idx: List[int] = (),
-                 method: str = 'log_cholesky'):
+                 method: str = 'log_cholesky',
+                 init_diag_multi: float = 0.1):
 
         super(Covariance, self).__init__()
 
@@ -34,13 +35,13 @@ class Covariance(nn.Module):
         param_rank = len([i for i in range(self.rank) if i not in self.empty_idx])
         self.method = method
         if self.method == 'log_cholesky':
-            self.cholesky_log_diag = nn.Parameter(.1 * torch.randn(param_rank))
+            self.cholesky_log_diag = nn.Parameter(.1 * torch.randn(param_rank) + math.log(init_diag_multi))
             n_off = int(param_rank * (param_rank - 1) / 2)
             self.cholesky_off_diag = nn.Parameter(.1 * torch.randn(n_off))
         elif self.method == 'low_rank':
             low_rank = int(math.sqrt(param_rank))
             self.lr_mat = nn.Parameter(data=.01 * torch.randn(param_rank, low_rank))
-            self.log_std_devs = nn.Parameter(data=.1 * torch.randn(param_rank) - 1)
+            self.log_std_devs = nn.Parameter(data=.1 * torch.randn(param_rank) + math.log(init_diag_multi))
         else:
             raise NotImplementedError(method)
 

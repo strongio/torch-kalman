@@ -210,10 +210,10 @@ class ScriptKalmanFilter(nn.Module):
 
         # covariances:
         if process_covariance is None:
-            process_covariance = Covariance(rank=self.state_rank, empty_idx=self.no_pcov_idx)
+            process_covariance = Covariance(rank=self.state_rank, empty_idx=self.no_pcov_idx, init_diag_multi=.01)
         self.process_covariance = process_covariance.set_id('process_covariance')
         if measure_covariance is None:
-            measure_covariance = Covariance(rank=len(self.measures))
+            measure_covariance = Covariance(rank=len(self.measures), init_diag_multi=1.)
         self.measure_covariance = measure_covariance.set_id('measure_covariance')
         if initial_covariance is None:
             initial_covariance = Covariance(rank=self.state_rank, empty_idx=self.no_icov_idx, method='low_rank')

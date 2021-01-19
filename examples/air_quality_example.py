@@ -176,11 +176,12 @@ def inverse_transform(df: pd.DataFrame, col_means: pd.Series) -> pd.DataFrame:
         df[col] *= df['measure'].map(col_means.to_dict()) # inverse scaling
     return df
 
-pred = kf_first(
-    dataset_train.tensors[0], 
-    start_datetimes=dataset_train.start_datetimes,
-    out_timesteps=dataset_all.tensors[0].shape[1]
-)
+with torch.no_grad():
+    pred = kf_first(
+        dataset_train.tensors[0], 
+        start_datetimes=dataset_train.start_datetimes,
+        out_timesteps=dataset_all.tensors[0].shape[1]
+    )
 
 df_pred = inverse_transform(pred.to_dataframe(dataset_all), col_means)
 

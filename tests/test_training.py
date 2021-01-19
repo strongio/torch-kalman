@@ -77,27 +77,30 @@ class TestTraining(unittest.TestCase):
         def _make_kf():
             return KalmanFilter(
                 processes=[
-                              LocalLevel(id=f'll{i}', measure=str(i))
+                              LocalLevel(id=f'll{i + 1}', measure=str(i + 1))
                               for i in range(ndim)
                           ] + [
-                              LinearModel(id=f'lm{i}', predictors=['x1', 'x2', 'x3', 'x4', 'x5'], measure=str(i))
+                              LinearModel(id=f'lm{i + 1}',
+                                          predictors=['x1', 'x2', 'x3', 'x4', 'x5'],
+                                          measure=str(i + 1))
                               for i in range(ndim)
                           ],
-                measures=[str(i) for i in range(ndim)]
+                measures=[str(i + 1) for i in range(ndim)]
             )
 
         # simulate:
         X = torch.randn((num_groups, num_times, 5))
         kf_generator = _make_kf()
         with torch.no_grad():
-            kf_generator.state_dict()['script_module.process_covariance.cholesky_log_diag'] -= 2.
+            for i in range(ndim):
+                kf_generator.state_dict()[f'script_module.processes.lm{i + 1}.init_mean'][:] += torch.randn(5)
             sim = kf_generator.simulate(out_timesteps=num_times, num_sims=num_groups, X=X)
             y = sim.sample()
         assert not y.requires_grad
 
         # train:
         kf_learner = _make_kf()
-        optimizer = torch.optim.LBFGS(kf_learner.parameters(), max_iter=10)
+        optimizer = torch.optim.LBFGS(kf_learner.parameters(), lr=.5, max_iter=10)
         forward_times = []
         backward_times = []
 
@@ -115,8 +118,8 @@ class TestTraining(unittest.TestCase):
             # print(f'[{datetime.datetime.now().time()}] {loss.item()}')
             return loss
 
-        print("\nTraining for 5 epochs...")
-        for i in range(5):
+        print("\nTraining for 6 epochs...")
+        for i in range(6):
             loss = optimizer.step(closure)
             print("loss:", loss.item())
 
@@ -144,7 +147,6 @@ class TestTraining(unittest.TestCase):
         )
 
         # train:
-        kf.state_dict()['script_module.measure_covariance.cholesky_log_diag'] -= 1
         optimizer = torch.optim.LBFGS([p for n, p in kf.named_parameters() if 'measure_covariance' not in n],
                                       lr=.25,
                                       max_iter=10)
@@ -159,8 +161,8 @@ class TestTraining(unittest.TestCase):
             loss.backward()
             return loss
 
-        print("\nTraining for 10 epochs...")
-        for i in range(10):
+        print("\nTraining for 12 epochs...")
+        for i in range(12):
             loss = optimizer.step(closure)
             print("loss:", loss.item())
 
