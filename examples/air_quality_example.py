@@ -21,10 +21,13 @@
 # ```
 # %matplotlib inline
 
+import copy
+
 import torch
 from torch.optim import LBFGS
 
 from torch_kalman.kalman_filter import KalmanFilter
+from torch_kalman.covariance import Covariance
 from torch_kalman.process import LocalLevel, LocalTrend, LinearModel, FourierSeason
 from torch_kalman.utils.data import TimeSeriesDataset
 
@@ -115,15 +118,27 @@ dataset_train, dataset_val
 #
 # The `KalmanFilter` subclasses `torch.nn.Module`. We specify the model by passing `processes` that capture the behaviors of our `measures`.
 
+# +
 processes = []
 for measure in measures_pp:
     processes.extend([
         LocalTrend(id=f'{measure}_trend', measure=measure),
         LocalLevel(id=f'{measure}_local_level', decay=(.90,1.00), measure=measure),
-        FourierSeason(id=f'{measure}_day_in_year', period=365.25 / 7., dt_unit='W', K=2, measure=measure)
+        FourierSeason(id=f'{measure}_day_in_year', period=365.25 / 7., dt_unit='W', K=4, measure=measure)
     ])
-kf_first = KalmanFilter(measures=measures_pp, processes=processes)
-                      #measure_var_predict=('seasonal',dict(K=2,period='yearly',dt_unit='W')))
+
+#
+predict_variance = torch.nn.Embedding(
+                num_embeddings=len(dataset_all.group_names), embedding_dim=len(measures_pp), padding_idx=0
+            )
+group_names_to_group_ids = {g : i for i,g in enumerate(dataset_all.group_names)}
+
+kf_first = KalmanFilter(
+    measures=measures_pp, 
+    processes=processes,
+    measure_covariance=Covariance(rank=len(measures_pp), var_predict_modules={'group_ids' : predict_variance})
+)
+# -
 
 # Here we're showing off a few useful features of `torch-kalman`:
 #
@@ -143,17 +158,19 @@ def closure():
     pred = kf_first(
         dataset_train.tensors[0], 
         start_datetimes=dataset_train.start_datetimes, 
+        group_ids=[group_names_to_group_ids[g] for g in dataset_train.group_names]
     )
     loss = -pred.log_prob(dataset_train.tensors[0]).mean()
     loss.backward()
     return loss
 
-for epoch in range(15):
+for epoch in range(12):
     train_loss = kf_first.opt.step(closure).item()
     with torch.no_grad():
         pred = kf_first(
             dataset_val.tensors[0], 
-            start_datetimes=dataset_val.start_datetimes
+            start_datetimes=dataset_val.start_datetimes,
+            group_ids=[group_names_to_group_ids[g] for g in dataset_val.group_names]
         )
         val_loss = -pred.log_prob(dataset_val.tensors[0]).mean().item()
     print(f"EPOCH {epoch}, TRAIN LOSS {train_loss}, VAL LOSS {val_loss}")
@@ -180,6 +197,7 @@ with torch.no_grad():
     pred = kf_first(
         dataset_train.tensors[0], 
         start_datetimes=dataset_train.start_datetimes,
+        group_ids=[group_names_to_group_ids[g] for g in dataset_train.group_names],
         out_timesteps=dataset_all.tensors[0].shape[1]
     )
 
@@ -219,7 +237,7 @@ for _dataset in (dataset_all, dataset_train, dataset_val):
 # +
 kf_pred = KalmanFilter(
     measures=measures_pp,
-    processes=processes + [
+    processes=[copy.deepcopy(p) for p in processes] + [
         LinearModel(id=f'{m}_predictors', predictors=predictors_pp, measure=m)
         for m in measures_pp
     ]
@@ -235,7 +253,7 @@ def closure():
     loss.backward()
     return loss
 
-for epoch in range(20):
+for epoch in range(15):
     train_loss = kf_pred.opt.step(closure).item()
     y, X = dataset_val.tensors
     with torch.no_grad():
@@ -246,12 +264,13 @@ for epoch in range(20):
 # +
 y, _ = dataset_train.tensors # only input air-pollutant data from 'train' period
 _, X = dataset_all.tensors # but provide exogenous predictors from both 'train' and 'validation' periods
-pred = kf_pred(
-    y, 
-    X=X, 
-    start_datetimes=dataset_train.start_datetimes,
-    out_timesteps=X.shape[1]
-)
+with torch.no_grad():
+    pred = kf_pred(
+        y, 
+        X=X, 
+        start_datetimes=dataset_train.start_datetimes,
+        out_timesteps=X.shape[1]
+    )
 
 print(
     pred.plot(inverse_transform(pred.to_dataframe(dataset_all).query("group=='Changping'"), col_means),split_dt=SPLIT_DT)

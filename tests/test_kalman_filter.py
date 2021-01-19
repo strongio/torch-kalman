@@ -97,7 +97,7 @@ class TestKalmanFilter(TestCase):
         not_compilable = Process(id='not_compilable',
                                  state_elements=['position'],
                                  h_module=lambda x=None: h_module(x),
-                                 f_modules={k: lambda x=None: v(x) for k, v in f_modules.items()})
+                                 f_tensors={'position->position': torch.ones(1)})
         with self.assertRaises(RuntimeError) as cm:
             torch_kf = KalmanFilter(
                 processes=[not_compilable],

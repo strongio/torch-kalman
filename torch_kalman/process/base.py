@@ -55,6 +55,8 @@ class Process(nn.Module):
 
         # transition matrix:
         self.f_tensors = f_tensors
+        if isinstance(f_modules, dict):
+            f_modules = nn.ModuleDict(f_modules)
         self.f_modules = f_modules
         self.f_kwarg = f_kwarg
 
@@ -80,13 +82,13 @@ class Process(nn.Module):
         if self.expected_init_mean_kwargs:
             for key in self.expected_init_mean_kwargs:
                 found_key, value = get_owned_kwarg(self.id, key, kwargs)
-                yield found_key, key, 'init_mean', value
+                yield found_key, key, 'init_mean', torch.as_tensor(value)
         for key in [self.f_kwarg, self.h_kwarg]:
             if key == '':
                 continue
             found_key, value = get_owned_kwarg(self.id, key, kwargs)
-            key_type = 'time_varying' if key in self.time_varying_kwargs else 'static'
-            yield found_key, key, key_type, value
+            key_type = 'time_varying' if key in (self.time_varying_kwargs or []) else 'static'
+            yield found_key, key, key_type, torch.as_tensor(value)
 
     def forward(self,
                 inputs: Dict[str, Tensor],

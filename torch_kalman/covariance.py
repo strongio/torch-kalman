@@ -1,22 +1,50 @@
 import math
-from typing import List, Dict, Iterable, Optional, Tuple
+from typing import List, Dict, Iterable, Optional, Tuple, Sequence
 from warnings import warn
 
 import torch
 
 from torch import Tensor, nn, jit
 from torch_kalman.internals.utils import get_owned_kwarg
+from torch_kalman.process.base import Process
 
 
 class Covariance(nn.Module):
     def __init__(self,
                  rank: int,
-                 modules: Optional[nn.ModuleDict] = None,
+                 empty_idx: List[int] = (),
+                 var_predict_modules: Optional[nn.ModuleDict] = None,
                  time_varying_kwargs: Optional[List[str]] = None,
                  id: Optional[str] = None,
-                 empty_idx: List[int] = (),
                  method: str = 'log_cholesky',
-                 init_diag_multi: float = 0.1):
+                 init_diag_multi: float = 0.1,
+                 var_predict_multi: float = 0.1):
+        """
+        :param rank: The number of elements along the diagonal.
+        :param empty_idx: In some cases (e.g. process-covariance) we will
+        :param var_predict_modules: A dictionary where the values are nn.Modules that will predict a (log) multiplier
+        for the variance. These should output real-values with shape `(num_groups, self.param_rank)`; these values will
+         then be converted to multipliers by applying `torch.exp` (i.e. don't pass the output through a softplus). The
+         key(s) of this dictionary is used to identify the keyword-arg that will be passed to the KalmanFilter's
+         `forward` pass (e.g. `{'group_ids' : Embedding()}` would allow you to call the KalmanFilter with
+         `forward(*args, group_ids=group_ids)` and predict group-specific variances.
+        :param time_varying_kwargs: If `var_predict_modules` is specified, we need to specify which (if any) of the
+        keyword-args contain inputs that vary with each timestep.
+        :param id: Identifier for this covariance. Typically left `None` and set when passed to the KalmanFilter.
+        :param method: The parameterization for the covariance. The default, "log_cholesky", parameterizes the
+        covariance using the cholesky factorization (which is itself split into two tensors: the log-transformed
+        diagonal elements and the off-diagonal). The other currently supported option is "low_rank", which
+        parameterizes the covariance with two tensors: (a) the log-transformed std-devations, and (b) a 'low rank' G*K
+        tensor where G is the number of random-effects and K is int(sqrt(G)). Then the covariance is D + V @ V.t()
+        where D is a diagonal-matrix with the std-deviations**2, and V is the low-rank tensor.
+        :param init_diag_multi: A float that will be applied as a multiplier to the initial values along the diagonal.
+        This can be useful to provide intelligent starting-values to speed up optimization.
+        :param var_predict_multi: If `var_predict_modules` are standard modules like `torch.nn.Linear` or
+        `torch.nn.Embedding`, the random inits can often result in somewhat unrealistic variance-multipliers; these
+        poor inits can make early optimization unstable. `var_predict_multi` (default 0.1) simply multiplies the output
+        of `var_predict_modules` before passing them though `torch.exp`; this serves to dampen initial outputs while
+        still allowing large predictions if these are eventually warranted.
+        """
 
         super(Covariance, self).__init__()
 
@@ -32,27 +60,33 @@ class Covariance(nn.Module):
         self.cholesky_off_diag: Optional[nn.Parameter] = None
         self.lr_mat: Optional[nn.Parameter] = None
         self.log_std_devs: Optional[nn.Parameter] = None
-        param_rank = len([i for i in range(self.rank) if i not in self.empty_idx])
+        self.param_rank = len([i for i in range(self.rank) if i not in self.empty_idx])
         self.method = method
         if self.method == 'log_cholesky':
-            self.cholesky_log_diag = nn.Parameter(.1 * torch.randn(param_rank) + math.log(init_diag_multi))
-            n_off = int(param_rank * (param_rank - 1) / 2)
+            self.cholesky_log_diag = nn.Parameter(.1 * torch.randn(self.param_rank) + math.log(init_diag_multi))
+            n_off = int(self.param_rank * (self.param_rank - 1) / 2)
             self.cholesky_off_diag = nn.Parameter(.1 * torch.randn(n_off))
         elif self.method == 'low_rank':
-            low_rank = int(math.sqrt(param_rank))
-            self.lr_mat = nn.Parameter(data=.01 * torch.randn(param_rank, low_rank))
-            self.log_std_devs = nn.Parameter(data=.1 * torch.randn(param_rank) + math.log(init_diag_multi))
+            low_rank = int(math.sqrt(self.param_rank))
+            self.lr_mat = nn.Parameter(data=.01 * torch.randn(self.param_rank, low_rank))
+            self.log_std_devs = nn.Parameter(data=.1 * torch.randn(self.param_rank) + math.log(init_diag_multi))
         else:
             raise NotImplementedError(method)
 
+        if isinstance(var_predict_modules, dict):
+            var_predict_modules = nn.ModuleDict(var_predict_modules)
+        self.var_predict_modules = var_predict_modules
+
         self.expected_kwargs: Optional[List[str]] = None
-        self.modules = modules
-        if self.modules is not None:
-            assert set(time_varying_kwargs).issubset(self.modules.keys())
-            self.expected_kwargs: List[str] = []
-            for expected_kwarg, module in self.modules.items():
-                self.expected_kwargs.append(expected_kwarg)
         self.time_varying_kwargs = time_varying_kwargs
+
+        self.var_predict_multi = var_predict_multi
+        if self.var_predict_modules is not None:
+            if time_varying_kwargs is not None:
+                assert set(time_varying_kwargs).issubset(self.var_predict_modules.keys())
+            self.expected_kwargs: List[str] = []
+            for expected_kwarg, module in self.var_predict_modules.items():
+                self.expected_kwargs.append(expected_kwarg)
 
     @jit.ignore
     def set_id(self, id: str) -> 'Covariance':
@@ -65,8 +99,8 @@ class Covariance(nn.Module):
     def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, str, Tensor]]:
         for key in (self.expected_kwargs or []):
             found_key, value = get_owned_kwarg(self.id, key, kwargs)
-            key_type = 'time_varying' if key in self.time_varying_kwargs else 'static'
-            yield found_key, key, key_type, value
+            key_type = 'time_varying' if key in (self.time_varying_kwargs or []) else 'static'
+            yield found_key, key, key_type, torch.as_tensor(value)
 
     @staticmethod
     def log_chol_to_chol(log_diag: torch.Tensor, off_diag: torch.Tensor) -> torch.Tensor:
@@ -126,11 +160,11 @@ class Covariance(nn.Module):
             mini_cov = mini_cov + torch.eye(mini_cov.shape[-1]) * 1e-12
 
         # TODO: cache the base-cov if inputs are time-varying?
-        if self.modules is not None:
-            for expected_kwarg, module in self.modules.items():
+        if self.var_predict_modules is not None:
+            for expected_kwarg, module in self.var_predict_modules.items():
                 if expected_kwarg not in inputs:
                     raise TypeError(f"`{self.id}` missing required kwarg `{expected_kwarg}`")
-                diag_multi = torch.diag_embed(module(inputs[expected_kwarg]))
+                diag_multi = torch.diag_embed(torch.exp(self.var_predict_multi * module(inputs[expected_kwarg])))
                 mini_cov = diag_multi @ mini_cov @ diag_multi
 
         return pad_covariance(mini_cov, [int(i not in self.empty_idx) for i in range(self.rank)])
