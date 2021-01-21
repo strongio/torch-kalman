@@ -30,9 +30,10 @@ def fourier_model_mat(datetimes: np.ndarray,
         else:
             raise ValueError("Unrecognized `period`.")
 
-    period_int = period.view('int64')
-    time = datetimes / period
-    raise NotImplementedError
+    if not isinstance(datetimes, np.ndarray) and isinstance(getattr(datetimes, 'values', None), np.ndarray):
+        datetimes = datetimes.values
+    period_int = int(period / np.timedelta64(1, 'ns'))
+    time_int = (datetimes.astype("datetime64[ns]") - np.datetime64(0, 'ns')).astype('int64')
 
     output_dataframe = (output_fmt.lower() == 'dataframe')
     if output_dataframe:
@@ -45,7 +46,7 @@ def fourier_model_mat(datetimes: np.ndarray,
     for idx in range(K):
         k = idx + 1
         for is_cos in range(2):
-            val = 2. * np.pi * k * time / period_int
+            val = 2. * np.pi * k * time_int / period_int
             out[..., idx * 2 + is_cos] = np.sin(val) if is_cos == 0 else np.cos(val)
             columns.append(f"{name}_K{k}_{'cos' if is_cos else 'sin'}")
 
