@@ -107,7 +107,7 @@ class TimeSeriesDataset(TensorDataset):
             if train_frac is not None:
                 raise TypeError("Can pass only one of `train_frac`, `dt`.")
             if isinstance(dt, dict):
-                split_times = np.array([dt[group_name] for group_name in self.group_names])
+                split_times = np.array([dt[group_name] for group_name in self.group_names], dtype='datetime64[ns]')
             else:
                 if not isinstance(dt, np.datetime64):
                     dt = np.datetime64(dt, self.dt_unit)
