@@ -21,8 +21,17 @@ class Covariance(nn.Module):
                 if se in no_cov_elements:
                     no_cov_idx.append(state_rank + i)
             state_rank += len(p.state_elements)
-        if cov_type == 'process' and 'init_diag_multi' not in kwargs:
-            kwargs['init_diag_multi'] = .01
+
+        if cov_type == 'process':
+            # by default, assume process cov is less than measure cov:
+            if 'init_diag_multi' not in kwargs:
+                kwargs['init_diag_multi'] = .01
+
+        if cov_type == 'initial' and (state_rank - len(no_cov_idx)) >= 10:
+            # by default, use low-rank parameterization for initial cov:
+            if 'method' not in kwargs:
+                kwargs['method'] = 'low_rank'
+                
         return cls(rank=state_rank, empty_idx=no_cov_idx, id=f'{cov_type}_covariance', **kwargs)
 
     @classmethod
