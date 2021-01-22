@@ -13,7 +13,7 @@ setup(
     packages=find_packages(include='torch_kalman.*'),
     zip_safe=False,
     install_requires=[
-        'torch>=1.1',
+        'torch>=1.7',
         'numpy>=1.4',
         'tqdm>=4.0',
         'filterpy>=1.4',
