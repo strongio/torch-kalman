@@ -115,6 +115,33 @@ class TestKalmanFilter(TestCase):
         )
         self.assertIsInstance(torch_kf(torch.tensor([[-5., 5., 1.]]).unsqueeze(-1)), Predictions)
 
+    @torch.no_grad()
+    def test_equations_decay(self):
+        data = torch.tensor([[-5., 5., 1., 0., 3.]]).unsqueeze(-1)
+        num_times = data.shape[1]
+
+        # make torch kf:
+        torch_kf = KalmanFilter(
+            processes=[LinearModel(id='lm', predictors=['x1', 'x2', 'x3'], process_variance=True, decay=(.95, 1.))],
+            measures=['y']
+        )
+        _kwargs = torch_kf._parse_design_kwargs(
+            input=data, out_timesteps=num_times, X=torch.randn(1, num_times, 3)
+        )
+        _kwargs.pop('init_mean_kwargs')
+        design_kwargs = torch_kf.script_module._get_design_kwargs_for_time(time=0, **_kwargs)
+        F, *_ = torch_kf.script_module.get_design_mats(num_groups=1, design_kwargs=design_kwargs, cache={})
+        F = F.squeeze(0)
+
+        self.assertTrue((torch.diag(F) > .95).all())
+        self.assertTrue((torch.diag(F) < 1.00).all())
+        self.assertGreater(len(set(torch.diag(F).tolist())), 1)
+        for r in range(F.shape[-1]):
+            for c in range(F.shape[-1]):
+                if r == c:
+                    continue
+                self.assertEqual(F[r, c], 0)
+
     @parameterized.expand([(0,), (1,), (2,), (3,)])
     @torch.no_grad()
     def test_equations(self, n_step: int):

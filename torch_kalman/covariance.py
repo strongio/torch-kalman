@@ -31,7 +31,7 @@ class Covariance(nn.Module):
             # by default, use low-rank parameterization for initial cov:
             if 'method' not in kwargs:
                 kwargs['method'] = 'low_rank'
-                
+
         return cls(rank=state_rank, empty_idx=no_cov_idx, id=f'{cov_type}_covariance', **kwargs)
 
     @classmethod

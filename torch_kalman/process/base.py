@@ -40,7 +40,9 @@ class Process(nn.Module):
         :param f_modules: A torch.nn.ModuleDict; each element specifying a transition between state-elements. The keys
         specify the state-elements in the format '{from_el}->{to_el}'. The values are torch.nn.Modules which, when
         called (default with no input; can be overridden in subclasses with self.f_kwarg), will produce that element
-        for the transition matrix.
+        for the transition matrix. Additionally, the key can be 'all_self', in which case the output should have
+        `shape[-1] == len(state_elements)`; this allows specifying the transition of each state-element to itself with
+        a single call.
         :param f_tensors: A dictionary of tensors, specifying elements of the F-matrix. See `f_modules` for key format.
         :param f_kwarg: TODO
         :param init_mean_kwargs: TODO
@@ -186,30 +188,62 @@ class Process(nn.Module):
         return True
 
     def f_forward(self, input: Tensor) -> Tensor:
-        #
+        diag: Optional[Tensor] = None
         assignments: List[Tuple[Tuple[int, int], Tensor]] = []
+
+        # in first pass, convert keys to (r,c)s in the F-matrix, and establish the batch dim:
         num_groups = 1
         if self.f_tensors is not None:
             for from__to, tens in self.f_tensors.items():
                 assert tens is not None
-                from_el, sep, to_el = from__to.partition("->")
-                c = self.se_to_idx[from_el]
-                r = self.se_to_idx[to_el]
+                rc = self._transition_key_to_rc(from__to)
                 if len(tens.shape) > 1:
-                    assert len(tens.shape) == 2 or len(tens.shape) == 2 and tens.shape[-1] == 1 and tens.shape[0] > 1
+                    assert num_groups == 1 or num_groups == tens.shape[0]
                     num_groups = tens.shape[0]
-                assignments.append(((r, c), tens))
+                if rc is None:
+                    assert diag is None
+                    diag = tens
+                else:
+                    assignments.append((rc, tens))
         if self.f_modules is not None:
             for from__to, module in self.f_modules.items():
-                from_el, sep, to_el = from__to.partition("->")
-                c = self.se_to_idx[from_el]
-                r = self.se_to_idx[to_el]
+                rc = self._transition_key_to_rc(from__to)
                 tens = module(input)
                 if len(tens.shape) > 1:
-                    assert len(tens.shape) == 2 or len(tens.shape) == 2 and tens.shape[-1] == 1 and tens.shape[0] > 1
+                    assert num_groups == 1 or num_groups == tens.shape[0]
                     num_groups = tens.shape[0]
-                assignments.append(((r, c), tens))
-        F = torch.zeros(num_groups, len(self.state_elements), len(self.state_elements))
+                if rc is None:
+                    assert diag is None
+                    diag = tens
+                else:
+                    assignments.append((rc, tens))
+
+        # in the second pass, create the F-matrix and assign (r,c)s:
+        state_size = len(self.state_elements)
+        F = torch.zeros(num_groups, state_size, state_size)
+        # common application is diagonal F, efficient to store/assign that as one
+        if diag is not None:
+            if diag.shape[-1] != state_size:
+                assert len(diag.shape) == 1 and diag.shape[0] == 1
+                diag_mat = diag * torch.eye(state_size)
+            else:
+                diag_mat = torch.diag_embed(diag)
+                assert F.shape[-2:] == diag_mat.shape[-2:]
+            F = F + diag_mat
+        # otherwise, go element-by-element:
         for (r, c), tens in assignments:
+            if diag is not None:
+                assert r != c, "cannot have transitions from {se}->{same-se} if `all_self` transition was used."
+            assert len(tens.shape) == 1 or len(tens.shape) == 2 and tens.shape[-1] == 1
             F[:, r, c] = tens
         return F
+
+    def _transition_key_to_rc(self, transition_key: str) -> Optional[Tuple[int, int]]:
+        from_el, sep, to_el = transition_key.partition("->")
+        if sep == '':
+            assert from_el == 'all_self', f"Expected '[from_el]->[to_el]', or 'all_self'. Got '{transition_key}'"
+            return None
+        else:
+            c = self.se_to_idx[from_el]
+            r = self.se_to_idx[to_el]
+            return r, c

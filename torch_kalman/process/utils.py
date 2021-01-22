@@ -6,9 +6,9 @@ from torch import Tensor, nn
 
 
 class SingleOutput(nn.Module):
-    def __init__(self, transform: Optional[torch.nn.Module] = None):
+    def __init__(self, numel: int = 1, transform: Optional[torch.nn.Module] = None):
         super(SingleOutput, self).__init__()
-        self.param = nn.Parameter(.1 * torch.randn(1))
+        self.param = nn.Parameter(.1 * torch.randn(numel))
         self.transform = transform
 
     def forward(self, input: Optional[Tensor] = None) -> Tensor:

@@ -16,10 +16,11 @@ class _RegressionBase(Process):
                  measure: Optional[str] = None,
                  process_variance: bool = False,
                  decay: Optional[Tuple[float, float]] = None):
-        transition = torch.ones(1) if decay is None else SingleOutput(Bounded(decay))
-        transitions = {} if decay is None else nn.ModuleDict()
-        for pred in predictors:
-            transitions[f'{pred}->{pred}'] = transition
+        if decay is None:
+            transitions = {'all_self': torch.ones(len(predictors))}
+        else:
+            transitions = nn.ModuleDict({'all_self': SingleOutput(numel=len(predictors), transform=Bounded(decay))})
+
         super().__init__(
             id=id,
             measure=measure,

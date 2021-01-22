@@ -28,11 +28,6 @@ class TestProcess(TestCase):
         for g in range(6):
             self.assertLess(torch.abs(pred.means[g] - data[g]).mean(), .01)
 
-    def test_decay(self):
-        data = torch.zeros((2, 5, 1))
-        kf = KalmanFilter(processes=[LocalLevel(id='lm', decay=(.95, 1.))], measures=['y'])
-        # TODO
-
     def test_nn(self):
         y = torch.zeros((2, 5, 1))
         proc = NN(id='nn', nn=nn.Linear(in_features=10, out_features=2, bias=False))

@@ -28,7 +28,7 @@ class LocalLevel(Process):
         se = 'position'
         if decay:
             transitions = nn.ModuleDict()
-            transitions[f'{se}->{se}'] = SingleOutput(Bounded(decay))
+            transitions[f'{se}->{se}'] = SingleOutput(transform=Bounded(decay))
         else:
             transitions = {f'{se}->{se}': torch.ones(1)}
         super(LocalLevel, self).__init__(
@@ -70,11 +70,11 @@ class LocalTrend(Process):
         if decay_position is None:
             f_tensors['position->position'] = torch.ones(1)
         else:
-            f_modules['position->position'] = SingleOutput(Bounded(decay_position))
+            f_modules['position->position'] = SingleOutput(transform=Bounded(decay_position))
         if decay_velocity is None:
             f_tensors['velocity->velocity'] = torch.ones(1)
         else:
-            f_modules['velocity->velocity'] = SingleOutput(Bounded(decay_velocity))
+            f_modules['velocity->velocity'] = SingleOutput(transform=Bounded(decay_velocity))
 
         assert velocity_multi <= 1.
         f_tensors['velocity->position'] = torch.ones(1) * velocity_multi
