@@ -224,13 +224,13 @@ def pad_covariance(unpadded_cov: Tensor, mask_1d: List[int]) -> Tensor:
         # shortcut
         return unpadded_cov
 
-    out = torch.zeros(rank, rank)
+    out = torch.zeros(unpadded_cov.shape[:-2] + (rank, rank))
     for to_r in range(rank):
         for to_c in range(to_r, rank):
             from_r = padded_to_unpadded.get(to_r)
             from_c = padded_to_unpadded.get(to_c)
             if from_r is not None and from_c is not None:
-                out[to_r, to_c] = unpadded_cov[from_r, from_c]
+                out[..., to_r, to_c] = unpadded_cov[..., from_r, from_c]
                 if to_r != to_c:
-                    out[to_c, to_r] = out[to_r, to_c]  # symmetrical
+                    out[..., to_c, to_r] = out[..., to_r, to_c]  # symmetrical
     return out

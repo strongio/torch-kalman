@@ -34,8 +34,8 @@ from torch_kalman.utils.data import TimeSeriesDataset
 import numpy as np
 import pandas as pd
 
-np.random.seed(2021-1-18)
-torch.manual_seed(2021-1-18);
+np.random.seed(2021-1-21)
+torch.manual_seed(2021-1-21);
 # -
 
 # # Torch-Kalman
@@ -164,7 +164,7 @@ def closure():
     loss.backward()
     return loss
 
-for epoch in range(12):
+for epoch in range(15):
     train_loss = kf_first.opt.step(closure).item()
     with torch.no_grad():
         pred = kf_first(
