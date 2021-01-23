@@ -8,15 +8,14 @@ from torch_kalman.internals.utils import zpad
 
 from torch_kalman.process.base import Process
 from torch_kalman.process.regression import _RegressionBase
+from torch_kalman.process.utils import SingleOutput, Multi, Bounded
 from torch_kalman.utils.features import fourier_tensor
 
 
 class _Season:
-    dt_unit_ns: int
-    period: float
 
     @staticmethod
-    def _get_dt_unit_ns(dt_unit_str: str):
+    def _get_dt_unit_ns(dt_unit_str: str) -> int:
         dt_unit = timedelta64(1, dt_unit_str)
         dt_unit_ns = dt_unit / timedelta64(1, 'ns')
         dt_unit_ns.is_integer()
@@ -24,11 +23,15 @@ class _Season:
 
     @jit.ignore
     def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, str, Tensor]]:
-        ns_since_epoch = (kwargs['start_datetimes'].astype("datetime64[ns]") - datetime64(0, 'ns')).view('int64')
-        offsets = ns_since_epoch % (self.period * self.dt_unit_ns) / self.dt_unit_ns
-        kwargs['current_times'] = torch.as_tensor(offsets.astype('float32')).view(-1, 1, 1) + kwargs['current_timestep']
+        if self.dt_unit_ns is None:
+            offsets = torch.zeros(1)
+        else:
+            ns_since_epoch = (kwargs['start_datetimes'].astype("datetime64[ns]") - datetime64(0, 'ns')).view('int64')
+            offsets = ns_since_epoch % (self.period * self.dt_unit_ns) / self.dt_unit_ns
+            offsets = torch.as_tensor(offsets.astype('float32')).view(-1, 1, 1)
+        kwargs['current_times'] = offsets + kwargs['current_timestep']
         for found_key, key_name, key_type, value in Process.get_kwargs(self, kwargs):
-            if found_key == 'current_times':
+            if found_key == 'current_times' and self.dt_unit_ns is not None:
                 found_key = 'start_datetimes'
             yield found_key, key_name, key_type, value
 
@@ -52,7 +55,7 @@ class FourierSeason(_Season, _RegressionBase):
 
     def __init__(self,
                  id: str,
-                 dt_unit: str,
+                 dt_unit: Optional[str],
                  period: float,
                  K: int,
                  measure: Optional[str] = None,
@@ -69,7 +72,8 @@ class FourierSeason(_Season, _RegressionBase):
         :param process_variance: TODO
         :param decay: TODO
         """
-        self.dt_unit_ns = self._get_dt_unit_ns(dt_unit)
+
+        self.dt_unit_ns: Optional[int] = None if dt_unit is None else self._get_dt_unit_ns(dt_unit)
         self.period = period
 
         state_elements = []
@@ -88,6 +92,90 @@ class FourierSeason(_Season, _RegressionBase):
         self.h_kwarg = 'current_times'
         assert len(self.time_varying_kwargs) == 1
         self.time_varying_kwargs[0] = 'current_times'
+
+
+class TBATS(_Season, Process):
+    """
+    Named after the paper from De Livera, A.M., Hyndman, R.J., & Snyder, R. D. (2011); in that paper TBATS refers to
+    the whole model; here it labels the novel approach to modeling seasonality that they proposed.
+    """
+
+    def __init__(self,
+                 id: str,
+                 period: float,
+                 dt_unit: Optional[str],
+                 K: int,
+                 measure: Optional[str] = None,
+                 process_variance: bool = True,
+                 decay: Optional[Tuple[float, float]] = None):
+        self.period = period
+        self.dt_unit_ns = None if dt_unit is None else self._get_dt_unit_ns(dt_unit)
+
+        state_elements = []
+        f_tensors = {}
+        h_tensor = []
+        for j in range(1, K + 1):
+            sj = f"s{j}"
+            state_elements.append(sj)
+            h_tensor.append(1.)
+            s_star_j = f"s*{j}"
+            state_elements.append(s_star_j)
+            h_tensor.append(0.)
+            lam = torch.tensor(2. * pi * j / period)
+            f_tensors[f'{sj}->{sj}'] = torch.cos(lam)
+            f_tensors[f'{sj}->{s_star_j}'] = -torch.sin(lam)
+            f_tensors[f'{s_star_j}->{sj}'] = torch.sin(lam)
+            f_tensors[f'{s_star_j}->{s_star_j}'] = torch.cos(lam)
+        if decay:
+            f_modules = torch.nn.ModuleDict()
+            for key, tens in f_tensors.items():
+                f_modules[key] = SingleOutput(transform=nn.Sequential(Bounded(decay), Multi(tens)))
+            f_tensors = None
+        else:
+            f_modules = None
+        super(TBATS, self).__init__(
+            id=id,
+            state_elements=state_elements,
+            f_tensors=f_tensors,
+            f_modules=f_modules,
+            h_tensor=torch.tensor(h_tensor),
+            measure=measure,
+            no_pcov_state_elements=[] if process_variance else state_elements,
+            init_mean_kwargs=['start_offsets']
+        )
+
+    @jit.ignore
+    def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, str, Tensor]]:
+        if self.dt_unit_ns is None:
+            offsets = torch.zeros(1)
+        else:
+            ns_since_epoch = (kwargs['start_datetimes'].astype("datetime64[ns]") - datetime64(0, 'ns')).view('int64')
+            offsets = ns_since_epoch % (self.period * self.dt_unit_ns) / self.dt_unit_ns
+            offsets = torch.as_tensor(offsets.astype('float32')).view(-1, 1, 1)
+        kwargs['start_offsets'] = offsets
+        for found_key, key_name, key_type, value in Process.get_kwargs(self, kwargs):
+            if found_key == 'start_offsets' and self.dt_unit_ns is not None:
+                found_key = 'start_datetimes'
+            yield found_key, key_name, key_type, value
+
+    def get_initial_state_mean(self, input: Optional[Dict[str, Tensor]] = None) -> Tensor:
+        if self.dt_unit_ns is None:
+            return self.init_mean
+        assert input is not None
+        F = self.f_forward(torch.empty(0))
+        if not self.period.is_integer():
+            raise NotImplementedError
+
+        means = []
+        mean = self.init_mean
+        for i in range(int(self.period)):
+            means.append(mean)
+            mean = F @ mean
+        out = []
+        start_offsets = input['start_offsets']
+        for i in range(start_offsets.shape[0]):
+            out.append(means[start_offsets[i].item()])
+        return torch.stack(out)
 
 
 class DiscreteSeason(Process):
@@ -121,62 +209,3 @@ class DiscreteSeason(Process):
                         season_duration: int,
                         decay: Optional[Tuple[float, float]]) -> nn.ModuleDict:
         raise NotImplementedError
-
-
-class TBATS(Process):
-    """
-    TODO
-    """
-
-    def __init__(self,
-                 id: str,
-                 period: float,
-                 K: int,
-                 measure: Optional[str] = None,
-                 process_variance: bool = True,
-                 decay: Optional[Tuple[float, float]] = None):
-        self.period = period
-
-        state_elements = []
-        transitions = {}
-        h_tensor = []
-        for j in range(K):
-            sj = f"s{j}"
-            state_elements.append(sj)
-            h_tensor.append(1.)
-            s_star_j = f"s*{j}"
-            state_elements.append(s_star_j)
-            h_tensor.append(0.)
-            lam = torch.tensor(2. * pi * j / period)
-            transitions[f'{sj}->{sj}'] = torch.cos(lam)
-            transitions[f'{sj}->{s_star_j}'] = -torch.sin(lam)
-            transitions[f'{s_star_j}->{sj}'] = torch.sin(lam)
-            transitions[f'{s_star_j}->{s_star_j}'] = torch.cos(lam)
-        if decay:
-            # TODO: convert `transitions` to module, multiply by bounded param?
-            raise NotImplementedError
-        super(TBATS, self).__init__(
-            id=id,
-            state_elements=state_elements,
-            f_tensors=transitions,
-            h_tensor=torch.tensor(h_tensor),
-            measure=measure,
-            no_pcov_state_elements=state_elements if process_variance else []
-        )
-
-    def get_initial_state_mean(self, input: Optional[Dict[str, Tensor]] = None) -> Tensor:
-        assert input is not None
-        F = self.f_forward(torch.empty(0))
-        if not self.period.is_integer():
-            raise NotImplementedError
-
-        means = []
-        mean = self.init_mean
-        for i in range(int(self.period)):
-            means.append(mean)
-            mean = F @ mean
-        out = []
-        start_offsets = input['start_offsets']
-        for i in range(start_offsets.shape[0]):
-            out.append(means[start_offsets[i].item()])
-        return torch.stack(out)

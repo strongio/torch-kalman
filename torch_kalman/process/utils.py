@@ -36,3 +36,12 @@ class Bounded(nn.Module):
 
     def forward(self, input: Tensor) -> Tensor:
         return torch.sigmoid(input) * (self.upper - self.lower) + self.lower
+
+
+class Multi(nn.Module):
+    def __init__(self, value: torch.Tensor):
+        super(Multi, self).__init__()
+        self.value = value
+
+    def forward(self, input: Tensor) -> Tensor:
+        return input * self.value

@@ -234,7 +234,7 @@ class Process(nn.Module):
         for (r, c), tens in assignments:
             if diag is not None:
                 assert r != c, "cannot have transitions from {se}->{same-se} if `all_self` transition was used."
-            assert len(tens.shape) == 1 or len(tens.shape) == 2 and tens.shape[-1] == 1
+            assert len(tens.shape) <= 1 or len(tens.shape) == 2 and tens.shape[-1] == 1
             F[:, r, c] = tens
         return F
 
