@@ -108,7 +108,7 @@ class TBATS(_Season, Process):
                  measure: Optional[str] = None,
                  process_variance: bool = True,
                  decay: Optional[Tuple[float, float]] = None):
-        self.period = period
+        self.period = float(period)
         self.dt_unit_ns = None if dt_unit is None else self._get_dt_unit_ns(dt_unit)
 
         state_elements = []
@@ -162,19 +162,22 @@ class TBATS(_Season, Process):
         if self.dt_unit_ns is None:
             return self.init_mean
         assert input is not None
-        F = self.f_forward(torch.empty(0))
-        if not self.period.is_integer():
+        F = self.f_forward(torch.empty(0)).squeeze(0)
+        if abs(float(int(self.period)) - float(self.period)) > .00001:
+            # TODO: does jit have `int.is_integer()` method?
             raise NotImplementedError
 
         means = []
-        mean = self.init_mean
+        mean = self.init_mean.unsqueeze(-1)
         for i in range(int(self.period)):
-            means.append(mean)
+            means.append(mean.squeeze(-1))
             mean = F @ mean
+
         out = []
         start_offsets = input['start_offsets']
         for i in range(start_offsets.shape[0]):
-            out.append(means[start_offsets[i].item()])
+            offset = int(start_offsets[i].item())
+            out.append(means[offset])
         return torch.stack(out)
 
 
