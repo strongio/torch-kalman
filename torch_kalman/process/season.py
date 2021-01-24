@@ -1,49 +1,43 @@
 from math import pi
 from typing import Optional, Tuple, Iterable, Dict
 
-from numpy import timedelta64, datetime64
+import numpy as np
+
 import torch
 from torch import jit, nn, Tensor
 from torch_kalman.internals.utils import zpad
 
 from torch_kalman.process.base import Process
 from torch_kalman.process.regression import _RegressionBase
-from torch_kalman.process.utils import SingleOutput, Multi, Bounded
-from torch_kalman.utils.features import fourier_tensor
+from torch_kalman.process.utils import SingleOutput, Multi, Bounded, TimesToFourier
 
 
 class _Season:
 
     @staticmethod
     def _get_dt_unit_ns(dt_unit_str: str) -> int:
-        dt_unit = timedelta64(1, dt_unit_str)
-        dt_unit_ns = dt_unit / timedelta64(1, 'ns')
+        dt_unit = np.timedelta64(1, dt_unit_str)
+        dt_unit_ns = dt_unit / np.timedelta64(1, 'ns')
         dt_unit_ns.is_integer()
         return int(dt_unit_ns)
+
+    @jit.ignore
+    def _get_offsets(self, start_datetimes: np.ndarray) -> np.ndarray:
+        ns_since_epoch = (start_datetimes.astype("datetime64[ns]") - np.datetime64(0, 'ns')).view('int64')
+        offsets = ns_since_epoch % (self.period * self.dt_unit_ns) / self.dt_unit_ns
+        return torch.as_tensor(offsets.astype('float32')).view(-1, 1, 1)
 
     @jit.ignore
     def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, str, Tensor]]:
         if self.dt_unit_ns is None:
             offsets = torch.zeros(1)
         else:
-            ns_since_epoch = (kwargs['start_datetimes'].astype("datetime64[ns]") - datetime64(0, 'ns')).view('int64')
-            offsets = ns_since_epoch % (self.period * self.dt_unit_ns) / self.dt_unit_ns
-            offsets = torch.as_tensor(offsets.astype('float32')).view(-1, 1, 1)
+            offsets = self._get_offsets(kwargs['start_datetimes'])
         kwargs['current_times'] = offsets + kwargs['current_timestep']
         for found_key, key_name, key_type, value in Process.get_kwargs(self, kwargs):
             if found_key == 'current_times' and self.dt_unit_ns is not None:
                 found_key = 'start_datetimes'
             yield found_key, key_name, key_type, value
-
-
-class TimesToFourier(nn.Module):
-    def __init__(self, K: int, seasonal_period: float):
-        super(TimesToFourier, self).__init__()
-        self.K = K
-        self.seasonal_period = float(seasonal_period)
-
-    def forward(self, times: torch.Tensor):
-        return fourier_tensor(times, seasonal_period=self.seasonal_period, K=self.K).view(times.shape[0], self.K * 2)
 
 
 class FourierSeason(_Season, _RegressionBase):
@@ -149,9 +143,7 @@ class TBATS(_Season, Process):
         if self.dt_unit_ns is None:
             offsets = torch.zeros(1)
         else:
-            ns_since_epoch = (kwargs['start_datetimes'].astype("datetime64[ns]") - datetime64(0, 'ns')).view('int64')
-            offsets = ns_since_epoch % (self.period * self.dt_unit_ns) / self.dt_unit_ns
-            offsets = torch.as_tensor(offsets.astype('float32')).view(-1, 1, 1)
+            offsets = self._get_offsets(kwargs['start_datetimes'])
         kwargs['start_offsets'] = offsets
         for found_key, key_name, key_type, value in Process.get_kwargs(self, kwargs):
             if found_key == 'start_offsets' and self.dt_unit_ns is not None:
