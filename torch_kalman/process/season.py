@@ -1,4 +1,4 @@
-from math import pi
+import math
 from typing import Optional, Tuple, Iterable, Dict, Sequence
 
 import numpy as np
@@ -132,7 +132,7 @@ class TBATS(_Season, Process):
             s_star_j = f"s*{j}"
             state_elements.append(s_star_j)
             h_tensor.append(0.)
-            lam = torch.tensor(2. * pi * j / period)
+            lam = torch.tensor(2. * math.pi * j / period)
             f_tensors[f'{sj}->{sj}'] = torch.cos(lam)
             f_tensors[f'{sj}->{s_star_j}'] = -torch.sin(lam)
             f_tensors[f'{s_star_j}->{sj}'] = torch.sin(lam)

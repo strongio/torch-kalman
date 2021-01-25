@@ -1,13 +1,14 @@
 import time
 import unittest
+import warnings
 
 import numpy as np
 import torch
 from parameterized import parameterized
 
 from torch_kalman.kalman_filter import KalmanFilter
-from torch_kalman.process import LocalLevel, LinearModel, LocalTrend
-from torch_kalman.process.season import FourierSeason
+from torch_kalman.process import LocalLevel, LinearModel, LocalTrend, FourierSeason, TBATS
+from torch_kalman.utils.data import TimeSeriesDataset
 
 
 class TestTraining(unittest.TestCase):
@@ -173,3 +174,62 @@ class TestTraining(unittest.TestCase):
         self.assertLess(torch.mean((pred.means - data) ** 2), .01)
         # trend should be identified:
         self.assertAlmostEqual(pred.state_means[:, :, 1].mean().item(), 5., places=1)
+
+    def test_training3(self):
+        """
+        Test TBATS and TimeSeriesDataset integration
+        """
+        try:
+            import pandas as pd
+        except ImportError:
+            return
+        torch.manual_seed(123)
+        df = pd.DataFrame({'sin': np.sin(2. * 3.1415 * np.arange(0., 5 * 7.) / 7.),
+                           'cos': np.cos(2. * 3.1415 * np.arange(0., 5 * 7.) / 7.)})
+        df['y'] = df['cos'].where(df.index < 12, other=df['sin'])
+
+        df = pd.concat([
+            df.assign(
+                observed=lambda df: df['y'] + np.random.normal(scale=.2, size=len(df.index)),
+                group=str(i + 1),
+                time=lambda df: np.array(df.index.tolist(), dtype='datetime64[D]') + np.random.randint(low=0, high=4)
+            )
+            for i in range(10)
+        ])
+        dataset = TimeSeriesDataset.from_dataframe(
+            df,
+            group_colname='group',
+            time_colname='time',
+            dt_unit='D',
+            measure_colnames=['y']
+        )
+
+        kf = KalmanFilter(
+            processes=[
+                TBATS(id='day_of_week', period=7, dt_unit='D', K=1, process_variance=True, decay=(.85, 1.))
+            ],
+            measures=['y']
+        )
+
+        # train:
+        optimizer = torch.optim.LBFGS(kf.parameters(), lr=.15, max_iter=10)
+
+        def closure():
+            optimizer.zero_grad()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                pred = kf(dataset.tensors[0], start_datetimes=dataset.start_datetimes)
+            loss = -pred.log_prob(dataset.tensors[0]).mean()
+            loss.backward()
+            return loss
+
+        print("\nTraining for 20 epochs...")
+        for i in range(20):
+            loss = optimizer.step(closure)
+            print("loss:", loss.item())
+
+        with torch.no_grad():
+            pred = kf(dataset.tensors[0],
+                       start_datetimes=dataset.start_datetimes)
+        df_pred = pred.to_dataframe(dataset)
+        self.assertLess(np.mean((df_pred['actual'] - df_pred['mean']) ** 2), .05)

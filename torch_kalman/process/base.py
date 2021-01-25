@@ -89,7 +89,6 @@ class Process(nn.Module):
         self.time_varying_kwargs: Optional[List[str]] = time_varying_kwargs
 
     def get_initial_state_mean(self, input: Optional[Dict[str, Tensor]] = None) -> Tensor:
-        assert input is None or len(input) == 0  # not used by base class
         # not used by base class:
         assert input is None or len(input) == 0
         # if child class adds state elements this is easy to overlook:
