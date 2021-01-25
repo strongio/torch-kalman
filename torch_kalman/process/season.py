@@ -1,5 +1,5 @@
 from math import pi
-from typing import Optional, Tuple, Iterable, Dict
+from typing import Optional, Tuple, Iterable, Dict, Sequence
 
 import numpy as np
 
@@ -105,6 +105,23 @@ class TBATS(_Season, Process):
         self.period = float(period)
         self.dt_unit_ns = None if dt_unit is None else self._get_dt_unit_ns(dt_unit)
 
+        state_elements, transitions, h_tensor = self._setup(K=K, period=period, decay=decay)
+
+        super(TBATS, self).__init__(
+            id=id,
+            state_elements=state_elements,
+            f_tensors=transitions if decay is None else None,
+            f_modules=transitions if decay is not None else None,
+            h_tensor=torch.tensor(h_tensor),
+            measure=measure,
+            no_pcov_state_elements=[] if process_variance else state_elements,
+            init_mean_kwargs=['start_offsets']
+        )
+
+    def _setup(self,
+               K: int,
+               period: float,
+               decay: Optional[Tuple[float, float]] = None) -> Tuple[Sequence[str], dict, Sequence[float]]:
         state_elements = []
         f_tensors = {}
         h_tensor = []
@@ -120,23 +137,14 @@ class TBATS(_Season, Process):
             f_tensors[f'{sj}->{s_star_j}'] = -torch.sin(lam)
             f_tensors[f'{s_star_j}->{sj}'] = torch.sin(lam)
             f_tensors[f'{s_star_j}->{s_star_j}'] = torch.cos(lam)
+
         if decay:
-            f_modules = torch.nn.ModuleDict()
+            f_modules = {}
             for key, tens in f_tensors.items():
                 f_modules[key] = SingleOutput(transform=nn.Sequential(Bounded(decay), Multi(tens)))
-            f_tensors = None
+            return state_elements, f_modules, h_tensor
         else:
-            f_modules = None
-        super(TBATS, self).__init__(
-            id=id,
-            state_elements=state_elements,
-            f_tensors=f_tensors,
-            f_modules=f_modules,
-            h_tensor=torch.tensor(h_tensor),
-            measure=measure,
-            no_pcov_state_elements=[] if process_variance else state_elements,
-            init_mean_kwargs=['start_offsets']
-        )
+            return state_elements, f_tensors, h_tensor
 
     @jit.ignore
     def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, str, Tensor]]:
@@ -151,6 +159,7 @@ class TBATS(_Season, Process):
             yield found_key, key_name, key_type, value
 
     def get_initial_state_mean(self, input: Optional[Dict[str, Tensor]] = None) -> Tensor:
+
         if self.dt_unit_ns is None:
             return self.init_mean
         assert input is not None

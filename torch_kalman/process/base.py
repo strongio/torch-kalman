@@ -90,7 +90,10 @@ class Process(nn.Module):
 
     def get_initial_state_mean(self, input: Optional[Dict[str, Tensor]] = None) -> Tensor:
         assert input is None or len(input) == 0  # not used by base class
-        assert self.expected_init_mean_kwargs is None  # this method should be overridden if there are
+        # not used by base class:
+        assert input is None or len(input) == 0
+        # if child class adds state elements this is easy to overlook:
+        assert self.init_mean.shape[-1] == len(self.state_elements)
         return self.init_mean
 
     @jit.ignore
@@ -110,12 +113,12 @@ class Process(nn.Module):
                 inputs: Dict[str, Tensor],
                 which: str,
                 cache: Dict[str, Tensor]) -> Tensor:
-        if '_empty' not in cache:
-            # jit doesn't like Optional[Tensor] in some situations
-            cache['_empty'] = torch.empty(0)
+
+        # jit doesn't like Optional[Tensor] in some situations
+        _empty = torch.empty(0)
 
         if which == 'h':
-            h_input = cache['_empty'] if self.h_kwarg == '' else inputs[self.h_kwarg]
+            h_input = _empty if self.h_kwarg == '' else inputs[self.h_kwarg]
             h_key = self._get_cache_key(self.h_kwarg, h_input, prefix=f'{self.id}_h')
             if h_key is not None:
                 if h_key not in cache:
@@ -126,7 +129,7 @@ class Process(nn.Module):
 
         # F
         if which == 'f':
-            f_input = cache['_empty'] if self.f_kwarg == '' else inputs[self.f_kwarg]
+            f_input = _empty if self.f_kwarg == '' else inputs[self.f_kwarg]
             f_key = self._get_cache_key(self.f_kwarg, f_input, prefix=f'{self.id}_f')
             if f_key is not None:
                 if f_key not in cache:
