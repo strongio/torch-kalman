@@ -206,7 +206,13 @@ class Covariance(nn.Module):
             for expected_kwarg, module in self.var_predict_modules.items():
                 if expected_kwarg not in inputs:
                     raise TypeError(f"`{self.id}` missing required kwarg `{expected_kwarg}`")
-                diag_multi = torch.diag_embed(torch.exp(self.var_predict_multi * module(inputs[expected_kwarg])))
+                predictions = module(inputs[expected_kwarg])
+                if predictions.shape[-1] != self.param_rank:
+                    raise RuntimeError(
+                        f"`{self.id}.var_predict_modules['{expected_kwarg}']` output shape is {predictions.shape} but "
+                        f"expected `shape[-1]=={self.param_rank}`"
+                    )
+                diag_multi = torch.diag_embed(torch.exp(self.var_predict_multi * predictions))
                 mini_cov = diag_multi @ mini_cov @ diag_multi
 
         return pad_covariance(mini_cov, [int(i not in self.empty_idx) for i in range(self.rank)])
