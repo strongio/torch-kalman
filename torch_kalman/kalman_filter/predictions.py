@@ -328,7 +328,7 @@ class Predictions(nn.Module):
         df = df.copy()
         if 'upper' not in df.columns and 'std' in df.columns:
             df['upper'] = df['mean'] + 1.96 * df['std']
-            df['lower'] = df['lower'] - 1.96 * df['std']
+            df['lower'] = df['mean'] - 1.96 * df['std']
         if df[group_colname].nunique() > max_num_groups:
             subset_groups = df[group_colname].drop_duplicates().sample(max_num_groups).tolist()
             if len(subset_groups) < df[group_colname].nunique():
@@ -347,6 +347,7 @@ class Predictions(nn.Module):
                 ylab("")
         )
 
+        assert 'measure' in df.columns
         if is_components:
             num_processes = df['process'].nunique()
             if num_groups > 1 and num_processes > 1:
