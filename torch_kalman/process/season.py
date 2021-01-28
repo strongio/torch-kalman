@@ -1,5 +1,6 @@
 import math
 from typing import Optional, Tuple, Iterable, Dict, Sequence
+from warnings import warn
 
 import numpy as np
 
@@ -70,6 +71,12 @@ class FourierSeason(_Season, _RegressionBase):
         self.dt_unit_ns: Optional[int] = None if dt_unit is None else self._get_dt_unit_ns(dt_unit)
         self.period = period
 
+        if decay and (decay[0] ** period) < .01:
+            warn(
+                f"Given the seasonal period, the lower bound on `{self.id}`'s `decay` ({decay}) may be too low to "
+                f"generate useful gradient information for optimization."
+            )
+
         state_elements = []
         for j in range(K):
             state_elements.append(f'sin{j}')
@@ -104,6 +111,12 @@ class TBATS(_Season, Process):
                  decay: Optional[Tuple[float, float]] = None):
         self.period = float(period)
         self.dt_unit_ns = None if dt_unit is None else self._get_dt_unit_ns(dt_unit)
+
+        if decay and (decay[0] ** period) < .01:
+            warn(
+                f"Given the seasonal period, the lower bound on `{self.id}`'s `decay` ({decay}) may be too low to "
+                f"generate useful gradient information for optimization."
+            )
 
         state_elements, transitions, h_tensor = self._setup(K=K, period=period, decay=decay)
 
@@ -194,6 +207,12 @@ class DiscreteSeason(Process):
                  measure: Optional[str] = None,
                  process_variance: bool = False,
                  decay: Optional[Tuple[float, float]] = None):
+        if decay and (decay[0] ** (num_seasons * season_duration)) < .01:
+            warn(
+                f"Given the seasonal period, the lower bound on `{self.id}`'s `decay` ({decay}) may be too low to "
+                f"generate useful gradient information for optimization."
+            )
+
         f_modules = self._make_f_modules(num_seasons, season_duration, decay)
         state_elements = [zpad(i, n=len(str(num_seasons))) for i in range(num_seasons)]
         super(DiscreteSeason, self).__init__(

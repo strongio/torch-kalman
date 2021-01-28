@@ -72,6 +72,9 @@ class TimesToFourier(nn.Module):
         self.seasonal_period = float(seasonal_period)
 
     def forward(self, times: torch.Tensor):
+        if len(times.shape) >= 2:
+            assert len(times.shape) == 2 and times.shape[-1] == 1
+            times = times.squeeze(-1)
         return fourier_tensor(times, seasonal_period=self.seasonal_period, K=self.K).view(times.shape[0], self.K * 2)
 
 
