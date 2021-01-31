@@ -1,4 +1,5 @@
 from collections import defaultdict
+from types import SimpleNamespace
 from typing import Tuple, Union, Optional, Dict, Iterator
 from warnings import warn
 
@@ -54,8 +55,48 @@ class Predictions(nn.Module):
     def get_last_update(self) -> Tuple[Tensor, Tensor]:
         raise NotImplementedError  # TODO
 
-    def get_timeslice(self, time_idx: np.ndarray, start_times: Optional[np.ndarray] = None) -> Tuple[Tensor, Tensor]:
-        raise NotImplementedError  # TODO
+    def get_state_at_times(self,
+                           times: np.ndarray,
+                           start_times: Optional[np.ndarray] = None,
+                           dt_unit: Optional[str] = None) -> Tuple[Tensor, Tensor]:
+        """
+        For each group, get the state (tuple of (mean, cov)) for a timepoint. This is often useful since predictions
+        are right-aligned and padded, so that the final prediction for each group is arbitrarily padded and does not
+        correspond to a timepoint of interest -- e.g. for forecasting (i.e., calling
+        `KalmanFilter.forward(initial_state=get_state_at_times(...))`).
+
+        :param times: Either (a) indices corresponding to each group (e.g. `times[0]` corresponds to the timestep to
+        take for the 0th group, `times[1]` the timestep to take for the 1th group, etc.) or (b) if `start_times` is
+        passed, an array of datetimes.
+        :param start_times: If `times` is an array of datetimes, must also pass `start_datetimes`, i.e. the datetimes
+        at which each group started.
+        :param dt_unit: If `times` is an array of datetimes, must also pass `dt_unit`, i.e. the a np.timedelta64 that
+        indicates how much time passes at each timestep. (times-start_times)/dt_unit should be an array of integers.
+        :return: A tuple of state-means and state-covs, appropriate for forecasting by passing as `initial_state`
+        for KalmanFilter.forward.
+        """
+        sliced = self._subset_to_times(times=times, start_times=start_times, dt_unit=dt_unit)
+        return sliced.state_means.squeeze(1), sliced.state_covs.squeeze(1)
+
+    def _subset_to_times(self,
+                         times: np.ndarray,
+                         start_times: Optional[np.ndarray] = None,
+                         dt_unit: Optional[str] = None) -> 'Predictions':
+        """
+        Return a `Predictions` object with a single timepoint for each group.
+        """
+        if start_times:
+            assert isinstance(times[0], np.datetime64)
+            assert isinstance(start_times[0], np.datetime64)
+            assert dt_unit is not None
+            if isinstance(dt_unit, str):
+                dt_unit = np.datetime64(1, dt_unit)
+            times = (times - start_times) / dt_unit  # todo: validate int?
+
+        assert len(times.shape) == 1
+        assert len(times.shape[0]) == self.num_groups
+        idx = (torch.arange(self.num_groups), torch.as_tensor(times, dtype=torch.int))
+        return self._subset(idx, collapse_dim=1)
 
     def __iter__(self) -> Iterator[Tensor]:
         # for mean, cov = tuple(predictions)
@@ -67,15 +108,26 @@ class Predictions(nn.Module):
         return self.means.detach().numpy()
 
     def __getitem__(self, item: Tuple) -> 'Predictions':
+        return self._subset(item)
+
+    def _subset(self, idx: Tuple, collapsed_dim: Optional[int] = None) -> 'Predictions':
+        """
+        Helper for __getitem__ and get_timeslice
+        """
+        if collapsed_dim is not None:
+            assert collapsed_dim < 2
         kwargs = {
-            'state_means': self.state_means[item],
-            'state_covs': self.state_covs[item],
-            'H': self.H[item],
-            'R': self.R[item]
+            'state_means': self.state_means[idx],
+            'state_covs': self.state_covs[idx],
+            'H': self.H[idx],
+            'R': self.R[idx]
         }
         cls = type(self)
-        for k, v in kwargs.items():
+        for k in list(kwargs):
             expected_shape = getattr(self, k).shape
+            if collapsed_dim is not None:
+                kwargs[k] = kwargs[k].unsqueeze(collapsed_dim)
+            v = kwargs[k]
             if len(v.shape) != len(expected_shape):
                 raise TypeError(f"Expected {k} to have shape {expected_shape} but got {v.shape}.")
             if v.shape[-1] != expected_shape[-1]:
@@ -280,7 +332,7 @@ class Predictions(nn.Module):
     @torch.no_grad()
     def _components(self) -> Dict[Tuple[str, str, str], Tuple[Tensor, Tensor]]:
         out = {}
-        for midx, measure in enumerate(self.kalman_filter.measures):
+        for midx, measure in enumerate(self.measures):
             H = self.H[..., midx, :]
             means = H * self.state_means
             stds = H * torch.diagonal(self.state_covs, dim1=-2, dim2=-1).sqrt()
