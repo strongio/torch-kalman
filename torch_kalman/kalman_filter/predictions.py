@@ -25,39 +25,31 @@ class Predictions(nn.Module):
                  state_covs: Tensor,
                  R: Tensor,
                  H: Tensor,
-                 kalman_filter: 'KalmanFilter'):
+                 kalman_filter: Union['KalmanFilter', dict]):
         super().__init__()
         self.state_means = state_means
         self.state_covs = state_covs
         self.H = H
         self.R = R
 
-        self.kalman_filter = kalman_filter
+        if not isinstance(kalman_filter, dict):
+            all_state_elements = []
+            for process_name, process in kalman_filter.named_processes():
+                for state_element in process.state_elements:
+                    all_state_elements.append((process_name, state_element))
+            kalman_filter = {
+                'kf_step': kalman_filter.kf_step,
+                'measures': kalman_filter.measures,
+                'all_state_elements': all_state_elements
+            }
+        self.kf_step = kalman_filter['kf_step']
+        self.measures = kalman_filter['measures']
+        self.all_state_elements = kalman_filter['all_state_elements']
 
         self._means = None
         self._covs = None
 
         self.num_groups, self.num_timesteps, self.state_size = self.state_means.shape
-
-    def forward(self, *args, **kwargs):
-        return self.forecast(*args, **kwargs)
-
-    def forecast(self,
-                 horizon: int,
-                 forecast_starts: Optional[np.ndarray] = None,
-                 series_starts: Optional[np.ndarray] = None,
-                 **kwargs):
-
-        if forecast_starts is None:
-            initial_state = self.get_last_update()
-        else:
-            initial_state = self.get_timeslice(forecast_starts, series_starts)
-        return self.kalman_filter(
-            input=None,
-            out_timesteps=horizon,
-            initial_state=initial_state,
-            **kwargs
-        )
 
     def get_last_update(self) -> Tuple[Tensor, Tensor]:
         raise NotImplementedError  # TODO
@@ -90,8 +82,18 @@ class Predictions(nn.Module):
                 raise TypeError(f"Cannot index into non-batch dims of {cls.__name__}")
             if k == 'H' and v.shape[-2] != self.H.shape[-2]:
                 raise TypeError(f"Cannot index into non-batch dims of {cls.__name__}")
-        kwargs['kalman_filter'] = self.kalman_filter
-        return cls(**kwargs)
+        return cls(**kwargs, kalman_filter=self.kf_attributes)
+
+    @property
+    def kf_attributes(self) -> dict:
+        """
+        Has the attributes of a KalmanFilter that are needed in __init__
+        """
+        return dict(
+            measures=self.measures,
+            kf_step=self.kf_step,
+            all_state_elements=self.all_state_elements
+        )
 
     @classmethod
     def observe(cls, state_means: Tensor, state_covs: Tensor, R: Tensor, H: Tensor) -> Tuple[Tensor, Tensor]:
@@ -158,7 +160,7 @@ class Predictions(nn.Module):
                     H=H_flat[mask1d]
                 )
                 gt_obs = obs_flat[mask1d]
-            lp_flat[gt_idx] = self.kalman_filter.kf_step.log_prob(
+            lp_flat[gt_idx] = self.kf_step.log_prob(
                 obs=gt_obs,
                 obs_mean=gt_means_flat,
                 obs_cov=gt_covs_flat
@@ -194,9 +196,9 @@ class Predictions(nn.Module):
             }
             for measure_group, tensor in zip(dataset.measures, dataset.tensors):
                 for i, measure in enumerate(measure_group):
-                    if measure in self.kalman_filter.measures:
+                    if measure in self.measures:
                         batch_info['named_tensors'][measure] = tensor[..., [i]]
-            missing = set(self.kalman_filter.measures) - set(dataset.all_measures)
+            missing = set(self.measures) - set(dataset.all_measures)
             if missing:
                 raise ValueError(
                     f"Some measures in the design aren't in the dataset.\n"
@@ -229,7 +231,7 @@ class Predictions(nn.Module):
         if type == 'predictions':
 
             stds = torch.diagonal(self.covs, dim1=-1, dim2=-2).sqrt()
-            for i, measure in enumerate(self.kalman_filter.measures):
+            for i, measure in enumerate(self.measures):
                 # predicted:
                 df = _tensor_to_df(torch.stack([self.means[..., i], stds[..., i]], 2), measures=['mean', 'std'])
                 if multi is not None:
@@ -256,7 +258,7 @@ class Predictions(nn.Module):
 
             # residuals:
             named_tensors = batch_info.get('named_tensors', {})
-            for i, measure in enumerate(self.kalman_filter.measures):
+            for i, measure in enumerate(self.measures):
                 orig_tensor = named_tensors.get(measure)
                 predictions = self.means[..., [i]]
                 if orig_tensor.shape[1] < predictions.shape[1]:
@@ -283,12 +285,9 @@ class Predictions(nn.Module):
             means = H * self.state_means
             stds = H * torch.diagonal(self.state_covs, dim1=-2, dim2=-1).sqrt()
 
-            se_idx = 0
-            for process_name, process in self.kalman_filter.named_processes():
-                for state_element in process.state_elements:
-                    if not torch.isclose(means[:, :, se_idx], torch.zeros(1)).all():
-                        out[(measure, process_name, state_element)] = (means[:, :, se_idx], stds[:, :, se_idx])
-                    se_idx += 1
+            for se_idx, (process, state_element) in enumerate(self.all_state_elements):
+                if not torch.isclose(means[:, :, se_idx], torch.zeros(1)).all():
+                    out[(measure, process, state_element)] = (means[:, :, se_idx], stds[:, :, se_idx])
 
         return out
 
