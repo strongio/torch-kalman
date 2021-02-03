@@ -73,7 +73,7 @@ class FourierSeason(_Season, _RegressionBase):
 
         if decay and (decay[0] ** period) < .01:
             warn(
-                f"Given the seasonal period, the lower bound on `{self.id}`'s `decay` ({decay}) may be too low to "
+                f"Given the seasonal period, the lower bound on `{id}`'s `decay` ({decay}) may be too low to "
                 f"generate useful gradient information for optimization."
             )
 
@@ -114,7 +114,7 @@ class TBATS(_Season, Process):
 
         if decay and (decay[0] ** period) < .01:
             warn(
-                f"Given the seasonal period, the lower bound on `{self.id}`'s `decay` ({decay}) may be too low to "
+                f"Given the seasonal period, the lower bound on `{id}`'s `decay` ({decay}) may be too low to "
                 f"generate useful gradient information for optimization."
             )
 

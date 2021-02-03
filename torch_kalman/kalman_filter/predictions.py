@@ -1,3 +1,4 @@
+import datetime
 from collections import defaultdict
 from types import SimpleNamespace
 from typing import Tuple, Union, Optional, Dict, Iterator
@@ -56,7 +57,7 @@ class Predictions(nn.Module):
         raise NotImplementedError  # TODO
 
     def get_state_at_times(self,
-                           times: np.ndarray,
+                           times: Union[np.ndarray, np.datetime64],
                            start_times: Optional[np.ndarray] = None,
                            dt_unit: Optional[str] = None) -> Tuple[Tensor, Tensor]:
         """
@@ -67,7 +68,7 @@ class Predictions(nn.Module):
 
         :param times: Either (a) indices corresponding to each group (e.g. `times[0]` corresponds to the timestep to
         take for the 0th group, `times[1]` the timestep to take for the 1th group, etc.) or (b) if `start_times` is
-        passed, an array of datetimes.
+        passed, an array of datetimes. Will also support a single datetime.
         :param start_times: If `times` is an array of datetimes, must also pass `start_datetimes`, i.e. the datetimes
         at which each group started.
         :param dt_unit: If `times` is an array of datetimes, must also pass `dt_unit`, i.e. the a np.timedelta64 that
@@ -79,24 +80,24 @@ class Predictions(nn.Module):
         return sliced.state_means.squeeze(1), sliced.state_covs.squeeze(1)
 
     def _subset_to_times(self,
-                         times: np.ndarray,
+                         times: Union[np.ndarray, np.datetime64],
                          start_times: Optional[np.ndarray] = None,
                          dt_unit: Optional[str] = None) -> 'Predictions':
         """
         Return a `Predictions` object with a single timepoint for each group.
         """
-        if start_times:
-            assert isinstance(times[0], np.datetime64)
-            assert isinstance(start_times[0], np.datetime64)
+        if start_times is not None:
+            if isinstance(times, (np.datetime64, datetime.datetime)):
+                times = np.full_like(start_times, fill_value=times)
             assert dt_unit is not None
             if isinstance(dt_unit, str):
                 dt_unit = np.datetime64(1, dt_unit)
             times = (times - start_times) / dt_unit  # todo: validate int?
 
         assert len(times.shape) == 1
-        assert len(times.shape[0]) == self.num_groups
-        idx = (torch.arange(self.num_groups), torch.as_tensor(times, dtype=torch.int))
-        return self._subset(idx, collapse_dim=1)
+        assert times.shape[0] == self.num_groups
+        idx = (torch.arange(self.num_groups), torch.as_tensor(times, dtype=torch.int64))
+        return self._subset(idx, collapsed_dim=1)
 
     def __iter__(self) -> Iterator[Tensor]:
         # for mean, cov = tuple(predictions)
@@ -257,7 +258,9 @@ class Predictions(nn.Module):
                     f"Design: {missing}\nDataset: {dataset.all_measures}"
                 )
         elif isinstance(dataset, dict):
-            batch_info = dataset
+            batch_info = dataset.copy()
+            if isinstance(batch_info['dt_unit'], str):
+                batch_info['dt_unit'] = np.timedelta64(1, batch_info['dt_unit'])
         else:
             raise TypeError(
                 "Expected `batch` to be a TimeSeriesDataset, or a dictionary with 'start_times' and 'group_names'."
