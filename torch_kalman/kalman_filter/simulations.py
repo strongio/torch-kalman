@@ -24,7 +24,7 @@ class Simulations(Predictions):
 
     def sample(self) -> Tensor:
         with torch.no_grad():
-            dist = self.kalman_filter.kf_step.distribution_cls(self.means, self.covs)
+            dist = self.kf_step.distribution_cls(self.means, self.covs)
             return dist.rsample()
 
     @property

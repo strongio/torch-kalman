@@ -10,6 +10,8 @@ from torch_kalman.kalman_filter import KalmanFilter
 from torch_kalman.process import LocalLevel, LinearModel, LocalTrend, FourierSeason, TBATS
 from torch_kalman.utils.data import TimeSeriesDataset
 
+MAX_TRIES = 3  # we set the seed but not tested across different platforms
+
 
 class TestTraining(unittest.TestCase):
     @parameterized.expand([(1,), (2,), (3,)])
@@ -141,33 +143,47 @@ class TestTraining(unittest.TestCase):
             weekly.roll(-i).repeat(3) + torch.linspace(0, 10, 7 * 3) for i in range(num_groups)
         ]).unsqueeze(-1)
         start_datetimes = np.array([np.datetime64('2019-04-14') + np.timedelta64(i, 'D') for i in range(num_groups)])
-        kf = KalmanFilter(
-            processes=[
-                LocalTrend(id='trend'),
-                FourierSeason(id='day_of_week', period=7, dt_unit='D', K=3)
-            ],
-            measures=['y']
-        )
 
-        # train:
-        optimizer = torch.optim.LBFGS([p for n, p in kf.named_parameters() if 'measure_covariance' not in n],
-                                      lr=.20,
-                                      max_iter=10)
+        def _train():
+            kf = KalmanFilter(
+                processes=[
+                    LocalTrend(id='trend'),
+                    FourierSeason(id='day_of_week', period=7, dt_unit='D', K=3)
+                ],
+                measures=['y']
+            )
 
-        def closure():
-            optimizer.zero_grad()
-            _start = time.time()
-            # print(f'[{datetime.datetime.now().time()}] forward...')
-            pred = kf(data, start_datetimes=start_datetimes)
-            loss = -pred.log_prob(data).mean()
-            _start = time.time()
-            loss.backward()
-            return loss
+            # train:
+            optimizer = torch.optim.LBFGS([p for n, p in kf.named_parameters() if 'measure_covariance' not in n],
+                                          lr=.20,
+                                          max_iter=10)
 
-        print("\nTraining for 12 epochs...")
-        for i in range(12):
-            loss = optimizer.step(closure)
-            print("loss:", loss.item())
+            def closure():
+                optimizer.zero_grad()
+                _start = time.time()
+                # print(f'[{datetime.datetime.now().time()}] forward...')
+                pred = kf(data, start_datetimes=start_datetimes)
+                loss = -pred.log_prob(data).mean()
+                _start = time.time()
+                loss.backward()
+                return loss
+
+            print("\nTraining for 12 epochs...")
+            for i in range(12):
+                loss = optimizer.step(closure)
+                print("loss:", loss.item())
+
+        kf = None
+        for i in range(MAX_TRIES):
+            try:
+                kf = _train()
+            except RuntimeError as e:
+                if 'cholesky' not in str(e):
+                    raise e
+            if kf is not None:
+                break
+        if kf is None:
+            raise RuntimeError("MAX_TRIES exceeded")
 
         pred = kf(data, start_datetimes=start_datetimes)
         # MSE should be virtually zero
@@ -181,7 +197,7 @@ class TestTraining(unittest.TestCase):
         """
         try:
             import pandas as pd
-        except ImportError:
+        except ImportError:  # not a package requirement
             return
         torch.manual_seed(123)
         df = pd.DataFrame({'sin': np.sin(2. * 3.1415 * np.arange(0., 5 * 7.) / 7.),
@@ -204,32 +220,46 @@ class TestTraining(unittest.TestCase):
             measure_colnames=['y']
         )
 
-        kf = KalmanFilter(
-            processes=[
-                TBATS(id='day_of_week', period=7, dt_unit='D', K=1, process_variance=True, decay=(.85, 1.))
-            ],
-            measures=['y']
-        )
+        def _train():
+            kf = KalmanFilter(
+                processes=[
+                    TBATS(id='day_of_week', period=7, dt_unit='D', K=1, process_variance=True, decay=(.85, 1.))
+                ],
+                measures=['y']
+            )
 
-        # train:
-        optimizer = torch.optim.LBFGS(kf.parameters(), lr=.15, max_iter=10)
+            # train:
+            optimizer = torch.optim.LBFGS(kf.parameters(), lr=.15, max_iter=10)
 
-        def closure():
-            optimizer.zero_grad()
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                pred = kf(dataset.tensors[0], start_datetimes=dataset.start_datetimes)
-            loss = -pred.log_prob(dataset.tensors[0]).mean()
-            loss.backward()
-            return loss
+            def closure():
+                optimizer.zero_grad()
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    pred = kf(dataset.tensors[0], start_datetimes=dataset.start_datetimes)
+                loss = -pred.log_prob(dataset.tensors[0]).mean()
+                loss.backward()
+                return loss
 
-        print("\nTraining for 20 epochs...")
-        for i in range(20):
-            loss = optimizer.step(closure)
-            print("loss:", loss.item())
+            print("\nTraining for 20 epochs...")
+            for i in range(20):
+                loss = optimizer.step(closure)
+                print("loss:", loss.item())
+
+            return kf
+
+        kf = None
+        for i in range(MAX_TRIES):
+            try:
+                kf = _train()
+            except RuntimeError as e:
+                if 'cholesky' not in str(e):
+                    raise e
+            if kf is not None:
+                break
+        if kf is None:
+            raise RuntimeError("MAX_TRIES exceeded")
 
         with torch.no_grad():
-            pred = kf(dataset.tensors[0],
-                       start_datetimes=dataset.start_datetimes)
+            pred = kf(dataset.tensors[0], start_datetimes=dataset.start_datetimes)
         df_pred = pred.to_dataframe(dataset)
         self.assertLess(np.mean((df_pred['actual'] - df_pred['mean']) ** 2), .05)
