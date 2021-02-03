@@ -144,7 +144,7 @@ class TestTraining(unittest.TestCase):
         ]).unsqueeze(-1)
         start_datetimes = np.array([np.datetime64('2019-04-14') + np.timedelta64(i, 'D') for i in range(num_groups)])
 
-        def _train():
+        def _train(num_epochs: int = 12):
             kf = KalmanFilter(
                 processes=[
                     LocalTrend(id='trend'),
@@ -168,10 +168,12 @@ class TestTraining(unittest.TestCase):
                 loss.backward()
                 return loss
 
-            print("\nTraining for 12 epochs...")
-            for i in range(12):
+            print(f"\nTraining for {num_epochs} epochs...")
+            for i in range(num_epochs):
                 loss = optimizer.step(closure)
                 print("loss:", loss.item())
+
+            return kf
 
         kf = None
         for i in range(MAX_TRIES):
@@ -220,7 +222,7 @@ class TestTraining(unittest.TestCase):
             measure_colnames=['y']
         )
 
-        def _train():
+        def _train(num_epochs: int = 20):
             kf = KalmanFilter(
                 processes=[
                     TBATS(id='day_of_week', period=7, dt_unit='D', K=1, process_variance=True, decay=(.85, 1.))
@@ -240,8 +242,8 @@ class TestTraining(unittest.TestCase):
                 loss.backward()
                 return loss
 
-            print("\nTraining for 20 epochs...")
-            for i in range(20):
+            print(f"\nTraining for {num_epochs} epochs...")
+            for i in range(num_epochs):
                 loss = optimizer.step(closure)
                 print("loss:", loss.item())
 
