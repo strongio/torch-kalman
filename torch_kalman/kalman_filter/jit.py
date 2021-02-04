@@ -82,8 +82,11 @@ class ScriptKalmanFilter(nn.Module):
                     tv_kwargs = process.time_varying_kwargs
                 if process.f_kwarg not in tv_kwargs:
                     _process_slice = slice(*self.process_to_slice[pid])
-                    cache['base_F'][:, _process_slice, _process_slice] = \
-                        process(design_kwargs.get(pid, {}), which='f', cache=cache)
+                    pf = process(design_kwargs.get(pid, {}), which='f', cache=cache)
+                    if torch.isnan(pf).any():
+                        raise RuntimeError(f"{process.id} produced F with nans")
+                    cache['base_F'][:, _process_slice, _process_slice] = pf
+
         if 'base_H' not in cache:
             cache['base_H'] = torch.zeros((num_groups, len(self.measures), self.state_rank))
             for pid, process in self.processes.items():
@@ -92,8 +95,10 @@ class ScriptKalmanFilter(nn.Module):
                     tv_kwargs = process.time_varying_kwargs
                 if process.h_kwarg not in tv_kwargs:
                     _process_slice = slice(*self.process_to_slice[pid])
-                    cache['base_H'][:, self.measure_to_idx[process.measure], _process_slice] = \
-                        process(design_kwargs.get(pid, {}), which='h', cache=cache)
+                    ph = process(design_kwargs.get(pid, {}), which='h', cache=cache)
+                    if torch.isnan(ph).any():
+                        raise RuntimeError(f"{process.id} produced H with nans")
+                    cache['base_H'][:, self.measure_to_idx[process.measure], _process_slice] = ph
 
         H = cache['base_H'].clone()
         F = cache['base_F'].clone()
