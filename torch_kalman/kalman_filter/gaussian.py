@@ -74,8 +74,7 @@ class GaussianStep(nn.Module):
         "Joseph stabilized" covariance correction.
         """
         num_groups = cov.shape[0]
-        rank = cov.shape[1]
-        I = torch.eye(rank).expand(num_groups, -1, -1)
+        I = torch.eye(cov.shape[1], dtype=cov.dtype, device=cov.device).expand(num_groups, -1, -1)
         p1 = I - K.matmul(H)
         p2 = p1.matmul(cov).matmul(p1.permute(0, 2, 1))
         p3 = K.matmul(R).matmul(K.permute(0, 2, 1))

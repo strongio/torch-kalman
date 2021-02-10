@@ -8,7 +8,7 @@ import torch
 from torch import nn, Tensor
 
 import numpy as np
-from torch_kalman.internals.utils import get_nan_groups
+from torch_kalman.internals.utils import get_nan_groups, is_near_zero
 
 from torch_kalman.utils.data import TimeSeriesDataset
 
@@ -197,7 +197,7 @@ class Predictions(nn.Module):
         H_flat = self.H.view(-1, n_measure_dim, n_state_dim)
         R_flat = self.R.view(-1, n_measure_dim, n_measure_dim)
 
-        lp_flat = torch.zeros(obs_flat.shape[0])
+        lp_flat = torch.zeros(obs_flat.shape[0], dtype=self.state_means.dtype, device=self.state_means.device)
         for gt_idx, valid_idx in get_nan_groups(torch.isnan(obs_flat)):
             if valid_idx is None:
                 gt_obs = obs_flat[gt_idx]
@@ -341,7 +341,7 @@ class Predictions(nn.Module):
             stds = H * torch.diagonal(self.state_covs, dim1=-2, dim2=-1).sqrt()
 
             for se_idx, (process, state_element) in enumerate(self.all_state_elements):
-                if not torch.isclose(means[:, :, se_idx], torch.zeros(1)).all():
+                if not is_near_zero(means[:, :, se_idx]).all():
                     out[(measure, process, state_element)] = (means[:, :, se_idx], stds[:, :, se_idx])
 
         return out

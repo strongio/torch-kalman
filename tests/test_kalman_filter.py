@@ -405,3 +405,21 @@ class TestKalmanFilter(TestCase):
         cov = kf.script_module.process_covariance({}, {})
         self.assertEqual(cov.shape[-1], 2)
         self.assertTrue((cov == 0).all())
+
+    @parameterized.expand([
+        (torch.float64, 2, True),
+        (torch.float64, 2, False)
+    ])
+    @torch.no_grad()
+    def test_dtype(self, dtype: torch.dtype, ndim: int = 2, compiled: bool = True):
+        data = torch.zeros((2, 5, ndim), dtype=dtype)
+        kf = KalmanFilter(
+            processes=[LocalLevel(id=f'll{i}', measure=str(i)) for i in range(ndim)],
+            measures=[str(i) for i in range(ndim)],
+            compiled=compiled
+        )
+        kf.to(dtype=dtype)
+        pred = kf(data)
+        self.assertEqual(pred.means.dtype, dtype)
+        loss = pred.log_prob(data)
+        self.assertEqual(loss.dtype, dtype)

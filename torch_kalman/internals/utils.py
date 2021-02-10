@@ -1,4 +1,4 @@
-from typing import Union, Any, Callable, Iterable, Tuple, Sequence, List, Optional
+from typing import Union, Any, Tuple, Sequence, List, Optional
 
 import torch
 
@@ -69,3 +69,8 @@ def true1d_idx(arr: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
     if len(arr.shape) > 1:
         raise ValueError("Expected 1d array.")
     return np.where(arr)[0]
+
+
+def is_near_zero(tens: torch.Tensor, rtol: float = 1e-05, atol: float = 1e-08, equal_nan: bool = False) -> torch.Tensor:
+    z = torch.zeros(1, dtype=tens.dtype, device=tens.device)
+    return torch.isclose(tens, other=z, rtol=rtol, atol=atol, equal_nan=equal_nan)

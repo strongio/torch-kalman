@@ -71,11 +71,25 @@ class ScriptKalmanFilter(nn.Module):
                         num_groups: int,
                         design_kwargs: Dict[str, Dict[str, Tensor]],
                         cache: Optional[Dict[str, Tensor]] = None) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+
         if cache is None:
             cache = {}
+
+        R = self.measure_covariance(design_kwargs.get('measure_covariance', {}), cache=cache)
+        if len(R.shape) == 2:
+            R = R.expand(num_groups, -1, -1)
+
+        Q = self.process_covariance(design_kwargs.get('process_covariance', {}), cache=cache)
+
+        if len(Q.shape) == 2:
+            Q = Q.expand(num_groups, -1, -1)
+        diag_multi = torch.diag_embed(self._get_measure_scaling(R))
+        Q = diag_multi @ Q @ diag_multi
+
         _empty = ['_']
         if 'base_F' not in cache:
-            cache['base_F'] = torch.zeros((num_groups, self.state_rank, self.state_rank))
+            cache['base_F'] = \
+                torch.zeros((num_groups, self.state_rank, self.state_rank), dtype=R.dtype, device=R.device)
             for pid, process in self.processes.items():
                 tv_kwargs = _empty
                 if process.time_varying_kwargs is not None:
@@ -88,7 +102,8 @@ class ScriptKalmanFilter(nn.Module):
                     cache['base_F'][:, _process_slice, _process_slice] = pf
 
         if 'base_H' not in cache:
-            cache['base_H'] = torch.zeros((num_groups, len(self.measures), self.state_rank))
+            cache['base_H'] = \
+                torch.zeros((num_groups, len(self.measures), self.state_rank), dtype=R.dtype, device=R.device)
             for pid, process in self.processes.items():
                 tv_kwargs = _empty
                 if process.time_varying_kwargs is not None:
@@ -112,28 +127,21 @@ class ScriptKalmanFilter(nn.Module):
                     F[:, _process_slice, _process_slice] = \
                         process(design_kwargs.get(pid, {}), which='f', cache=cache)
 
-        R = self.measure_covariance(design_kwargs.get('measure_covariance', {}), cache=cache)
-        if len(R.shape) == 2:
-            R = R.expand(num_groups, -1, -1)
-
-        Q = self.process_covariance(design_kwargs.get('process_covariance', {}), cache=cache)
-        if len(Q.shape) == 2:
-            Q = Q.expand(num_groups, -1, -1)
-        diag_multi = torch.diag_embed(self._get_measure_scaling(R))
-        Q = diag_multi @ Q @ diag_multi
-
         return F, H, Q, R
 
     def _get_measure_scaling(self, measure_cov: Tensor) -> Tensor:
         if self._scale_by_measure_var:
             measure_var = measure_cov.diagonal(dim1=-2, dim2=-1)
-            multi = torch.zeros(measure_cov.shape[0:-2] + (self.state_rank,))
+            multi = torch.zeros(measure_cov.shape[0:-2] + (self.state_rank,),
+                                dtype=measure_cov.dtype, device=measure_cov.device)
             for pid, process in self.processes.items():
                 pidx = self.process_to_slice[pid]
                 multi[..., slice(*pidx)] = measure_var[..., self.measure_to_idx[process.measure]].sqrt().unsqueeze(-1)
             assert (multi > 0).all()
         else:
-            multi = torch.ones(measure_cov.shape[0:-2] + (self.state_rank,))
+            multi = torch.ones(
+                measure_cov.shape[0:-2] + (self.state_rank,), dtype=measure_cov.dtype, device=measure_cov.device
+            )
         return multi
 
     def forward(self,

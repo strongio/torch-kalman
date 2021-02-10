@@ -5,7 +5,7 @@ from warnings import warn
 import torch
 
 from torch import Tensor, nn, jit
-from torch_kalman.internals.utils import get_owned_kwarg
+from torch_kalman.internals.utils import get_owned_kwarg, is_near_zero
 from torch_kalman.process.base import Process
 
 
@@ -194,7 +194,7 @@ class Covariance(nn.Module):
         else:
             raise NotImplementedError(self.method)
 
-        if torch.isclose(mini_cov.diagonal(dim1=-2, dim2=-1), torch.zeros(1), atol=1e-12).any():
+        if is_near_zero(mini_cov.diagonal(dim1=-2, dim2=-1), atol=1e-12).any():
             warn(
                 f"`{self.id}` has near-zero along the diagonal. Will add 1e-12 to the diagonal. "
                 f"Values:\n{mini_cov.diag()}"
