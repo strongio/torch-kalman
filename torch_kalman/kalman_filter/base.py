@@ -134,6 +134,7 @@ class KalmanFilter(nn.Module):
                 n_step: int = 1,
                 out_timesteps: Optional[int] = None,
                 initial_state: Optional[Tuple[Tensor, Tensor]] = None,
+                every_step: bool = True,
                 _disable_cache: bool = False,
                 **kwargs) -> Predictions:
 
@@ -144,6 +145,7 @@ class KalmanFilter(nn.Module):
             input=input,
             initial_state=initial_state,
             n_step=n_step,
+            every_step=every_step,
             out_timesteps=out_timesteps,
             _disable_cache=_disable_cache,
             **self._parse_design_kwargs(input=input, out_timesteps=out_timesteps or input.shape[1], **kwargs)

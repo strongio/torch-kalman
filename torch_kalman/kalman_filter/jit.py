@@ -152,8 +152,24 @@ class ScriptKalmanFilter(nn.Module):
                 n_step: int = 1,
                 out_timesteps: Optional[int] = None,
                 initial_state: Optional[Tuple[Tensor, Tensor]] = None,
+                every_step: bool = True,
                 _disable_cache: bool = False) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-
+        """
+        :param input: A (group X time X measures) tensor. Optional if `initial_state` is specified.
+        :param static_kwargs: Keyword-arguments to the Processes which do not vary over time.
+        :param time_varying_kwargs: Keyword-arguments to the Process which do vary over time. At each timestep, each
+        kwarg gets sliced for that timestep.
+        :param init_mean_kwargs: Keyword-arguments passed to `get_initial_state`
+        :param n_step: What is the horizon for predictions? Defaults to one-step-ahead (i.e. n_step=1).
+        :param out_timesteps: The number of timesteps in the output. Might be longer than input if forecasting.
+        :param initial_state: A (mean, cov) tuple to use at the initial state; otherwise `get_initial_state` is called.
+        :param every_step: Experimental. When n_step>1, we can generate these n-step-ahead predictions at every
+        timestep (e.g. 24-hour-ahead predictions every hour), in which case we'd save the 24-step-ahead prediction.
+        Alternatively, we could generate 24-hour-ahead predictions at every 24th hour, in which case we'd save
+        predictions 1-24. The former corresponds to every_step=True, the latter to every_step=False. If n_step=1
+        (the default) then this option has no effect.
+        :return: means, covs, R, H
+        """
         assert n_step > 0
 
         init_cov_kwargs = static_kwargs.pop('initial_covariance', {})
@@ -213,14 +229,23 @@ class ScriptKalmanFilter(nn.Module):
             # tu: the time of the update
             tu = ts - n_step
             if tu >= 0:
-                if tu < len(inputs):  # TODO: add unit-test
+                if tu < len(inputs):
                     mean1step, cov1step = self.kf_step.update(inputs[tu], mean1step, cov1step, H=Hs[tu], R=Rs[tu])
                 mean1step, cov1step = self.kf_step.predict(mean1step, cov1step, F=Fs[tu], Q=Qs[tu])
-            mean, cov = mean1step, cov1step
-            for h in range(1, n_step):
-                mean, cov = self.kf_step.predict(mean, cov, F=Fs[tu + h], Q=Qs[tu + h])
-            means += [mean]
-            covs += [cov]
+            # - if n_step=1, append to output immediately, and exit the loop
+            # - if n_step>1 & every_step, wait to append to output until h reaches n_step
+            # - if n_step>1 & !every_step, only append every 24th iter; but when we do, append for each h
+            if every_step or (tu % n_step) == 0:
+                mean, cov = mean1step, cov1step
+                for h in range(n_step):
+                    if h > 0:
+                        mean, cov = self.kf_step.predict(mean, cov, F=Fs[tu + h], Q=Qs[tu + h])
+                    if not every_step or h == (n_step - 1):
+                        means += [mean]
+                        covs += [cov]
+
+        means = means[:out_timesteps]
+        covs = covs[:out_timesteps]
 
         return torch.stack(means, 1), torch.stack(covs, 1), torch.stack(Rs, 1), torch.stack(Hs, 1)
 
