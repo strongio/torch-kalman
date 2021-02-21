@@ -1,5 +1,7 @@
+import copy
+import itertools
 import math
-from typing import Optional, Tuple, Iterable, Dict, Sequence
+from typing import Optional, Tuple, Iterable, Dict, Sequence, Union
 from warnings import warn
 
 import numpy as np
@@ -55,7 +57,7 @@ class FourierSeason(_Season, _RegressionBase):
                  K: int,
                  measure: Optional[str] = None,
                  process_variance: bool = False,
-                 decay: Optional[Tuple[float, float]] = None):
+                 decay: Optional[Union[nn.Module, Tuple[float, float]]] = None):
         """
         :param id: A unique identifier for this process
         :param dt_unit: A string indicating the time-units used in the kalman-filter -- i.e., how far we advance with
@@ -71,7 +73,7 @@ class FourierSeason(_Season, _RegressionBase):
         self.dt_unit_ns: Optional[int] = None if dt_unit is None else self._get_dt_unit_ns(dt_unit)
         self.period = period
 
-        if decay and (decay[0] ** period) < .01:
+        if isinstance(decay, tuple) and (decay[0] ** period) < .01:
             warn(
                 f"Given the seasonal period, the lower bound on `{id}`'s `decay` ({decay}) may be too low to "
                 f"generate useful gradient information for optimization."
@@ -108,11 +110,11 @@ class TBATS(_Season, Process):
                  K: int,
                  measure: Optional[str] = None,
                  process_variance: bool = True,
-                 decay: Optional[Tuple[float, float]] = None):
+                 decay: Optional[Union[nn.ModuleDict, Tuple[float, float]]] = None):
         self.period = float(period)
         self.dt_unit_ns = None if dt_unit is None else self._get_dt_unit_ns(dt_unit)
 
-        if decay and (decay[0] ** period) < .01:
+        if isinstance(decay, tuple) and (decay[0] ** period) < .01:
             warn(
                 f"Given the seasonal period, the lower bound on `{id}`'s `decay` ({decay}) may be too low to "
                 f"generate useful gradient information for optimization."
@@ -134,9 +136,22 @@ class TBATS(_Season, Process):
     def _setup(self,
                K: int,
                period: float,
-               decay: Optional[Tuple[float, float]] = None) -> Tuple[Sequence[str], dict, Sequence[float]]:
+               decay: Optional[Union[nn.Module, Tuple[float, float]]]) -> Tuple[Sequence[str], dict, Sequence[float]]:
+
+        if isinstance(decay, nn.Module):
+            decay = [copy.deepcopy(decay)] * K * 2
+        if isinstance(decay, (list, tuple)):
+            are_modules = [isinstance(m, nn.Module) for m in decay]
+            if any(are_modules):
+                assert all(are_modules), "`decay` is a list with some modules on some other types"
+                assert len(decay) == K * 2, "`decay` is a list of modules, but its length != K*2"
+            else:
+                assert len(decay) == 2, "if `decay` is not list of modules, should be (float,float)"
+                decay = [SingleOutput(transform=Bounded(*decay)) for _ in range(K * 2)]
+
         state_elements = []
         f_tensors = {}
+        f_modules = {}
         h_tensor = []
         for j in range(1, K + 1):
             sj = f"s{j}"
@@ -145,16 +160,22 @@ class TBATS(_Season, Process):
             s_star_j = f"s*{j}"
             state_elements.append(s_star_j)
             h_tensor.append(0.)
+
             lam = torch.tensor(2. * math.pi * j / period)
+
             f_tensors[f'{sj}->{sj}'] = torch.cos(lam)
             f_tensors[f'{sj}->{s_star_j}'] = -torch.sin(lam)
             f_tensors[f'{s_star_j}->{sj}'] = torch.sin(lam)
             f_tensors[f'{s_star_j}->{s_star_j}'] = torch.cos(lam)
 
-        if decay:
-            f_modules = {}
-            for key, tens in f_tensors.items():
-                f_modules[key] = SingleOutput(transform=nn.Sequential(Bounded(decay), Multi(tens)))
+            if decay:
+                for from_, to_ in itertools.product([sj, s_star_j], [sj, s_star_j]):
+                    tkey = f'{from_}->{to_}'
+                    which = 2 * (j - 1) + int(from_ == to_)
+                    f_modules[tkey] = nn.Sequential(decay[which], Multi(f_tensors[tkey]))
+
+        if f_modules:
+            assert len(f_modules) == len(f_tensors)
             return state_elements, f_modules, h_tensor
         else:
             return state_elements, f_tensors, h_tensor
@@ -207,7 +228,7 @@ class DiscreteSeason(Process):
                  measure: Optional[str] = None,
                  process_variance: bool = False,
                  decay: Optional[Tuple[float, float]] = None):
-        if decay and (decay[0] ** (num_seasons * season_duration)) < .01:
+        if isinstance(decay, tuple) and (decay[0] ** (num_seasons * season_duration)) < .01:
             warn(
                 f"Given the seasonal period, the lower bound on `{self.id}`'s `decay` ({decay}) may be too low to "
                 f"generate useful gradient information for optimization."

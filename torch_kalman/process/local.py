@@ -1,4 +1,4 @@
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union
 
 import torch
 
@@ -16,7 +16,7 @@ class LocalLevel(Process):
     def __init__(self,
                  id: str,
                  measure: Optional[str] = None,
-                 decay: Optional[Tuple[float, float]] = None):
+                 decay: Optional[Union[torch.nn.Module, Tuple[float, float]]] = None):
         """
         :param id: A unique identifier for this process.
         :param decay: If the process has decay, then the random walk will tend towards zero as we forecast out further
@@ -28,7 +28,9 @@ class LocalLevel(Process):
         se = 'position'
         if decay:
             transitions = nn.ModuleDict()
-            transitions[f'{se}->{se}'] = SingleOutput(transform=Bounded(decay))
+            if isinstance(decay, tuple):
+                decay = SingleOutput(transform=Bounded(*decay))
+            transitions[f'{se}->{se}'] = decay
         else:
             transitions = {f'{se}->{se}': torch.ones(1)}
         super(LocalLevel, self).__init__(
@@ -49,8 +51,8 @@ class LocalTrend(Process):
     def __init__(self,
                  id: str,
                  measure: Optional[str] = None,
-                 decay_velocity: Optional[Tuple[float, float]] = (.95, 1.00),
-                 decay_position: Optional[Tuple[float, float]] = None,
+                 decay_velocity: Optional[Union[torch.nn.Module, Tuple[float, float]]] = (.95, 1.00),
+                 decay_position: Optional[Union[torch.nn.Module, Tuple[float, float]]] = None,
                  velocity_multi: float = 0.1):
         """
         :param id: A unique identifier for this process.
@@ -70,11 +72,15 @@ class LocalTrend(Process):
         if decay_position is None:
             f_tensors['position->position'] = torch.ones(1)
         else:
-            f_modules['position->position'] = SingleOutput(transform=Bounded(decay_position))
+            if isinstance(decay_position, tuple):
+                decay_position = SingleOutput(transform=Bounded(*decay_position))
+            f_modules['position->position'] = decay_position
         if decay_velocity is None:
             f_tensors['velocity->velocity'] = torch.ones(1)
         else:
-            f_modules['velocity->velocity'] = SingleOutput(transform=Bounded(decay_velocity))
+            if isinstance(decay_velocity, tuple):
+                decay_velocity = SingleOutput(transform=Bounded(*decay_velocity))
+            f_modules['velocity->velocity'] = decay_velocity
 
         assert velocity_multi <= 1.
         f_tensors['velocity->position'] = torch.ones(1) * velocity_multi

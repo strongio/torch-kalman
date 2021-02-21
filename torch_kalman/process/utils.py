@@ -40,9 +40,10 @@ class Bounded(nn.Module):
     Transforms input to fall within `value`, a tuple of (lower, upper)
     """
 
-    def __init__(self, value: Tuple[float, float]):
+    def __init__(self, lower: float, upper: float):
         super(Bounded, self).__init__()
-        self.lower, self.upper = value
+        self.lower = lower
+        self.upper = upper
 
     def forward(self, input: Tensor) -> Tensor:
         return torch.sigmoid(input) * (self.upper - self.lower) + self.lower

@@ -1,4 +1,4 @@
-from typing import Tuple, Sequence, Optional
+from typing import Tuple, Sequence, Optional, Union
 
 import torch
 
@@ -15,11 +15,13 @@ class _RegressionBase(Process):
                  h_module: torch.nn.Module,
                  measure: Optional[str] = None,
                  process_variance: bool = False,
-                 decay: Optional[Tuple[float, float]] = None):
+                 decay: Optional[Union[nn.Module, Tuple[float, float]]] = None):
         if decay is None:
             transitions = {'all_self': torch.ones(len(predictors))}
         else:
-            transitions = nn.ModuleDict({'all_self': SingleOutput(numel=len(predictors), transform=Bounded(decay))})
+            if isinstance(decay, tuple):
+                decay = SingleOutput(numel=len(predictors), transform=Bounded(*decay))
+            transitions = nn.ModuleDict({'all_self': decay})
 
         super().__init__(
             id=id,
