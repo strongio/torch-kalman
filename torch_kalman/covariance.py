@@ -5,6 +5,7 @@ from warnings import warn
 import torch
 
 from torch import Tensor, nn, jit
+
 from torch_kalman.internals.utils import get_owned_kwarg, is_near_zero
 from torch_kalman.process.base import Process
 
@@ -127,7 +128,8 @@ class Covariance(nn.Module):
             if time_varying_kwargs is not None:
                 assert set(time_varying_kwargs).issubset(self.var_predict_modules.keys())
             self.expected_kwargs: List[str] = []
-            for expected_kwarg, module in self.var_predict_modules.items():
+            for expected_kwarg_plus, module in self.var_predict_modules.items():
+                pname, _, expected_kwarg = expected_kwarg_plus.rpartition("__")
                 self.expected_kwargs.append(expected_kwarg)
 
     @jit.ignore
@@ -179,12 +181,35 @@ class Covariance(nn.Module):
         return f'{prefix}_static'
 
     def _get_padded_cov(self, inputs: Dict[str, Tensor]) -> Tensor:
+        params: Dict[str, List[Tensor]] = {}
+        if self.var_predict_modules is not None:
+            for expected_kwarg_plus, module in self.var_predict_modules.items():
+                pname, _, expected_kwarg = expected_kwarg_plus.rpartition("__")
+                if expected_kwarg not in inputs:
+                    raise TypeError(f"`{self.id}` missing required kwarg `{expected_kwarg}`")
+                if pname == '':
+                    pname = 'var_multi'
+                if pname not in params:
+                    params[pname] = []
+                params[pname].append(self.var_predict_multi * module(inputs[expected_kwarg]))
+
         if self.method == 'log_cholesky':
             assert self.cholesky_log_diag is not None
             assert self.cholesky_off_diag is not None
-            L = self.log_chol_to_chol(self.cholesky_log_diag, self.cholesky_off_diag)
+            cholesky_log_diag = self.cholesky_log_diag
+            cholesky_off_diag = self.cholesky_off_diag
+            if 'cholesky_off_diag' in params and 'cholesky_log_diag' in params:
+                cholesky_log_diag = cholesky_log_diag + torch.sum(torch.stack(params['cholesky_log_diag'], 0))
+                cholesky_off_diag = cholesky_off_diag + torch.sum(torch.stack(params['cholesky_off_diag'], 0))
+            else:
+                assert 'cholesky_off_diag' not in params and 'cholesky_log_diag' not in params
+
+            L = self.log_chol_to_chol(cholesky_log_diag, cholesky_off_diag)
             mini_cov = L @ L.t()
         elif self.method == 'low_rank':
+            if len(params) > 0 and (list(params.keys()) != ['var_multi']):
+                # TODO
+                raise NotImplementedError
             assert self.lr_mat is not None
             assert self.log_std_devs is not None
             mini_cov = (
@@ -201,19 +226,10 @@ class Covariance(nn.Module):
             )
             mini_cov = mini_cov + torch.eye(mini_cov.shape[-1]) * 1e-12
 
-        # TODO: cache the base-cov if inputs are time-varying?
-        if self.var_predict_modules is not None:
-            for expected_kwarg, module in self.var_predict_modules.items():
-                if expected_kwarg not in inputs:
-                    raise TypeError(f"`{self.id}` missing required kwarg `{expected_kwarg}`")
-                predictions = module(inputs[expected_kwarg])
-                if predictions.shape[-1] != self.param_rank:
-                    raise RuntimeError(
-                        f"`{self.id}.var_predict_modules['{expected_kwarg}']` output shape is {predictions.shape} but "
-                        f"expected `shape[-1]=={self.param_rank}`"
-                    )
-                diag_multi = torch.diag_embed(torch.exp(self.var_predict_multi * predictions))
-                mini_cov = diag_multi @ mini_cov @ diag_multi
+        if 'var_multi' in params.keys():
+            diag_multi = torch.exp(torch.sum(torch.stack(params['var_multi'], 0), 0))
+            diag_multi = torch.diag_embed(diag_multi)
+            mini_cov = diag_multi @ mini_cov @ diag_multi
 
         return pad_covariance(mini_cov, [int(i not in self.empty_idx) for i in range(self.rank)])
 
