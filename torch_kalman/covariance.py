@@ -10,6 +10,10 @@ from torch_kalman.internals.utils import get_owned_kwarg, is_near_zero
 from torch_kalman.process.base import Process
 
 
+def num_off_diag(rank: int) -> int:
+    return int(rank * (rank - 1) / 2)
+
+
 class Covariance(nn.Module):
     @classmethod
     def for_processes(cls, processes: Sequence[Process], cov_type: str, **kwargs) -> 'Covariance':
@@ -99,8 +103,7 @@ class Covariance(nn.Module):
         self.method = method
         if self.method == 'log_cholesky':
             self.cholesky_log_diag = nn.Parameter(.1 * torch.randn(self.param_rank) + math.log(init_diag_multi))
-            n_off = int(self.param_rank * (self.param_rank - 1) / 2)
-            self.cholesky_off_diag = nn.Parameter(.1 * torch.randn(n_off))
+            self.cholesky_off_diag = nn.Parameter(.1 * torch.randn(num_off_diag(self.param_rank)))
         elif self.method == 'low_rank':
             low_rank = int(math.sqrt(self.param_rank))
             self.lr_mat = nn.Parameter(data=.01 * torch.randn(self.param_rank, low_rank))

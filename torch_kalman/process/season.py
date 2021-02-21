@@ -139,7 +139,7 @@ class TBATS(_Season, Process):
                decay: Optional[Union[nn.Module, Tuple[float, float]]]) -> Tuple[Sequence[str], dict, Sequence[float]]:
 
         if isinstance(decay, nn.Module):
-            decay = [copy.deepcopy(decay)] * K * 2
+            decay = [copy.deepcopy(decay) for _ in range(K * 2)]
         if isinstance(decay, (list, tuple)):
             are_modules = [isinstance(m, nn.Module) for m in decay]
             if any(are_modules):
