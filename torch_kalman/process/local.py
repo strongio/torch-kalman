@@ -16,7 +16,8 @@ class LocalLevel(Process):
     def __init__(self,
                  id: str,
                  measure: Optional[str] = None,
-                 decay: Optional[Union[torch.nn.Module, Tuple[float, float]]] = None):
+                 decay: Optional[Union[torch.nn.Module, Tuple[float, float]]] = None,
+                 decay_kwarg: Optional[str] = None):
         """
         :param id: A unique identifier for this process.
         :param decay: If the process has decay, then the random walk will tend towards zero as we forecast out further
@@ -25,6 +26,10 @@ class LocalLevel(Process):
         rapid and you will run into trouble with vanishing gradients. When passing a pair of floats, the nn.Module will
         assign a parameter representing the decay as a learned parameter somewhere between these bounds.
         """
+        if decay_kwarg is None:
+            assert not isinstance(decay, nn.Module)
+            decay_kwarg = ''
+
         se = 'position'
         if decay:
             transitions = nn.ModuleDict()
@@ -33,13 +38,15 @@ class LocalLevel(Process):
             transitions[f'{se}->{se}'] = decay
         else:
             transitions = {f'{se}->{se}': torch.ones(1)}
+
         super(LocalLevel, self).__init__(
             id=id,
             measure=measure,
             state_elements=[se],
             f_modules=transitions if decay else None,
             f_tensors=None if decay else transitions,
-            h_tensor=torch.tensor([1.])
+            h_tensor=torch.tensor([1.]),
+            f_kwarg=decay_kwarg
         )
 
 
@@ -53,7 +60,8 @@ class LocalTrend(Process):
                  measure: Optional[str] = None,
                  decay_velocity: Optional[Union[torch.nn.Module, Tuple[float, float]]] = (.95, 1.00),
                  decay_position: Optional[Union[torch.nn.Module, Tuple[float, float]]] = None,
-                 velocity_multi: float = 0.1):
+                 velocity_multi: float = 0.1,
+                 decay_kwarg: Optional[str] = None):
         """
         :param id: A unique identifier for this process.
         :param decay_velocity: If set, then the trend will decay to zero as we forecast out further. The default is
@@ -64,6 +72,9 @@ class LocalTrend(Process):
         `next_position = position + velocity_multi * velocity`. A value of << 1.0 can be helpful since the
         trend has such a large effect on the prediction, so that large values can lead to exploding predictions.
         """
+        if decay_kwarg is None:
+            assert not isinstance(decay_position, nn.Module) and not isinstance(decay_velocity, nn.Module)
+            decay_kwarg = ''
 
         # define transitions:
         f_modules = nn.ModuleDict()
@@ -91,5 +102,6 @@ class LocalTrend(Process):
             state_elements=['position', 'velocity'],
             f_modules=f_modules,
             f_tensors=f_tensors,
-            h_tensor=torch.tensor([1., 0.])
+            h_tensor=torch.tensor([1., 0.]),
+            f_kwarg=decay_kwarg
         )

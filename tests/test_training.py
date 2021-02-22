@@ -222,7 +222,7 @@ class TestTraining(unittest.TestCase):
             measure_colnames=['y']
         )
 
-        def _train(num_epochs: int = 20):
+        def _train(num_epochs: int = 15):
             kf = KalmanFilter(
                 processes=[
                     TBATS(id='day_of_week', period=7, dt_unit='D', K=1, process_variance=True, decay=(.85, 1.))

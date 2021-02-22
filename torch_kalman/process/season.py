@@ -110,9 +110,14 @@ class TBATS(_Season, Process):
                  K: int,
                  measure: Optional[str] = None,
                  process_variance: bool = True,
-                 decay: Optional[Union[nn.ModuleDict, Tuple[float, float]]] = None):
+                 decay: Optional[Union[nn.ModuleDict, Tuple[float, float]]] = None,
+                 decay_kwarg: Optional[str] = None):
         self.period = float(period)
         self.dt_unit_ns = None if dt_unit is None else self._get_dt_unit_ns(dt_unit)
+
+        if decay_kwarg is None:
+            # assert not isinstance(decay, nn.Module) # TODO
+            decay_kwarg = ''
 
         if isinstance(decay, tuple) and (decay[0] ** period) < .01:
             warn(
@@ -122,6 +127,9 @@ class TBATS(_Season, Process):
 
         state_elements, transitions, h_tensor = self._setup(K=K, period=period, decay=decay)
 
+        init_mean_kwargs = ['start_offsets']
+        if decay_kwarg:
+            init_mean_kwargs.append(decay_kwarg)
         super(TBATS, self).__init__(
             id=id,
             state_elements=state_elements,
@@ -130,7 +138,8 @@ class TBATS(_Season, Process):
             h_tensor=torch.tensor(h_tensor),
             measure=measure,
             no_pcov_state_elements=[] if process_variance else state_elements,
-            init_mean_kwargs=['start_offsets']
+            init_mean_kwargs=init_mean_kwargs,
+            f_kwarg=decay_kwarg
         )
 
     def _setup(self,
@@ -193,27 +202,34 @@ class TBATS(_Season, Process):
             yield found_key, key_name, key_type, value
 
     def get_initial_state_mean(self, input: Optional[Dict[str, Tensor]] = None) -> Tensor:
-
+        assert input is not None
         if self.dt_unit_ns is None:
             return self.init_mean
-        assert input is not None
-        F = self.f_forward(torch.empty(0)).squeeze(0)
+        start_offsets = input['start_offsets']
+        num_groups = start_offsets.shape[0]
+
+        if self.f_kwarg == '':
+            f_input = torch.empty(0)  # TODO: support `None`
+        else:
+            f_input = input[self.f_kwarg]
+
+        F = self.f_forward(f_input)
+        if F.shape[0] != num_groups:
+            F = F.expand(num_groups, -1, -1)
+
         if abs(float(int(self.period)) - float(self.period)) > .00001:
             # TODO: does jit have `int.is_integer()` method?
             raise NotImplementedError
 
         means = []
-        mean = self.init_mean.unsqueeze(-1)
+        mean = self.init_mean.expand(num_groups, -1).unsqueeze(-1)
         for i in range(int(self.period)):
             means.append(mean.squeeze(-1))
             mean = F @ mean
 
-        out = []
-        start_offsets = input['start_offsets']
-        for i in range(start_offsets.shape[0]):
-            offset = int(start_offsets[i].item())
-            out.append(means[offset])
-        return torch.stack(out)
+        groups = [i for i in range(num_groups)]
+        times = [int(start_offsets[i].item()) for i in groups]
+        return torch.stack(means, 1)[(groups, times)]
 
 
 class DiscreteSeason(Process):
