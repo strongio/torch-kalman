@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 from matplotlib import ticker
 import seaborn as sb
@@ -168,7 +169,6 @@ for subplt, (process, dat) in zip(subplts, df_to_plot.groupby('process')):
     subplt.set_title(process)
 
 # +
-import matplotlib.dates as mdates
 predictors_df = df_components.query(f"(group=='{group}') & (process.str.endswith('predictors')) & (state_element.str.contains('week') == False)")
 
 fig, subplts = plt.subplots(nrows=len(predictors_df['state_element'].unique()), sharex=True, figsize=(24, 12))
@@ -186,7 +186,7 @@ for subplt, (pred, pred_df) in zip(np.flip(subplts), predictors_df.groupby('stat
     subplt.axvline(SPLIT_DT, linestyle='--', color='k')
     for yr in np.arange(2009, 2019, 1):
         subplt.axvline(datetime.datetime(yr, 1, 1), linestyle=':', color='k', lw=1)
-    
+
     subplt.set_ylabel('Relative Change', fontsize=15)
     subplt.tick_params(axis='both', labelsize=15)
     subplt.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
@@ -200,13 +200,13 @@ df_to_plot = df_pred.query("(group == 'red') & (time >= '2012-01-01') & (time < 
 subplt.plot(df_to_plot['time'], df_to_plot['actual'], color=color_map['red'], zorder=1)
 subplt.text(datetime.datetime(2013, 5, 19), 0, 'Red Line South\nModernization Project', ha='left', va='bottom', fontsize=13, zorder=0)
 
-t = np.arange(datetime.datetime(2013,5,19), datetime.datetime(2013,10,20), datetime.timedelta(days=1)).astype(datetime.datetime)
+t = np.arange(datetime.datetime(2013, 5, 19), datetime.datetime(2013, 10, 20), datetime.timedelta(days=1)).astype(datetime.datetime)
 subplt.fill_between(t, y1=0, y2=250000, color='k', alpha=0.1, zorder=-1)
 
 for yr in np.arange(2012, 2016, 1):
-    t = np.arange(datetime.datetime(yr,12,15), datetime.datetime(yr+1,1,5), datetime.timedelta(days=1)).astype(datetime.datetime)
+    t = np.arange(datetime.datetime(yr, 12, 15), datetime.datetime(yr+1, 1, 5), datetime.timedelta(days=1)).astype(datetime.datetime)
     subplt.fill_between(t, y1=0, y2=250000, color='k', alpha=0.1, zorder=-1)
-    
+
 for yr in np.arange(2012, 2017, 1):
     subplt.axvline(datetime.datetime(yr, 1, 1), linestyle='--', color='k', zorder=2)
 
@@ -216,12 +216,3 @@ subplt.tick_params(axis='both', labelsize=20)
 #subplt.set_title('CTA Red Line Ridership', fontsize=20)
 subplt.text(1.0, 1.0, 'CTA Red Line Ridership', fontsize=20, ha='right', va='bottom', transform=subplt.transAxes)
 subplt.yaxis.set_major_formatter(ticker.StrMethodFormatter("{x:,.0f}"))
-
-# +
-fig = plt.figure()
-subplt = plt.subplot(111)
-
-subplt.plot(np.arange(1, 12, 1), np.arange(1, 12, 1), linestyle='-', color='#c60c30')
-# -
-
-

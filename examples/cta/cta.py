@@ -15,6 +15,7 @@
 # ---
 
 # +
+from sklearn.preprocessing import StandardScaler
 import datetime
 import os
 import numpy as np
@@ -41,7 +42,7 @@ blue, red, yellow, green, orange, pink, purple, brown = sb.xkcd_palette(
 )
 # -
 
-DATA_DIR = '../data/cta'
+DATA_DIR = '.'
 
 
 # +
@@ -80,6 +81,7 @@ def load_riders_data(start_date: str = None, end_date: str = None):
 
     return riders_df
 
+
 def process_riders_data(riders_df):
     lines = ['red', 'blue', 'green', 'brown', 'purple', 'purple_express', 'yellow', 'pink', 'orange']
     # For now, just count rides at transfer (i.e. multi-line) stations for each line - need to account for this later though
@@ -92,8 +94,9 @@ def process_riders_data(riders_df):
         daily_line_data['rides'] = daily_line_data['rides'].astype(np.int64)
         daily_line_data['line'] = line
         df = pd.concat([df, daily_line_data])
-    
+
     return df
+
 
 def load_weather_data():
     weather_data = pd.read_csv('../data/cta/weather_data.csv')
@@ -101,13 +104,14 @@ def load_weather_data():
     weather_data['date'] = pd.to_datetime(weather_data['date'])
     return weather_data
 
+
 def add_date_flags(daily_df: pd.DataFrame):
     assert 'date' in daily_df.columns
     daily_df['is_weekday'] = (daily_df['date'].dt.weekday < 5).astype(np.int64)
     daily_df['is_weekend'] = (daily_df['date'].dt.weekday >= 5).astype(np.int64)
 
     holidays = USFederalHolidayCalendar().holidays()
-    daily_df['is_holiday']  = df['date'].isin(holidays).astype(np.int64)
+    daily_df['is_holiday'] = df['date'].isin(holidays).astype(np.int64)
 
     cubs_home_games = pd.Series()
     for year in daily_df['date'].dt.year.unique():
@@ -155,7 +159,6 @@ weather_data = load_weather_data()
 df = df.merge(weather_data, on='date')
 
 # +
-from sklearn.preprocessing import StandardScaler
 
 # Filter to a few lines
 lines = ('red', 'blue', 'green', 'brown', 'pink', 'orange', 'yellow', 'purple', 'purple_express')
@@ -172,7 +175,7 @@ for measure in measures + predictors:
 
     fit_dat = df[df['date'] <= SPLIT_DT][measure].values.reshape(-1, 1)
     transform_dat = df[measure].values.reshape(-1, 1)
-    
+
     scaler = StandardScaler().fit(fit_dat)
     df[new_col] = scaler.transform(transform_dat).flatten()
     scalers[measure] = scaler
@@ -194,7 +197,7 @@ processes = []
 for measure in normed_measures:
     processes.extend([
         LocalTrend(id=f'{measure}_trend', measure=measure),
-        LocalLevel(id=f'{measure}_local_level', decay=(.99,1.00), measure=measure),
+        LocalLevel(id=f'{measure}_local_level', decay=(.99, 1.00), measure=measure),
         FourierSeason(
             id=f'{measure}_day_of_week',
             period=7.,
@@ -213,16 +216,16 @@ for measure in normed_measures:
     ])
 
 predict_variance = torch.nn.Embedding(
-            num_embeddings=len(dataset_all.group_names),
-            embedding_dim=len(normed_measures),
-            padding_idx=0
-        )
-group_names_to_group_ids = {g : i for i,g in enumerate(dataset_all.group_names)}
+    num_embeddings=len(dataset_all.group_names),
+    embedding_dim=len(normed_measures),
+    padding_idx=0
+)
+group_names_to_group_ids = {g: i for i, g in enumerate(dataset_all.group_names)}
 
 kf = KalmanFilter(
-    measures=normed_measures, 
+    measures=normed_measures,
     processes=processes,
-    measure_covariance=Covariance.for_measures(normed_measures, var_predict={'group_ids' : predict_variance})
+    measure_covariance=Covariance.for_measures(normed_measures, var_predict={'group_ids': predict_variance})
 )
 optimizer = torch.optim.Adam(kf.parameters(), lr=0.01)
 
@@ -230,6 +233,8 @@ optimizer = torch.optim.Adam(kf.parameters(), lr=0.01)
 epochs = 350
 train_losses = []
 val_losses = []
+
+
 def closure_step():
     optimizer.zero_grad()
     y, X = dataset_train.tensors
@@ -243,8 +248,10 @@ def closure_step():
     loss.backward()
     return loss
 
+
 def train():
     return optimizer.step(closure_step).item()
+
 
 def validate():
     y, X = dataset_val.tensors
@@ -256,6 +263,7 @@ def validate():
             group_ids=[group_names_to_group_ids[g] for g in dataset_train.group_names]
         )
         return -pred.log_prob(y).mean().item()
+
 
 for i in tqdm(range(epochs)):
     train_loss = train()
@@ -302,12 +310,3 @@ df_components = pred.to_dataframe(dataset_all, type='components')
 
 df_pred.to_parquet('cta_predictions.parquet')
 df_components.to_parquet('cta_prediction_components.parquet')
-# -
-
-df['tmax'].min()
-
-df.groupby('line')['rides'].sum().sort_values() / df['rides'].sum()
-
-35 + 24 + 11 + 8 + 8 + 8 + 6 + 1
-
-
