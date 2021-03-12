@@ -76,6 +76,10 @@ class ScriptKalmanFilter(nn.Module):
             cache = {}
 
         R = self.measure_covariance(design_kwargs.get('measure_covariance', {}), cache=cache)
+        if torch.isnan(R).any():
+            raise RuntimeError(
+                "`nans` in measurement covariance; possible caused by nan-gradients in training. Check your inputs."
+            )
         if len(R.shape) == 2:
             R = R.expand(num_groups, -1, -1)
 
@@ -121,11 +125,16 @@ class ScriptKalmanFilter(nn.Module):
             if process.time_varying_kwargs is not None:
                 _process_slice = slice(*self.process_to_slice[pid])
                 if process.h_kwarg in process.time_varying_kwargs:
-                    H[:, self.measure_to_idx[process.measure], _process_slice] = \
-                        process(design_kwargs.get(pid, {}), which='h', cache=cache)
+                    ph = process(design_kwargs.get(pid, {}), which='h', cache=cache)
+                    if torch.isnan(ph).any():
+                        raise RuntimeError(f"{process.id} produced H with nans")
+                    H[:, self.measure_to_idx[process.measure], _process_slice] = ph
+
                 if process.f_kwarg in process.time_varying_kwargs:
-                    F[:, _process_slice, _process_slice] = \
-                        process(design_kwargs.get(pid, {}), which='f', cache=cache)
+                    pf = process(design_kwargs.get(pid, {}), which='f', cache=cache)
+                    if torch.isnan(pf).any():
+                        raise RuntimeError(f"{process.id} produced F with nans")
+                    F[:, _process_slice, _process_slice] = pf
 
         return F, H, Q, R
 

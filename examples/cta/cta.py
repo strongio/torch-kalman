@@ -87,7 +87,7 @@ def process_riders_data(riders_df):
     # For now, just count rides at transfer (i.e. multi-line) stations for each line - need to account for this later though
     df = pd.DataFrame(columns=['date', 'rides', 'line'])
     for line in lines:
-        line_df = riders_df[riders_df[line]]
+        line_df = riders_df[riders_df[line]].copy()
         line_df['normed_rides'] = line_df['rides'] / line_df['n_lines']
         daily_line_data = line_df.groupby('date')['normed_rides'].sum().to_frame().reset_index()
         daily_line_data = daily_line_data.rename({'normed_rides': 'rides'}, axis=1)
@@ -99,11 +99,10 @@ def process_riders_data(riders_df):
 
 
 def load_weather_data():
-    weather_data = pd.read_csv('../data/cta/weather_data.csv')
+    weather_data = pd.read_csv(os.path.join(DATA_DIR,'weather_data.csv'))
     weather_data.columns = weather_data.columns.str.lower()
     weather_data['date'] = pd.to_datetime(weather_data['date'])
     return weather_data
-
 
 def add_date_flags(daily_df: pd.DataFrame):
     assert 'date' in daily_df.columns
@@ -111,7 +110,7 @@ def add_date_flags(daily_df: pd.DataFrame):
     daily_df['is_weekend'] = (daily_df['date'].dt.weekday >= 5).astype(np.int64)
 
     holidays = USFederalHolidayCalendar().holidays()
-    daily_df['is_holiday'] = df['date'].isin(holidays).astype(np.int64)
+    daily_df['is_holiday'] =daily_df['date'].isin(holidays).astype(np.int64)
 
     cubs_home_games = pd.Series()
     for year in daily_df['date'].dt.year.unique():
@@ -120,7 +119,7 @@ def add_date_flags(daily_df: pd.DataFrame):
         home_dates = home_dates.drop_duplicates()
         cubs_home_games = cubs_home_games.append(home_dates, ignore_index=True)
 
-    daily_df['is_cubs_game'] = df['date'].isin(cubs_home_games).astype(np.int64)
+    daily_df['is_cubs_game'] =daily_df['date'].isin(cubs_home_games).astype(np.int64)
 
     sox_home_games = pd.Series()
     for year in daily_df['date'].dt.year.unique():
@@ -129,11 +128,14 @@ def add_date_flags(daily_df: pd.DataFrame):
         home_dates = home_dates.drop_duplicates()
         sox_home_games = sox_home_games.append(home_dates, ignore_index=True)
 
-    daily_df['is_sox_game'] = df['date'].isin(sox_home_games).astype(np.int64)
+    daily_df['is_sox_game'] =daily_df['date'].isin(sox_home_games).astype(np.int64)
     return daily_df
 
 
+
 # +
+lines = ('red', 'blue', 'green', 'brown', 'pink', 'orange', 'yellow', 'purple', 'purple_express')
+
 DT_UNIT = 'D'
 START_DT = pd.Timestamp('2008-06-01')
 END_DT = pd.Timestamp('2018-12-31')
@@ -149,21 +151,17 @@ color_map = {
     'orange': orange,
     'yellow': yellow
 }
+# -
 
-# +
 riders_df = load_riders_data(start_date=START_DT, end_date=END_DT)
-df = process_riders_data(riders_df)
-df = add_date_flags(df)
-
-weather_data = load_weather_data()
-df = df.merge(weather_data, on='date')
+_tmp = load_weather_data().query("date.between(@START_DT, @END_DT)")
+df = pd.concat([_tmp.assign(line=line) for line in lines]).\
+    merge(process_riders_data(riders_df), how='left', on=['date','line']).\
+    pipe(add_date_flags)
+del _tmp
+# TODO: process_riders_data causes implicit missings
 
 # +
-
-# Filter to a few lines
-lines = ('red', 'blue', 'green', 'brown', 'pink', 'orange', 'yellow', 'purple', 'purple_express')
-df = df[df['line'].isin(lines)]
-
 measures = ['rides']
 predictors = ['tmax', 'prcp', 'is_weekday', 'is_weekend', 'is_holiday', 'is_cubs_game']
 normed_measures = []
@@ -190,6 +188,8 @@ dataset_all = TimeSeriesDataset.from_dataframe(
 )
 # -
 
+assert dataset_all.to_dataframe().query('tmax_scaled.isnull()').empty
+
 dataset_train, dataset_val = dataset_all.train_val_split(dt=SPLIT_DT.to_numpy())
 
 # +
@@ -202,12 +202,12 @@ for measure in normed_measures:
             id=f'{measure}_day_of_week',
             period=7.,
             dt_unit=DT_UNIT,
-            K=7,
+            K=3,
             measure=measure
         ),
         FourierSeason(
             id=f'{measure}_day_of_year',
-            period=365.,
+            period=365.25,
             dt_unit=DT_UNIT,
             K=26,
             measure=measure
@@ -234,7 +234,6 @@ epochs = 350
 train_losses = []
 val_losses = []
 
-
 def closure_step():
     optimizer.zero_grad()
     y, X = dataset_train.tensors
@@ -260,7 +259,7 @@ def validate():
             y,
             X=X,
             start_datetimes=dataset_val.start_datetimes,
-            group_ids=[group_names_to_group_ids[g] for g in dataset_train.group_names]
+            group_ids=[group_names_to_group_ids[g] for g in dataset_val.group_names]
         )
         return -pred.log_prob(y).mean().item()
 
