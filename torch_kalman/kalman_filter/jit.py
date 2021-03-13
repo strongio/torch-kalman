@@ -75,6 +75,7 @@ class ScriptKalmanFilter(nn.Module):
         if cache is None:
             cache = {}
 
+        # measure-variance:
         R = self.measure_covariance(design_kwargs.get('measure_covariance', {}), cache=cache)
         if torch.isnan(R).any():
             raise RuntimeError(
@@ -83,12 +84,20 @@ class ScriptKalmanFilter(nn.Module):
         if len(R.shape) == 2:
             R = R.expand(num_groups, -1, -1)
 
-        Q = self.process_covariance(design_kwargs.get('process_covariance', {}), cache=cache)
+        # process-variance:
+        Q_raw = self.process_covariance(design_kwargs.get('process_covariance', {}), cache=cache)
+        if len(Q_raw.shape) == 2:
+            Q_raw = Q_raw.expand(num_groups, -1, -1)
 
-        if len(Q.shape) == 2:
-            Q = Q.expand(num_groups, -1, -1)
-        diag_multi = torch.diag_embed(self._get_measure_scaling(R))
-        Q = diag_multi @ Q @ diag_multi
+        # cache the scaling operation, which is not cheap:
+        if self.process_covariance.time_varying_kwargs is None and self.measure_covariance.time_varying_kwargs is None:
+            if 'q_scaled' not in cache.keys():
+                measure_scaling = torch.diag_embed(self._get_measure_scaling(R))
+                cache['q_scaled'] = measure_scaling @ Q_raw @ measure_scaling
+            Q = cache['q_scaled']
+        else:
+            measure_scaling = torch.diag_embed(self._get_measure_scaling(R))
+            Q = measure_scaling @ Q_raw @ measure_scaling
 
         _empty = ['_']
         if 'base_F' not in cache:
