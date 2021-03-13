@@ -13,6 +13,11 @@ def get_nan_groups(isnan: torch.Tensor) -> List[Tuple[torch.Tensor, Optional[tor
     assert len(isnan.shape) == 2
     state_dim = isnan.shape[-1]
     out: List[Tuple[torch.Tensor, Optional[torch.Tensor]]] = []
+    if state_dim == 1:
+        # shortcut for univariate
+        group_idx = (~isnan.squeeze(-1)).nonzero().view(-1)
+        out.append((group_idx, None))
+        return out
     for nan_combo in torch.unique(isnan, dim=0):
         num_nan = nan_combo.sum()
         if num_nan < state_dim:

@@ -1,8 +1,7 @@
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple
 
 import torch
 from torch import nn, Tensor
-from torch.distributions.multivariate_normal import _batch_mahalanobis
 from torch_kalman.internals.utils import get_nan_groups
 
 
@@ -82,8 +81,8 @@ class GaussianStep(nn.Module):
 
     def kalman_gain(self, cov: Tensor, H: Tensor, R: Tensor) -> Tensor:
         Ht = H.permute(0, 2, 1)
-        system_covariance = H.matmul(cov).matmul(Ht) + R
         covs_measured = cov.matmul(Ht)
+        system_covariance = torch.baddbmm(R, H @ cov, Ht)
         A = system_covariance.permute(0, 2, 1)
         B = covs_measured.permute(0, 2, 1)
         Kt, _ = torch.solve(B, A)
