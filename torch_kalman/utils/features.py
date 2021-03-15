@@ -1,7 +1,35 @@
 import math
-from typing import Union
+from typing import Union, Optional
 import numpy as np
 import torch
+
+
+def add_season_features(data: 'DataFrame',
+                        K: int,
+                        period: Union[np.timedelta64, str],
+                        time_colname: Optional[str] = None) -> 'DataFrame':
+    """
+    Add season features to `data` by taking a date[time]-column and passing it through a fourier-transform.
+
+    :param data: A dataframe with a date[time] column.
+    :param K: The degrees of freedom for the fourier transform. Higher K means more flexible seasons can be captured.
+    :param period: Either a np.timedelta64, or one of {'weekly','yearly','daily'}
+    :param time_colname: The name of the date[time] column. Default is to try and guess with the following (in order):
+    'datetime', 'date', 'timestamp', 'time'.
+    :return: A copy of the original dataframe, now with K*2 additional columns capturing the seasonal pattern.
+    """
+    from pandas import concat
+
+    if time_colname is None:
+        for col in ('datetime', 'date', 'timestamp', 'time'):
+            if col in data.columns:
+                time_colname = col
+                break
+        if time_colname is None:
+            raise ValueError("Unable to guess `time_colname`, please pass")
+    df_season = fourier_model_mat(data[time_colname].values, K=K, period=period, output_fmt='dataframe')
+    # TODO: check that `data` has default index
+    return concat([data, df_season], axis=1)
 
 
 def fourier_model_mat(datetimes: np.ndarray,

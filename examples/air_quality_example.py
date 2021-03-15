@@ -28,7 +28,7 @@ from torch.optim import LBFGS
 
 from torch_kalman.kalman_filter import KalmanFilter
 from torch_kalman.covariance import Covariance
-from torch_kalman.process import LocalLevel, LocalTrend, LinearModel, FourierSeason
+from torch_kalman.process import LocalLevel, LocalTrend, LinearModel, TBATS
 from torch_kalman.utils.data import TimeSeriesDataset
 
 import numpy as np
@@ -124,7 +124,7 @@ for measure in measures_pp:
     processes.extend([
         LocalTrend(id=f'{measure}_trend', measure=measure),
         LocalLevel(id=f'{measure}_local_level', decay=(.90,1.00), measure=measure),
-        FourierSeason(id=f'{measure}_day_in_year', period=365.25 / 7., dt_unit='W', K=4, measure=measure)
+        TBATS(id=f'{measure}_day_in_year', period=365.25 / 7., dt_unit='W', K=4, measure=measure)
     ])
 
 #
@@ -293,3 +293,5 @@ df_components = pred.to_dataframe(dataset_all, type='components')
 print(pred.plot(df_components.query("group=='Changping'"), split_dt=SPLIT_DT))
 # -
 print(pred.plot(df_components.query("(group=='Changping') & (process.str.endswith('predictors'))"), split_dt=SPLIT_DT))
+
+

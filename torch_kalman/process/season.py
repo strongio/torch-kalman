@@ -70,6 +70,10 @@ class FourierSeason(_Season, _RegressionBase):
         :param decay: TODO
         """
 
+        warn(
+            "This process is deprecated. Consider `TBATS` or a `LinearModel` w/`torch_kalman.utils.add_season_features`"
+        )
+
         self.dt_unit_ns: Optional[int] = None if dt_unit is None else self._get_dt_unit_ns(dt_unit)
         self.period = period
 
@@ -205,7 +209,8 @@ class TBATS(_Season, Process):
         assert input is not None
         if self.dt_unit_ns is None:
             return self.init_mean
-        start_offsets = input['start_offsets']
+        # TODO: this is imprecise for non-integer periods
+        start_offsets = input['start_offsets'].round()
         num_groups = start_offsets.shape[0]
 
         if self.f_kwarg == '':
@@ -216,10 +221,6 @@ class TBATS(_Season, Process):
         F = self.f_forward(f_input)
         if F.shape[0] != num_groups:
             F = F.expand(num_groups, -1, -1)
-
-        if abs(float(int(self.period)) - float(self.period)) > .00001:
-            # TODO: does jit have `int.is_integer()` method?
-            raise NotImplementedError
 
         means = []
         mean = self.init_mean.expand(num_groups, -1).unsqueeze(-1)

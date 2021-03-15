@@ -15,7 +15,11 @@ class _RegressionBase(Process):
                  h_module: torch.nn.Module,
                  measure: Optional[str] = None,
                  process_variance: bool = False,
-                 decay: Optional[Union[nn.Module, Tuple[float, float]]] = None):
+                 decay: Optional[Union[nn.Module, Tuple[float, float]]] = None,
+                 **kwargs):
+
+        predictors = list(predictors)
+
         if decay is None:
             transitions = {'all_self': torch.ones(len(predictors))}
         else:
@@ -32,7 +36,8 @@ class _RegressionBase(Process):
             h_module=h_module,
             h_kwarg='X',
             time_varying_kwargs=['X'],
-            no_pcov_state_elements=[] if process_variance else predictors
+            no_pcov_state_elements=[] if process_variance else predictors,
+            **kwargs
         )
 
 
