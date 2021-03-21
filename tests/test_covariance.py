@@ -1,5 +1,5 @@
 import torch
-from torch_kalman.covariance import Covariance
+from torchcast.covariance import Covariance
 import unittest
 
 

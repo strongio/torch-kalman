@@ -1,7 +1,7 @@
 
-# Torch-Kalman
+# torchcast
 
-Time-series forecasting models using Kalman-filters in PyTorch.
+Time-series forecasting models in PyTorch.
 
 ## Table of Contents
 
@@ -15,7 +15,7 @@ Time-series forecasting models using Kalman-filters in PyTorch.
 ## Installation
 
 ```
-pip install git+https://github.com/strongio/torch-kalman.git#egg=torch_kalman
+pip install git+https://github.com/strongio/torchcast.git#egg=torchcast
 ```
 
 ## Example: Beijing Multi-Site Air-Quality Dataset

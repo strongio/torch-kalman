@@ -6,9 +6,9 @@ from parameterized import parameterized
 from torch import nn
 
 import numpy as np
-from torch_kalman.kalman_filter import KalmanFilter
-from torch_kalman.process import LinearModel, LocalLevel, NN
-from torch_kalman.process.season import FourierSeason
+from torchcast.kalman_filter import KalmanFilter
+from torchcast.process import LinearModel, LocalLevel, NN
+from torchcast.process.season import FourierSeason
 
 
 class TestProcess(TestCase):

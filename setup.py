@@ -1,25 +1,20 @@
 from setuptools import setup, find_packages
 
-from torch_kalman import __version__
+from torchcast import __version__
 
 setup(
-    name='torch_kalman',
+    name='torchcast',
     version=__version__,
-    description='Kalman filters with pytorch',
-    url='http://github.com/strongio/torch_kalman',
+    description='Forecasting in PyTorch',
+    url='http://github.com/strongio/torchcast',
     author='Jacob Dink',
     author_email='jacob.dink@strong.io',
     license='MIT',
-    packages=find_packages(include='torch_kalman.*'),
+    packages=find_packages(include='torchcast.*'),
     zip_safe=False,
     install_requires=[
         'torch>=1.7',
-        'numpy>=1.4',
-        'tqdm>=4.0',
-        'filterpy>=1.4',
-        'lazy_object_proxy>=1.4',
-        'parameterized>=0.7'
+        'numpy>=1.4'
     ],
-    test_suite='nose.collector',
-    tests_require=['nose']
+    tests_require=['parameterized>=0.7', 'filterpy>=1.4']
 )

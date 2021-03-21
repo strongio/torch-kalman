@@ -3,7 +3,7 @@ from warnings import warn
 
 import torch
 
-from torch_kalman.utils.data import TimeSeriesDataset
+from torchcast.utils.data import TimeSeriesDataset
 
 
 class TestDataUtils(unittest.TestCase):

@@ -6,9 +6,9 @@ import numpy as np
 import torch
 from parameterized import parameterized
 
-from torch_kalman.kalman_filter import KalmanFilter
-from torch_kalman.process import LocalLevel, LinearModel, LocalTrend, FourierSeason, TBATS
-from torch_kalman.utils.data import TimeSeriesDataset
+from torchcast.kalman_filter import KalmanFilter
+from torchcast.process import LocalLevel, LinearModel, LocalTrend, FourierSeason, TBATS
+from torchcast.utils.data import TimeSeriesDataset
 
 MAX_TRIES = 3  # we set the seed but not tested across different platforms
 

@@ -26,10 +26,10 @@ from copy import deepcopy
 import torch
 from torch.optim import LBFGS
 
-from torch_kalman.kalman_filter import KalmanFilter
-from torch_kalman.covariance import Covariance
-from torch_kalman.process import LocalLevel, LocalTrend, LinearModel, TBATS
-from torch_kalman.utils.data import TimeSeriesDataset
+from torchcast.kalman_filter import KalmanFilter
+from torchcast.covariance import Covariance
+from torchcast.process import LocalLevel, LocalTrend, LinearModel, TBATS
+from torchcast.utils.data import TimeSeriesDataset
 
 import numpy as np
 import pandas as pd

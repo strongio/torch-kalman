@@ -8,16 +8,16 @@ import torch
 from parameterized import parameterized
 
 from torch import nn
-from torch_kalman.internals.utils import get_nan_groups
+from torchcast.internals.utils import get_nan_groups
 
-from torch_kalman.kalman_filter import KalmanFilter
+from torchcast.kalman_filter import KalmanFilter
 
 import numpy as np
 from filterpy.kalman import KalmanFilter as filterpy_KalmanFilter
 
-from torch_kalman.process import LocalTrend, LinearModel, LocalLevel
-from torch_kalman.process.base import Process
-from torch_kalman.process.utils import SingleOutput
+from torchcast.process import LocalTrend, LinearModel, LocalLevel
+from torchcast.process.base import Process
+from torchcast.process.utils import SingleOutput
 
 
 class TestKalmanFilter(TestCase):
@@ -74,7 +74,7 @@ class TestKalmanFilter(TestCase):
 
     @torch.no_grad()
     def test_jit(self):
-        from torch_kalman.kalman_filter.predictions import Predictions
+        from torchcast.kalman_filter.predictions import Predictions
 
         # compile-able:
         h_module = SingleOutput()
@@ -202,7 +202,7 @@ class TestKalmanFilter(TestCase):
     @parameterized.expand([(1,), (2,), (3,)])
     @torch.no_grad()
     def test_equations_preds(self, n_step: int):
-        from torch_kalman.utils.data import TimeSeriesDataset
+        from torchcast.utils.data import TimeSeriesDataset
         from pandas import DataFrame
 
         class LinearModelFixed(LinearModel):
