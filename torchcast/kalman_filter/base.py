@@ -17,6 +17,17 @@ class KalmanFilter(nn.Module):
     """
     The KalmanFilter is a `nn.Module` which generates predictions and forecasts using a state-space model. Processes
     are used to specify how latent-states translate into the measurable data being forecasted.
+
+    Parameters
+    ----------
+    :param processes: A list of :class:`.Process` modules.
+    :param measures: A list of strings specifying the names of the dimensions of the time-series being measured.
+    :param process_covariance: A module created with ``Covariance.from_processes(processes, cov_type='process')``.
+    :param measure_covariance: A module created with ``Covariance.from_measures(measures)``.
+    :param initial_covariance: A module created with ``Covariance.from_processes(processes, cov_type='initial')``.
+    :param compiled: Should the core modules be passed through :class:`torch.jit.script` to compile them to
+     TorchScript? Can be disabled if compilation issues arise.
+    :param kwargs: Further arguments passed to ScriptKalmanFilter's child-classes (base-class takes no kwargs).
     """
     script_cls = ScriptKalmanFilter
     kf_step = GaussianStep
@@ -29,16 +40,6 @@ class KalmanFilter(nn.Module):
                  initial_covariance: Optional[Covariance] = None,
                  compiled: bool = True,
                  **kwargs):
-        """
-        :param processes: A list of `Process` modules.
-        :param measures: A list of strings specifying the names of the dimensions of the time-series being measured.
-        :param process_covariance: A module created with `Covariance.from_processes(processes, cov_type='process')`.
-        :param measure_covariance: A module created with `Covariance.from_measures(measures)`.
-        :param initial_covariance: A module created with `Covariance.from_processes(processes, cov_type='initial')`.
-        :param compiled: Should the core modules be passed through `torch.jit.script` to compile them to TorchScript?
-        Can be disabled if compilation issues arise.
-        :param kwargs: Further arguments passed to ScriptKalmanFilter's child-classes (base-class takes no kwargs).
-        """
         super(KalmanFilter, self).__init__()
 
         self._validate(processes, measures)
@@ -112,21 +113,21 @@ class KalmanFilter(nn.Module):
 
         :param input: A (group X time X measures) tensor. Optional if `initial_state` is specified.
         :param n_step: What is the horizon for the predictions output for each timepoint? Defaults to one-step-ahead
-        predictions (i.e. n_step=1).
+         predictions (i.e. n_step=1).
         :param out_timesteps: The number of timesteps to produce in the output. This is useful when passing a tensor
-        of predictors that goes later in time than the `input` tensor -- you can specify `out_timesteps=X.shape[1]` to
-        get forecasts into this later time horizon.
+         of predictors that goes later in time than the `input` tensor -- you can specify `out_timesteps=X.shape[1]` to
+         get forecasts into this later time horizon.
         :param initial_state: Optional, default is `None` (with the initial state being determined internally). Can
-        pass a `mean`, `cov` tuple from a previous call.
+         pass a `mean`, `cov` tuple from a previous call.
         :param every_step: By default, `n_step` ahead predictions will be generated at every timestep. If
-        `every_step=False`, then these predictions will only be generated every `n_step` timesteps. For example, with
-        hourly data, `n_step=24` and every_step=True, each timepoint would be a forecast generated with data 24-hours
-        in the past. But with `every_step=False` in this case, then the first timestep would be 1-step-ahead, the 2nd
-        would be 2-step-ahead, ... the 23rd would be 24-step-ahead, the 24th would be 1-step-ahead, etc. The advantage
-        to every_step=False is speed: training data for long-range forecasts can be generated without requiring the
-        model to produce and discard intermediate predictions every timestep.
+         `every_step=False`, then these predictions will only be generated every `n_step` timesteps. For example, with
+         hourly data, `n_step=24` and every_step=True, each timepoint would be a forecast generated with data 24-hours
+         in the past. But with `every_step=False` in this case, then the first timestep would be 1-step-ahead, the 2nd
+         would be 2-step-ahead, ... the 23rd would be 24-step-ahead, the 24th would be 1-step-ahead, etc. The advantage
+         to every_step=False is speed: training data for long-range forecasts can be generated without requiring the
+         model to produce and discard intermediate predictions every timestep.
         :param kwargs: Further arguments passed to the `processes`. For example, many seasonal processes require a
-        `state_datetimes` argument; the `LinearModel` and `NN` processes expect a `X` argument for predictors.
+         `state_datetimes` argument; the `LinearModel` and `NN` processes expect a `X` argument for predictors.
         :return: A `Predictions` object with `log_prob()` and `to_dataframe()` methods.
         """
 
@@ -139,7 +140,7 @@ class KalmanFilter(nn.Module):
             n_step=n_step,
             every_step=every_step,
             out_timesteps=out_timesteps,
-            _disable_cache=kwargs.pop('_disable_cache'),
+            _disable_cache=kwargs.pop('_disable_cache', False),
             **self._parse_design_kwargs(input=input, out_timesteps=out_timesteps or input.shape[1], **kwargs)
         )
         return Predictions(state_means=means, state_covs=covs, R=R, H=H, kalman_filter=self)

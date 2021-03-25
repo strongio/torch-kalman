@@ -1,19 +1,31 @@
-.. Kalman filters with pytorch documentation master file, created by
-   sphinx-quickstart on Tue Dec  3 01:31:07 2019.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
-
-Welcome to Kalman filters with pytorch's documentation!
-=======================================================
+torchcast
+=====================================
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: Contents:
+   :hidden:
+
+   user_guide/user_guide
+   examples/examples
+   api/api
+
+.. include:: macros.hrst
 
 
-Indices and tables
-==================
+`torchcast` is a Python package for forecasting built on top of |PyTorch|. [Focus: multivariate, batchwise, flexible]
 
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+Getting Started
+---------------
+
+- get a KalmanFilter
+- define your measures
+- define the processes that give rise to them
+
+Installation
+------------
+
+.. code-block:: python3
+
+    pip install git+https://github.com/strongio/torchcast.git#egg=torchcast
+

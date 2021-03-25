@@ -1,6 +1,4 @@
 import datetime
-from collections import defaultdict
-from types import SimpleNamespace
 from typing import Tuple, Union, Optional, Dict, Iterator
 from warnings import warn
 
@@ -53,9 +51,6 @@ class Predictions(nn.Module):
 
         self.num_groups, self.num_timesteps, self.state_size = self.state_means.shape
 
-    def get_last_update(self) -> Tuple[Tensor, Tensor]:
-        raise NotImplementedError  # TODO
-
     def get_state_at_times(self,
                            times: Union[np.ndarray, np.datetime64],
                            start_times: Optional[np.ndarray] = None,
@@ -79,77 +74,17 @@ class Predictions(nn.Module):
         sliced = self._subset_to_times(times=times, start_times=start_times, dt_unit=dt_unit)
         return sliced.state_means.squeeze(1), sliced.state_covs.squeeze(1)
 
-    def _subset_to_times(self,
-                         times: Union[np.ndarray, np.datetime64],
-                         start_times: Optional[np.ndarray] = None,
-                         dt_unit: Optional[str] = None) -> 'Predictions':
-        """
-        Return a `Predictions` object with a single timepoint for each group.
-        """
-        if start_times is not None:
-            if isinstance(times, (np.datetime64, datetime.datetime)):
-                times = np.full_like(start_times, fill_value=times)
-            assert dt_unit is not None
-            if isinstance(dt_unit, str):
-                dt_unit = np.datetime64(1, dt_unit)
-            times = (times - start_times) / dt_unit  # todo: validate int?
-
-        assert len(times.shape) == 1
-        assert times.shape[0] == self.num_groups
-        idx = (torch.arange(self.num_groups), torch.as_tensor(times, dtype=torch.int64))
-        return self._subset(idx, collapsed_dim=1)
-
-    def __iter__(self) -> Iterator[Tensor]:
-        # for mean, cov = tuple(predictions)
-        yield self.means
-        yield self.covs
-
-    def __array__(self) -> np.ndarray:
-        # for numpy.asarray
-        return self.means.detach().numpy()
-
-    def __getitem__(self, item: Tuple) -> 'Predictions':
-        return self._subset(item)
-
-    def _subset(self, idx: Tuple, collapsed_dim: Optional[int] = None) -> 'Predictions':
-        """
-        Helper for __getitem__ and get_timeslice
-        """
-        if collapsed_dim is not None:
-            assert collapsed_dim < 2
-        kwargs = {
-            'state_means': self.state_means[idx],
-            'state_covs': self.state_covs[idx],
-            'H': self.H[idx],
-            'R': self.R[idx]
-        }
-        cls = type(self)
-        for k in list(kwargs):
-            expected_shape = getattr(self, k).shape
-            if collapsed_dim is not None:
-                kwargs[k] = kwargs[k].unsqueeze(collapsed_dim)
-            v = kwargs[k]
-            if len(v.shape) != len(expected_shape):
-                raise TypeError(f"Expected {k} to have shape {expected_shape} but got {v.shape}.")
-            if v.shape[-1] != expected_shape[-1]:
-                raise TypeError(f"Cannot index into non-batch dims of {cls.__name__}")
-            if k == 'H' and v.shape[-2] != self.H.shape[-2]:
-                raise TypeError(f"Cannot index into non-batch dims of {cls.__name__}")
-        return cls(**kwargs, kalman_filter=self.kf_attributes)
-
-    @property
-    def kf_attributes(self) -> dict:
-        """
-        Has the attributes of a KalmanFilter that are needed in __init__
-        """
-        return dict(
-            measures=self.measures,
-            kf_step=self.kf_step,
-            all_state_elements=self.all_state_elements
-        )
-
     @classmethod
     def observe(cls, state_means: Tensor, state_covs: Tensor, R: Tensor, H: Tensor) -> Tuple[Tensor, Tensor]:
+        """
+        Convert latent states into observed predictions (and their uncertainty).
+
+        :param state_means: The latent state means
+        :param state_covs: The latent state covs.
+        :param R: The measure-covariance matrices.
+        :param H: The measurement matrix.
+        :return: A tuple of `means`, `covs`.
+        """
         means = H.matmul(state_means.unsqueeze(-1)).squeeze(-1)
         pargs = list(range(len(H.shape)))
         pargs[-2:] = reversed(pargs[-2:])
@@ -182,8 +117,6 @@ class Predictions(nn.Module):
         Compute the log-probability of data (e.g. data that was originally fed into the KalmanFilter).
 
         :param obs: A Tensor that could be used in the KalmanFilter.forward pass.
-        :param kwargs: Other keyword arguments needed to evaluate the log-prob (e.g. for a censored-kalman-filter, the
-          upper and lower bounds).
         :return: A tensor with one element for each group X timestep indicating the log-probability.
         """
         assert len(obs.shape) == 3
@@ -221,7 +154,6 @@ class Predictions(nn.Module):
 
         return lp_flat.view(obs.shape[0:2])
 
-    # Exporting to other Formats ---------:
     def to_dataframe(self,
                      dataset: Union[TimeSeriesDataset, dict],
                      type: str = 'predictions',
@@ -435,3 +367,72 @@ class Predictions(nn.Module):
             plot = plot + geom_vline(xintercept=np.datetime64(split_dt), linetype='dashed')
 
         return plot + theme_bw() + theme(**kwargs)
+
+    def _subset_to_times(self,
+                         times: Union[np.ndarray, np.datetime64],
+                         start_times: Optional[np.ndarray] = None,
+                         dt_unit: Optional[str] = None) -> 'Predictions':
+        """
+        Return a `Predictions` object with a single timepoint for each group.
+        """
+        if start_times is not None:
+            if isinstance(times, (np.datetime64, datetime.datetime)):
+                times = np.full_like(start_times, fill_value=times)
+            assert dt_unit is not None
+            if isinstance(dt_unit, str):
+                dt_unit = np.datetime64(1, dt_unit)
+            times = (times - start_times) / dt_unit  # todo: validate int?
+
+        assert len(times.shape) == 1
+        assert times.shape[0] == self.num_groups
+        idx = (torch.arange(self.num_groups), torch.as_tensor(times, dtype=torch.int64))
+        return self._subset(idx, collapsed_dim=1)
+
+    def __iter__(self) -> Iterator[Tensor]:
+        # for mean, cov = tuple(predictions)
+        yield self.means
+        yield self.covs
+
+    def __array__(self) -> np.ndarray:
+        # for numpy.asarray
+        return self.means.detach().numpy()
+
+    def __getitem__(self, item: Tuple) -> 'Predictions':
+        return self._subset(item)
+
+    def _subset(self, idx: Tuple, collapsed_dim: Optional[int] = None) -> 'Predictions':
+        """
+        Helper for __getitem__ and get_timeslice
+        """
+        if collapsed_dim is not None:
+            assert collapsed_dim < 2
+        kwargs = {
+            'state_means': self.state_means[idx],
+            'state_covs': self.state_covs[idx],
+            'H': self.H[idx],
+            'R': self.R[idx]
+        }
+        cls = type(self)
+        for k in list(kwargs):
+            expected_shape = getattr(self, k).shape
+            if collapsed_dim is not None:
+                kwargs[k] = kwargs[k].unsqueeze(collapsed_dim)
+            v = kwargs[k]
+            if len(v.shape) != len(expected_shape):
+                raise TypeError(f"Expected {k} to have shape {expected_shape} but got {v.shape}.")
+            if v.shape[-1] != expected_shape[-1]:
+                raise TypeError(f"Cannot index into non-batch dims of {cls.__name__}")
+            if k == 'H' and v.shape[-2] != self.H.shape[-2]:
+                raise TypeError(f"Cannot index into non-batch dims of {cls.__name__}")
+        return cls(**kwargs, kalman_filter=self._kf_attributes)
+
+    @property
+    def _kf_attributes(self) -> dict:
+        """
+        Has the attributes of a KalmanFilter that are needed in __init__
+        """
+        return dict(
+            measures=self.measures,
+            kf_step=self.kf_step,
+            all_state_elements=self.all_state_elements
+        )

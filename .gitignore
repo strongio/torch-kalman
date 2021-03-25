@@ -104,3 +104,4 @@ ENV/
 *.ipynb
 *.zip
 examples/*.csv
+docs/_html/*
