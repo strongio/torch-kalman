@@ -16,5 +16,7 @@ setup(
         'torch>=1.7',
         'numpy>=1.4'
     ],
-    tests_require=['parameterized>=0.7', 'filterpy>=1.4']
+    extras_require={
+        'test': ['parameterized>=0.7', 'filterpy>=1.4', 'pandas>=1.0']
+    }
 )

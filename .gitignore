@@ -105,3 +105,4 @@ ENV/
 *.zip
 examples/*.csv
 docs/_html/*
+*.csv
