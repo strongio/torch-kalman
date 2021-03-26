@@ -33,6 +33,8 @@ class LocalLevel(Process):
         se = 'position'
         if decay:
             transitions = nn.ModuleDict()
+            if isinstance(decay, bool):
+                decay = (0.95, 1.00)
             if isinstance(decay, tuple):
                 decay = SingleOutput(transform=Bounded(*decay))
             transitions[f'{se}->{se}'] = decay

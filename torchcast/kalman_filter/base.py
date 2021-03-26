@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Tuple, List, Optional, Sequence, Dict, Iterable
+from typing import Tuple, List, Optional, Sequence, Dict, Iterable, Callable
 from warnings import warn
 
 import torch
@@ -32,15 +32,11 @@ class KalmanFilter(nn.Module):
 
     def __init__(self,
                  processes: Sequence[Process],
-                 measures: Sequence[str],
+                 measures: Optional[Sequence[str]] = None,
                  process_covariance: Optional[Covariance] = None,
                  measure_covariance: Optional[Covariance] = None,
                  initial_covariance: Optional[Covariance] = None):
         super(KalmanFilter, self).__init__()
-
-        if isinstance(measures, str):
-            measures = [measures]
-            warn(f"`measures` should be a list of strings not a string; interpreted as `{measures}`.")
 
         self._validate(processes, measures)
 
@@ -76,11 +72,100 @@ class KalmanFilter(nn.Module):
         # can disable for debugging/tests:
         self._scale_by_measure_var = True
 
+    def fit(self,
+            y: Tensor,
+            tol: float = .001,
+            patience: int = 3,
+            max_iter: int = 200,
+            optimizer: Optional[torch.optim.Optimizer] = None,
+            verbose: int = 2,
+            callbacks: Sequence[Callable] = (),
+            **kwargs):
+
+        if optimizer is None:
+            optimizer = torch.optim.LBFGS(self.parameters(), max_iter=10, line_search_fn='strong_wolfe', lr=.5)
+
+        self.set_initial_values(y)
+
+        prog = None
+        if verbose > 1 and isinstance(optimizer, torch.optim.LBFGS):
+            from tqdm.auto import tqdm
+            prog = tqdm(total=optimizer.param_groups[0]['max_eval'])
+
+        epoch = 0
+
+        def closure():
+            optimizer.zero_grad()
+            pred = self(y, **kwargs)
+            loss = -pred.log_prob(y).mean()
+            loss.backward()
+            if prog:
+                prog.update()
+                prog.set_description(f'Epoch: {epoch}; Loss: {loss:.4f}')
+            return loss
+
+        prev_train_loss = float('inf')
+        num_lower = 0
+        for epoch in range(max_iter):
+            if prog:
+                prog.reset()
+            train_loss = optimizer.step(closure).item()
+            for callback in callbacks:
+                callback(train_loss)
+            if abs(train_loss - prev_train_loss) < tol:
+                num_lower += 1
+            else:
+                num_lower = 0
+            if num_lower == patience:
+                break
+
+            prev_train_loss = train_loss
+
+        return self
+
+    @torch.jit.ignore()
+    def set_initial_values(self, y: Tensor):
+
+        assert len(self.measures) == y.shape[-1]
+
+        hits = {m: [] for m in self.measures}
+        for pid, process in self.named_processes():
+            # have to use the name since `jit.script()` strips the class
+            if (getattr(process, 'original_name', None) or type(process).__name__) in ('LocalLevel', 'LocalTrend'):
+                if 'position->position' in (process.f_modules or {}):
+                    continue
+                assert process.measure
+
+                hits[process.measure].append(pid)
+                measure_idx = list(self.measures).index(process.measure)
+                with torch.no_grad():
+                    process.init_mean[0] = y[:, 0, measure_idx].mean()
+
+        for measure, procs in hits.items():
+            if len(procs) > 1:
+                warn(
+                    f"For measure '{measure}', multiple processes ({procs}) track the overall level; consider adding "
+                    f"`decay` to all but one."
+                )
+            elif not len(procs):
+                warn(
+                    f"For measure '{measure}', no processes track the overall level; consider centering data in "
+                    f"preprocessing prior to training (if you haven't already)."
+                )
+
     @staticmethod
     def _validate(processes: Sequence[Process], measures: Sequence[str]):
+        if isinstance(measures, str):
+            measures = [measures]
+            warn(f"`measures` should be a list of strings not a string; interpreted as `{measures}`.")
+        elif not hasattr(measures, '__getitem__'):
+            warn(f"`measures` appears to be an unordered collection")
+
         for p in processes:
             if isinstance(p, torch.jit.RecursiveScriptModule):
-                raise TypeError("Processes should not be wrapped in `torch.jit.script`, this will be done internally.")
+                raise TypeError(
+                    f"Processes should not be wrapped in `torch.jit.script` *before* being passed to `KalmanFilter`"
+                )
             if p.measure:
                 if p.measure not in measures:
                     raise RuntimeError(f"'{p.id}' has measure '{p.measure}' not in `measures`.")

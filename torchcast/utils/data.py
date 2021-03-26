@@ -319,10 +319,17 @@ class TimeSeriesDataset(TensorDataset):
         if measure_colnames is None:
             if X_colnames is None or y_colnames is None:
                 raise ValueError("Must pass either `measure_colnames` or `X_colnames` & `y_colnames`")
+            if isinstance(y_colnames, str):
+                y_colnames = [y_colnames]
+                warn(f"`y_colnames` should be a list of strings not a string; interpreted as `{y_colnames}`.")
+
             measure_colnames = list(y_colnames) + list(X_colnames)
         else:
             if X_colnames is not None or y_colnames is not None:
                 raise ValueError("If passing `measure_colnames` do not pass `X_colnames` or `y_colnames`.")
+            if isinstance(measure_colnames, str):
+                measure_colnames = [measure_colnames]
+                warn(f"`measure_colnames` should be list of strings not a string; interpreted as `{measure_colnames}`.")
 
         assert isinstance(group_colname, str)
         assert isinstance(time_colname, str)
