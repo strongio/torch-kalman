@@ -43,6 +43,9 @@ class Covariance(nn.Module):
 
     @classmethod
     def for_measures(cls, measures: Sequence[str], **kwargs) -> 'Covariance':
+        if isinstance(measures, str):
+            measures = [measures]
+            warn(f"`measures` should be a list of strings not a string; interpreted as `{measures}`.")
         if 'method' not in kwargs and len(measures) > 5:
             kwargs['method'] = 'low_rank'
         if 'init_diag_multi' not in kwargs:

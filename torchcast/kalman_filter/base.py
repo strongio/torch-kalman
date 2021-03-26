@@ -42,6 +42,10 @@ class KalmanFilter(nn.Module):
                  **kwargs):
         super(KalmanFilter, self).__init__()
 
+        if isinstance(measures, str):
+            measures = [measures]
+            warn(f"`measures` should be a list of strings not a string; interpreted as `{measures}`.")
+
         self._validate(processes, measures)
 
         # covariances:
