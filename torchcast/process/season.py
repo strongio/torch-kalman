@@ -224,7 +224,7 @@ class TBATS(_Season, Process):
 
         means = []
         mean = self.init_mean.expand(num_groups, -1).unsqueeze(-1)
-        for i in range(int(self.period)):
+        for i in range(int(self.period) + 1):
             means.append(mean.squeeze(-1))
             mean = F @ mean
 

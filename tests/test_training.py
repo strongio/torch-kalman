@@ -179,8 +179,8 @@ class TestTraining(unittest.TestCase):
         for i in range(MAX_TRIES):
             try:
                 kf = _train()
-            except RuntimeError as e:
-                if 'cholesky' not in str(e):
+            except (RuntimeError, ValueError) as e:
+                if 'cholesky' not in str(e) and 'has invalid values' not in str(e):
                     raise e
             if kf is not None:
                 break
@@ -197,10 +197,8 @@ class TestTraining(unittest.TestCase):
         """
         Test TBATS and TimeSeriesDataset integration
         """
-        try:
-            import pandas as pd
-        except ImportError:  # not a package requirement
-            return
+        import pandas as pd
+
         torch.manual_seed(123)
         df = pd.DataFrame({'sin': np.sin(2. * 3.1415 * np.arange(0., 5 * 7.) / 7.),
                            'cos': np.cos(2. * 3.1415 * np.arange(0., 5 * 7.) / 7.)})
@@ -253,8 +251,8 @@ class TestTraining(unittest.TestCase):
         for i in range(MAX_TRIES):
             try:
                 kf = _train()
-            except RuntimeError as e:
-                if 'cholesky' not in str(e):
+            except (RuntimeError, ValueError) as e:
+                if 'cholesky' not in str(e) and 'has invalid values' not in str(e):
                     raise e
             if kf is not None:
                 break

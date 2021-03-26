@@ -52,7 +52,7 @@ class ScriptKalmanFilter(nn.Module):
         measure_scaling = self._get_measure_scaling(measure_cov)
 
         # initial state mean:
-        mean = torch.zeros(num_groups, self.state_rank)
+        mean = torch.zeros(num_groups, self.state_rank, dtype=measure_scaling.dtype, device=measure_scaling.device)
         for pid, p in self.processes.items():
             _process_slice = slice(*self.process_to_slice[pid])
             mean[:, _process_slice] = p.get_initial_state_mean(init_mean_kwargs.get(pid, {}))
