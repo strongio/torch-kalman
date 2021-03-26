@@ -110,35 +110,28 @@ class Process(nn.Module):
 
     def forward(self,
                 inputs: Dict[str, Tensor],
-                which: str,
-                cache: Dict[str, Tensor]) -> Tensor:
+                cache: Dict[str, Tensor]) -> Tuple[Tensor, Tensor]:
+        return self.h_forward(inputs, cache), self.f_forward(inputs, cache)
 
-        # jit doesn't like Optional[Tensor] in some situations
-        _empty = torch.empty(0)
-
-        if which == 'h':
-            h_input = _empty if self.h_kwarg == '' else inputs[self.h_kwarg]
-            h_key = self._get_cache_key(self.h_kwarg, h_input, prefix=f'{self.id}_h')
-            if h_key is not None:
-                if h_key not in cache:
-                    cache[h_key] = self.h_forward(h_input)
-                return cache[h_key]
-            else:
-                return self.h_forward(h_input)
-
-        # F
-        if which == 'f':
-            f_input = _empty if self.f_kwarg == '' else inputs[self.f_kwarg]
-            f_key = self._get_cache_key(self.f_kwarg, f_input, prefix=f'{self.id}_f')
-            if f_key is not None:
-                if f_key not in cache:
-                    cache[f_key] = self.f_forward(f_input)
-                return cache[f_key]
-            else:
-                return self.f_forward(f_input)
-
+    def h_forward(self, inputs: Dict[str, Tensor], cache: Dict[str, Tensor]) -> Tensor:
+        h_input = torch.empty(0) if self.h_kwarg == '' else inputs[self.h_kwarg]
+        h_key = self._get_cache_key(self.h_kwarg, h_input, prefix=f'{self.id}_h')
+        if h_key is not None:
+            if h_key not in cache:
+                cache[h_key] = self._h_forward(h_input)
+            return cache[h_key]
         else:
-            raise RuntimeError(f"Unrecognized which='{which}'.")
+            return self._h_forward(h_input)
+
+    def f_forward(self, inputs: Dict[str, Tensor], cache: Dict[str, Tensor]) -> Tensor:
+        f_input = torch.empty(0) if self.f_kwarg == '' else inputs[self.f_kwarg]
+        f_key = self._get_cache_key(self.f_kwarg, f_input, prefix=f'{self.id}_f')
+        if f_key is not None:
+            if f_key not in cache:
+                cache[f_key] = self._f_forward(f_input)
+            return cache[f_key]
+        else:
+            return self._f_forward(f_input)
 
     def _get_cache_key(self, kwarg: str, input: Optional[Tensor], prefix: str) -> Optional[str]:
         """
@@ -149,7 +142,7 @@ class Process(nn.Module):
                 return None
         return f'{prefix}_static'
 
-    def h_forward(self, input: Tensor) -> Tensor:
+    def _h_forward(self, input: Tensor) -> Tensor:
         if self.h_module is None:
             assert self.h_tensor is not None
             H = self.h_tensor
@@ -189,7 +182,7 @@ class Process(nn.Module):
                     return False
         return True
 
-    def f_forward(self, input: Tensor) -> Tensor:
+    def _f_forward(self, input: Tensor) -> Tensor:
         diag: Optional[Tensor] = None
         assignments: List[Tuple[Tuple[int, int], Tensor]] = []
 

@@ -153,7 +153,7 @@ class TestKalmanFilter(TestCase):
             processes=[LocalTrend(id='lt', decay_velocity=None, measure='y', velocity_multi=1.)],
             measures=['y']
         )
-        if n_step>0:
+        if n_step > 0:
             kf = torch.jit.script(torch_kf)
         expectedF = torch.tensor([[1., 1.], [0., 1.]])
         expectedH = torch.tensor([[1., 0.]])
@@ -286,7 +286,10 @@ class TestKalmanFilter(TestCase):
             def outfunc(x):
                 _counter[func.__name__] += 1
                 self.assertIsNotNone(x)
-                self.assertTrue((x == expected).all().item())
+                _bool = (x == expected)
+                if hasattr(_bool, 'all'):
+                    _bool = _bool.all().item()
+                self.assertTrue(_bool)
                 return func(x)
 
             return outfunc
@@ -309,7 +312,7 @@ class TestKalmanFilter(TestCase):
         # share input:
         kf = _make_kf()
         for nm, proc in kf.named_processes():
-            proc.h_forward = check_input(proc.h_forward, expected[nm])
+            proc._h_forward = check_input(proc._h_forward, expected[nm])
         kf(data, X=_predictors * 0.)
 
         # separate ---
@@ -317,14 +320,14 @@ class TestKalmanFilter(TestCase):
         # individual input:
         kf = _make_kf()
         for nm, proc in kf.named_processes():
-            proc.h_forward = check_input(proc.h_forward, expected[nm])
+            proc._h_forward = check_input(proc._h_forward, expected[nm])
         kf(data, lm1__X=_predictors * 0., lm2__X=_predictors)
 
         # specific overrides general
         kf(data, X=_predictors * 0., lm2__X=_predictors)
 
         # make sure check_input is being called:
-        self.assertGreaterEqual(_counter['h_forward'] / data.shape[1] / 2, 3)
+        self.assertGreaterEqual(_counter['_h_forward'] / data.shape[1] / 2, 3)
         with self.assertRaises(AssertionError) as cm:
             kf(data, X=_predictors * 0.)
         self.assertEqual(str(cm.exception).lower(), "false is not true")

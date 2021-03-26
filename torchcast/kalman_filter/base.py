@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Tuple, List, Optional, Sequence, Dict, Iterable, Callable
+from typing import Tuple, List, Optional, Sequence, Dict, Iterable
 from warnings import warn
 
 import torch
@@ -75,9 +75,6 @@ class KalmanFilter(nn.Module):
 
         # can disable for debugging/tests:
         self._scale_by_measure_var = True
-
-
-
 
     @staticmethod
     def _validate(processes: Sequence[Process], measures: Sequence[str]):
@@ -438,7 +435,7 @@ class KalmanFilter(nn.Module):
                     tv_kwargs = process.time_varying_kwargs
                 if process.f_kwarg not in tv_kwargs:
                     _process_slice = slice(*self.process_to_slice[pid])
-                    pf = process(design_kwargs.get(pid, {}), which='f', cache=cache)
+                    pf = process.f_forward(design_kwargs.get(pid, {}), cache=cache)
                     if torch.isnan(pf).any():
                         raise RuntimeError(f"{process.id} produced F with nans")
                     cache['base_F'][:, _process_slice, _process_slice] = pf
@@ -452,7 +449,7 @@ class KalmanFilter(nn.Module):
                     tv_kwargs = process.time_varying_kwargs
                 if process.h_kwarg not in tv_kwargs:
                     _process_slice = slice(*self.process_to_slice[pid])
-                    ph = process(design_kwargs.get(pid, {}), which='h', cache=cache)
+                    ph = process.h_forward(design_kwargs.get(pid, {}), cache=cache)
                     if torch.isnan(ph).any():
                         raise RuntimeError(f"{process.id} produced H with nans")
                     cache['base_H'][:, self.measure_to_idx[process.measure], _process_slice] = ph
@@ -463,13 +460,13 @@ class KalmanFilter(nn.Module):
             if process.time_varying_kwargs is not None:
                 _process_slice = slice(*self.process_to_slice[pid])
                 if process.h_kwarg in process.time_varying_kwargs:
-                    ph = process(design_kwargs.get(pid, {}), which='h', cache=cache)
+                    ph = process.h_forward(design_kwargs.get(pid, {}), cache=cache)
                     if torch.isnan(ph).any():
                         raise RuntimeError(f"{process.id} produced H with nans")
                     H[:, self.measure_to_idx[process.measure], _process_slice] = ph
 
                 if process.f_kwarg in process.time_varying_kwargs:
-                    pf = process(design_kwargs.get(pid, {}), which='f', cache=cache)
+                    pf = process.f_forward(design_kwargs.get(pid, {}), cache=cache)
                     if torch.isnan(pf).any():
                         raise RuntimeError(f"{process.id} produced F with nans")
                     F[:, _process_slice, _process_slice] = pf

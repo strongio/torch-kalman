@@ -213,12 +213,7 @@ class TBATS(_Season, Process):
         start_offsets = input['start_offsets'].round()
         num_groups = start_offsets.shape[0]
 
-        if self.f_kwarg == '':
-            f_input = torch.empty(0)  # TODO: support `None`
-        else:
-            f_input = input[self.f_kwarg]
-
-        F = self.f_forward(f_input)
+        F = self.f_forward(input, cache={})
         if F.shape[0] != num_groups:
             F = F.expand(num_groups, -1, -1)
 
