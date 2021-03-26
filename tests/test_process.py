@@ -20,9 +20,9 @@ class TestProcess(TestCase):
             processes=[FourierSeason(id='day_of_week', period=7, dt_unit='D', K=3)],
             measures=['y']
         )
-        kf.script_module._scale_by_measure_var = False
-        kf.state_dict()['script_module.processes.day_of_week.init_mean'][:] = torch.tensor([1., 0., 0., 0., 0., 0.])
-        kf.state_dict()['script_module.measure_covariance.cholesky_log_diag'] -= 2
+        kf._scale_by_measure_var = False
+        kf.state_dict()['processes.day_of_week.init_mean'][:] = torch.tensor([1., 0., 0., 0., 0., 0.])
+        kf.state_dict()['measure_covariance.cholesky_log_diag'] -= 2
         pred = kf(data, start_datetimes=start_datetimes)
         pred.means - data
         for g in range(6):
@@ -44,6 +44,7 @@ class TestProcess(TestCase):
             ],
             measures=['y']
         )
+        kf = torch.jit.script(kf)  # TODO: why is this necessary?
         wrong_dim = 1 if num_preds > 1 else 2
         with self.assertRaises((RuntimeError, torch.jit.Error), msg=(num_groups, num_preds)) as cm:
             kf(data, X=torch.zeros((num_groups, 5, wrong_dim)))

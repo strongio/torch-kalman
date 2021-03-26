@@ -38,11 +38,11 @@ class Predictions(nn.Module):
                 for state_element in process.state_elements:
                     all_state_elements.append((process_name, state_element))
             kalman_filter = {
-                'kf_step': kalman_filter.kf_step,
+                'distribution_cls': kalman_filter.kf_step.get_distribution(),
                 'measures': kalman_filter.measures,
                 'all_state_elements': all_state_elements
             }
-        self.kf_step = kalman_filter['kf_step']
+        self.distribution_cls = kalman_filter['distribution_cls']
         self.measures = kalman_filter['measures']
         self.all_state_elements = kalman_filter['all_state_elements']
 
@@ -146,11 +146,7 @@ class Predictions(nn.Module):
                     H=H_flat[mask1d]
                 )
                 gt_obs = obs_flat[mask1d]
-            lp_flat[gt_idx] = self.kf_step.log_prob(
-                obs=gt_obs,
-                obs_mean=gt_means_flat,
-                obs_cov=gt_covs_flat
-            )
+            lp_flat[gt_idx] = self.distribution_cls(gt_means_flat, gt_covs_flat).log_prob(gt_obs)
 
         return lp_flat.view(obs.shape[0:2])
 
@@ -433,6 +429,6 @@ class Predictions(nn.Module):
         """
         return dict(
             measures=self.measures,
-            kf_step=self.kf_step,
+            distribution_cls=self.distribution_cls,
             all_state_elements=self.all_state_elements
         )

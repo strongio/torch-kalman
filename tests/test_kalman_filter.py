@@ -64,9 +64,9 @@ class TestKalmanFilter(TestCase):
         #       unobserved state
         kf = KalmanFilter(
             processes=[LocalLevel(id=f'lm{i}', measure=str(i)) for i in range(ndim)],
-            measures=[str(i) for i in range(ndim)],
-            compiled=True
+            measures=[str(i) for i in range(ndim)]
         )
+        kf = torch.jit.script(kf)
         obs_means, obs_covs = kf(data, n_step=n_step)
         self.assertFalse(torch.isnan(obs_means).any())
         self.assertFalse(torch.isnan(obs_covs).any())
@@ -98,11 +98,12 @@ class TestKalmanFilter(TestCase):
                                  state_elements=['position'],
                                  h_module=lambda x=None: h_module(x),
                                  f_tensors={'position->position': torch.ones(1)})
+        torch_kf = KalmanFilter(
+            processes=[not_compilable],
+            measures=['y']
+        )
         with self.assertRaises(RuntimeError) as cm:
-            torch_kf = KalmanFilter(
-                processes=[not_compilable],
-                measures=['y']
-            )
+            torch_kf = torch.jit.script(torch_kf)
         the_exception = cm.exception
         self.assertIn('failed to compile', str(the_exception))
         self.assertIn('TorchScript', str(the_exception))
@@ -110,8 +111,7 @@ class TestKalmanFilter(TestCase):
         # but we can skip compilation:
         torch_kf = KalmanFilter(
             processes=[not_compilable],
-            measures=['y'],
-            compiled=False
+            measures=['y']
         )
         self.assertIsInstance(torch_kf(torch.tensor([[-5., 5., 1.]]).unsqueeze(-1)), Predictions)
 
@@ -129,8 +129,8 @@ class TestKalmanFilter(TestCase):
             input=data, out_timesteps=num_times, X=torch.randn(1, num_times, 3)
         )
         _kwargs.pop('init_mean_kwargs')
-        design_kwargs = torch_kf.script_module._get_design_kwargs_for_time(time=0, **_kwargs)
-        F, *_ = torch_kf.script_module.get_design_mats(num_groups=1, design_kwargs=design_kwargs, cache={})
+        design_kwargs = torch_kf._get_design_kwargs_for_time(time=0, **_kwargs)
+        F, *_ = torch_kf.get_design_mats(num_groups=1, design_kwargs=design_kwargs, cache={})
         F = F.squeeze(0)
 
         self.assertTrue((torch.diag(F) > .95).all())
@@ -151,21 +151,22 @@ class TestKalmanFilter(TestCase):
         # make torch kf:
         torch_kf = KalmanFilter(
             processes=[LocalTrend(id='lt', decay_velocity=None, measure='y', velocity_multi=1.)],
-            measures=['y'],
-            compiled=n_step > 0
+            measures=['y']
         )
+        if n_step>0:
+            kf = torch.jit.script(torch_kf)
         expectedF = torch.tensor([[1., 1.], [0., 1.]])
         expectedH = torch.tensor([[1., 0.]])
         _kwargs = torch_kf._parse_design_kwargs(input=data, out_timesteps=num_times)
         init_mean_kwargs = _kwargs.pop('init_mean_kwargs')
-        design_kwargs = torch_kf.script_module._get_design_kwargs_for_time(time=0, **_kwargs)
-        F, H, Q, R = torch_kf.script_module.get_design_mats(num_groups=1, design_kwargs=design_kwargs, cache={})
+        design_kwargs = torch_kf._get_design_kwargs_for_time(time=0, **_kwargs)
+        F, H, Q, R = torch_kf.get_design_mats(num_groups=1, design_kwargs=design_kwargs, cache={})
         assert torch.isclose(expectedF, F).all()
         assert torch.isclose(expectedH, H).all()
 
         # make filterpy kf:
         filter_kf = filterpy_KalmanFilter(dim_x=2, dim_z=1)
-        filter_kf.x, filter_kf.P = torch_kf.script_module.get_initial_state(data, init_mean_kwargs, {}, measure_cov=R)
+        filter_kf.x, filter_kf.P = torch_kf.get_initial_state(data, init_mean_kwargs, {}, measure_cov=R)
         filter_kf.x = filter_kf.x.detach().numpy().T
         filter_kf.P = filter_kf.P.detach().numpy().squeeze(0)
         filter_kf.Q = Q.numpy().squeeze(0)
@@ -214,12 +215,11 @@ class TestKalmanFilter(TestCase):
             processes=[
                 LinearModelFixed(id='lm', predictors=['x1', 'x2'])
             ],
-            measures=['y'],
-            compiled=False
+            measures=['y']
         )
-        kf.script_module._scale_by_measure_var = False
-        kf.state_dict()['script_module.processes.lm.init_mean'][:] = torch.tensor([1.5, -0.5])
-        kf.state_dict()['script_module.measure_covariance.cholesky_log_diag'][0] = np.log(.1 ** .5)
+        kf._scale_by_measure_var = False
+        kf.state_dict()['processes.lm.init_mean'][:] = torch.tensor([1.5, -0.5])
+        kf.state_dict()['measure_covariance.cholesky_log_diag'][0] = np.log(.1 ** .5)
 
         num_times = 100
         df = DataFrame({'x1': np.random.randn(num_times), 'x2': np.random.randn(num_times)})
@@ -260,22 +260,23 @@ class TestKalmanFilter(TestCase):
                 return torch.ones(1) * self.call_count
 
         data = torch.tensor([[-5., 5., 1., 0., 3.]]).unsqueeze(-1)
-        torch_kf = KalmanFilter(
+        kf = KalmanFilter(
             processes=[Process(
                 id='call_counter',
                 state_elements=['position'],
                 h_module=CallCounter(),
                 f_tensors={'position->position': torch.ones(1)}
             )],
-            measures=['y'],
-            compiled=compiled
+            measures=['y']
         )
+        if compiled:
+            kf = torch.jit.script(kf)
         # with cache enabled, only called once
-        pred = torch_kf(data)
+        pred = kf(data)
         self.assertTrue((pred.H == 1.).all())
 
         # which is less than what we'd expect without the cache, which is data.shape[1] + 1 times
-        pred = torch_kf(data, _disable_cache=True)
+        pred = kf(data, _disable_cache=True)
         self.assertListEqual(pred.H.squeeze().tolist(), [float(x) for x in range(3, 8)])
 
     def test_keyword_dispatch(self):
@@ -298,8 +299,7 @@ class TestKalmanFilter(TestCase):
                     LinearModel(id='lm1', predictors=['x1', 'x2']),
                     LinearModel(id='lm2', predictors=['x1', 'x2'])
                 ],
-                measures=['y'],
-                compiled=False
+                measures=['y']
             )
 
         _predictors = torch.ones(1, data.shape[1], 2)
@@ -349,13 +349,12 @@ class TestKalmanFilter(TestCase):
 
         kf = KalmanFilter(
             processes=[Season(id='s1')],
-            measures=['y'],
-            compiled=False
+            measures=['y']
         )
-        kf.script_module._scale_by_measure_var = False
+        kf._scale_by_measure_var = False
         data = torch.arange(7).view(1, -1, 1)
         for init_state in [0., 1.]:
-            kf.state_dict()['script_module.processes.s1.init_mean'][:] = torch.ones(1) * init_state
+            kf.state_dict()['processes.s1.init_mean'][:] = torch.ones(1) * init_state
             _state['call_counter'] = 0
             pred = kf(data)
             # make sure test was called each time:
@@ -373,8 +372,7 @@ class TestKalmanFilter(TestCase):
         data = torch.zeros((2, 5, ndim))
         kf = KalmanFilter(
             processes=[LocalLevel(id=f'lm{i}', measure=str(i)) for i in range(ndim)],
-            measures=[str(i) for i in range(ndim)],
-            compiled=False
+            measures=[str(i) for i in range(ndim)]
         )
         pred = kf(data)
         self.assertEqual(len(tuple(pred)), 2)
@@ -402,7 +400,7 @@ class TestKalmanFilter(TestCase):
     @torch.no_grad()
     def test_no_proc_variance(self):
         kf = KalmanFilter(processes=[LinearModel(id='lm', predictors=['x1', 'x2'])], measures=['y'])
-        cov = kf.script_module.process_covariance({}, {})
+        cov = kf.process_covariance({}, {})
         self.assertEqual(cov.shape[-1], 2)
         self.assertTrue((cov == 0).all())
 
@@ -415,9 +413,10 @@ class TestKalmanFilter(TestCase):
         data = torch.zeros((2, 5, ndim), dtype=dtype)
         kf = KalmanFilter(
             processes=[LocalLevel(id=f'll{i}', measure=str(i)) for i in range(ndim)],
-            measures=[str(i) for i in range(ndim)],
-            compiled=compiled
+            measures=[str(i) for i in range(ndim)]
         )
+        if compiled:
+            kf = torch.jit.script(kf)
         kf.to(dtype=dtype)
         pred = kf(data)
         self.assertEqual(pred.means.dtype, dtype)

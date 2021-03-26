@@ -22,8 +22,9 @@ class TestTraining(unittest.TestCase):
             processes=[LocalLevel(id=f'lm{i}', measure=str(i)) for i in range(ndim)],
             measures=[str(i) for i in range(ndim)]
         )
+        dist = kf.kf_step.get_distribution()
         pred = kf(data)
-        log_lik1 = kf.kf_step.log_prob(data, *pred)
+        log_lik1 = dist(*pred).log_prob(data)
         from torch.distributions import MultivariateNormal
         mv = MultivariateNormal(*pred)
         log_lik2 = mv.log_prob(data)
@@ -45,6 +46,8 @@ class TestTraining(unittest.TestCase):
         lp_method1 = pred.log_prob(data)
         lp_method1_sum = lp_method1.sum().item()
 
+        dist = kf.kf_step.get_distribution()
+
         lp_method2_sum = 0
         for g in range(num_groups):
             data_g = data[[g]]
@@ -56,7 +59,7 @@ class TestTraining(unittest.TestCase):
                 if not isvalid_gt.any():
                     continue
                 if isvalid_gt.all():
-                    lp_gt = kf.kf_step.log_prob(data_gt, *pred_gt).item()
+                    lp_gt = dist(*pred_gt).log_prob(data_gt).item()
                 else:
                     pred_gtm = pred_gt.observe(
                         state_means=pred_gt.state_means,
@@ -64,7 +67,7 @@ class TestTraining(unittest.TestCase):
                         R=pred_gt.R[..., isvalid_gt, :][..., isvalid_gt],
                         H=pred_gt.H[..., isvalid_gt, :]
                     )
-                    lp_gt = kf.kf_step.log_prob(data_gt[..., isvalid_gt], *pred_gtm).item()
+                    lp_gt = dist(*pred_gtm).log_prob(data_gt[..., isvalid_gt]).item()
                 self.assertAlmostEqual(lp_method1[g, t].item(), lp_gt, places=4)
                 lp_method2_sum += lp_gt
         self.assertAlmostEqual(lp_method1_sum, lp_method2_sum, places=3)
@@ -78,7 +81,7 @@ class TestTraining(unittest.TestCase):
         # TODO: include nans; make sure performance doesn't take significant hit w/partial nans
 
         def _make_kf():
-            return KalmanFilter(
+            return torch.jit.script(KalmanFilter(
                 processes=[
                               LocalLevel(id=f'll{i + 1}', measure=str(i + 1))
                               for i in range(ndim)
@@ -89,14 +92,14 @@ class TestTraining(unittest.TestCase):
                               for i in range(ndim)
                           ],
                 measures=[str(i + 1) for i in range(ndim)]
-            )
+            ))
 
         # simulate:
         X = torch.randn((num_groups, num_times, 5))
         kf_generator = _make_kf()
         with torch.no_grad():
             for i in range(ndim):
-                kf_generator.state_dict()[f'script_module.processes.lm{i + 1}.init_mean'][:] += torch.randn(5)
+                kf_generator.state_dict()[f'processes.lm{i + 1}.init_mean'][:] += torch.randn(5)
             sim = kf_generator.simulate(out_timesteps=num_times, num_sims=num_groups, X=X)
             y = sim.sample()
         assert not y.requires_grad
@@ -145,13 +148,13 @@ class TestTraining(unittest.TestCase):
         start_datetimes = np.array([np.datetime64('2019-04-14') + np.timedelta64(i, 'D') for i in range(num_groups)])
 
         def _train(num_epochs: int = 12):
-            kf = KalmanFilter(
+            kf = torch.jit.script(KalmanFilter(
                 processes=[
                     LocalTrend(id='trend'),
                     FourierSeason(id='day_of_week', period=7, dt_unit='D', K=3)
                 ],
                 measures=['y']
-            )
+            ))
 
             # train:
             optimizer = torch.optim.LBFGS([p for n, p in kf.named_parameters() if 'measure_covariance' not in n],
@@ -221,12 +224,12 @@ class TestTraining(unittest.TestCase):
         )
 
         def _train(num_epochs: int = 15):
-            kf = KalmanFilter(
+            kf = torch.jit.script(KalmanFilter(
                 processes=[
                     TBATS(id='day_of_week', period=7, dt_unit='D', K=1, process_variance=True, decay=(.85, 1.))
                 ],
                 measures=['y']
-            )
+            ))
 
             # train:
             optimizer = torch.optim.LBFGS(kf.parameters(), lr=.15, max_iter=10)

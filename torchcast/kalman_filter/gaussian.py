@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Type
 
 import torch
 from torch import nn, Tensor
@@ -10,7 +10,11 @@ class GaussianStep(nn.Module):
     Used internally by `KalmanFilter` to apply the kalman-filtering algorithm. Subclasses can implement additional
     logic such as outlier-rejection, censoring, etc.
     """
-    distribution_cls = torch.distributions.MultivariateNormal
+
+    # this would ideally be a class-attribute but torch.jit.trace strips them
+    @torch.jit.ignore()
+    def get_distribution(self) -> Type[torch.distributions.Distribution]:
+        return torch.distributions.MultivariateNormal
 
     def forward(self,
                 input: Tensor,
@@ -88,7 +92,3 @@ class GaussianStep(nn.Module):
         Kt, _ = torch.solve(B, A)
         K = Kt.permute(0, 2, 1)
         return K
-
-    @classmethod
-    def log_prob(cls, obs: Tensor, obs_mean: Tensor, obs_cov: Tensor) -> Tensor:
-        return cls.distribution_cls(obs_mean, obs_cov).log_prob(obs)
