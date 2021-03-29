@@ -7,7 +7,7 @@ from torch import nn
 
 import numpy as np
 from torchcast.kalman_filter import KalmanFilter
-from torchcast.process import LinearModel, LocalLevel, NN
+from torchcast.process import LinearModel, NN
 from torchcast.process.season import FourierSeason
 
 
@@ -17,14 +17,13 @@ class TestProcess(TestCase):
         data = torch.stack([series.roll(-i).repeat(3) for i in range(6)]).unsqueeze(-1)
         start_datetimes = np.array([np.datetime64('2019-04-18') + np.timedelta64(i, 'D') for i in range(6)])
         kf = KalmanFilter(
-            processes=[FourierSeason(id='day_of_week', period=7, dt_unit='D', K=3)],
+            processes=[FourierSeason(id='day_of_week', period='7D', dt_unit='D', K=3)],
             measures=['y']
         )
         kf._scale_by_measure_var = False
         kf.state_dict()['processes.day_of_week.init_mean'][:] = torch.tensor([1., 0., 0., 0., 0., 0.])
         kf.state_dict()['measure_covariance.cholesky_log_diag'] -= 2
         pred = kf(data, start_datetimes=start_datetimes)
-        pred.means - data
         for g in range(6):
             self.assertLess(torch.abs(pred.means[g] - data[g]).mean(), .01)
 

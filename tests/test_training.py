@@ -7,7 +7,7 @@ import torch
 from parameterized import parameterized
 
 from torchcast.kalman_filter import KalmanFilter
-from torchcast.process import LocalLevel, LinearModel, LocalTrend, FourierSeason, TBATS
+from torchcast.process import LocalLevel, LinearModel, LocalTrend, TBATS
 from torchcast.utils.data import TimeSeriesDataset
 
 MAX_TRIES = 3  # we set the seed but not tested across different platforms
@@ -139,6 +139,7 @@ class TestTraining(unittest.TestCase):
         """
         # manually generated data (sin-wave, trend, etc.) with virtually no noise: MSE should be near zero
         """
+        from torchcast.process.season import FourierSeason
         torch.manual_seed(123)
 
         weekly = torch.sin(2. * 3.1415 * torch.arange(0., 7.) / 7.)
@@ -151,7 +152,7 @@ class TestTraining(unittest.TestCase):
             kf = torch.jit.script(KalmanFilter(
                 processes=[
                     LocalTrend(id='trend'),
-                    FourierSeason(id='day_of_week', period=7, dt_unit='D', K=3)
+                    FourierSeason(id='day_of_week', period='7D', dt_unit='D', K=3)
                 ],
                 measures=['y']
             ))
@@ -226,7 +227,7 @@ class TestTraining(unittest.TestCase):
         def _train(num_epochs: int = 15):
             kf = torch.jit.script(KalmanFilter(
                 processes=[
-                    TBATS(id='day_of_week', period=7, dt_unit='D', K=1, process_variance=True, decay=(.85, 1.))
+                    TBATS(id='day_of_week', period='7D', dt_unit='D', K=1, process_variance=True, decay=(.85, 1.))
                 ],
                 measures=['y']
             ))

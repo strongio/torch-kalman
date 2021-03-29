@@ -4,8 +4,8 @@ torchcast
 .. toctree::
    :maxdepth: 1
    :caption: Contents:
-   :hidden:
 
+   quick_start
    user_guide/user_guide
    examples/examples
    api/api

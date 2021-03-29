@@ -109,6 +109,7 @@ class TimeSeriesDataset(TensorDataset):
             if isinstance(dt, dict):
                 split_times = np.array([dt[group_name] for group_name in self.group_names], dtype='datetime64[ns]')
             else:
+                # todo: make compatible with pandas.Timestamp
                 if not isinstance(dt, np.datetime64):
                     dt = np.datetime64(dt, self.dt_unit)
                 split_times = np.full(shape=len(self.group_names), fill_value=dt)

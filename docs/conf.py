@@ -29,7 +29,8 @@ author = 'Jacob Dink'
 # ones.
 extensions = [
     'sphinx.ext.autodoc',
-    'sphinx.ext.intersphinx'
+    'sphinx.ext.intersphinx',
+    'nbsphinx'
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -57,4 +58,8 @@ html_static_path = ['_static']
 intersphinx_mapping = {
     'python': ('https://docs.python.org/', None),
     'PyTorch': ('http://pytorch.org/docs/master/', None),
+}
+
+nbsphinx_custom_formats = {
+    '.py': ['jupytext.reads', {'fmt': 'py:light'}],
 }
