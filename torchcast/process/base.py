@@ -246,3 +246,6 @@ class Process(nn.Module):
             c = self.se_to_idx[from_el]
             r = self.se_to_idx[to_el]
             return r, c
+
+    def __repr__(self) -> str:
+        return f'{type(self).__name__}(id={repr(self.id)})'

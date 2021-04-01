@@ -14,25 +14,18 @@
 #     name: python3
 # ---
 
-# %matplotlib inline
-
-# +
-from copy import deepcopy
-
+# + {"nbsphinx": "hidden"}
 import torch
-from torch.optim import LBFGS
 
 from torchcast.utils.datasets import load_air_quality_data
 from torchcast.kalman_filter import KalmanFilter
-from torchcast.covariance import Covariance
-from torchcast.process import LocalLevel, LocalTrend, LinearModel, Season
+from torchcast.process import LocalTrend, Season
 from torchcast.utils.data import TimeSeriesDataset
 
 import numpy as np
-import pandas as pd
 
 np.random.seed(2021-1-21)
-torch.manual_seed(2021-1-21);
+torch.manual_seed(2021-1-21)
 # -
 
 # # Quick Start
@@ -47,7 +40,7 @@ df_aq = load_air_quality_data('weekly')
 df_aq
 
 # + [markdown] {"hidePrompt": true}
-# #### Prepare our Dataset
+# ### Prepare our Dataset
 #
 # In `torchcast` we set up our data and model with the following:
 #

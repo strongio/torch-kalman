@@ -572,3 +572,7 @@ class KalmanFilter(nn.Module):
                 measure_cov.shape[0:-2] + (self.state_rank,), dtype=measure_cov.dtype, device=measure_cov.device
             )
         return multi
+
+    def __repr__(self) -> str:
+        return f'{type(self).__name__}' \
+               f'(processes={repr(list(self.processes.values()))}, measures={repr(list(self.measures))})'

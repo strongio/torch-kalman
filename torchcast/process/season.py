@@ -124,6 +124,19 @@ class Season(_Season, Process):
     """
     Method from De Livera, A.M., Hyndman, R.J., & Snyder, R. D. (2011); in that paper TBATS refers to
     the whole model; here it is specifically the novel approach to modeling seasonality that they proposed.
+
+    :param id: Unique identifier for this process.
+    :param dt_unit: A numpy.timedelta64 (or string that will be converted to one) that indicates the time-units
+     used in the kalman-filter -- i.e., how far we advance with every timestep. Can be `None` if the data are in
+     arbitrary (non-datetime) units.
+    :param period: The number of timesteps it takes to get through a full seasonal cycle. Does not have to be an
+     integer (e.g. 365.25 for yearly to account for leap-years). Can also be a numpy.timedelta64 (or string that
+     will be converted to one).
+    :param K: The number of the fourier components.
+    :param measure: The name of the measure for this process.
+    :param process_variance: TODO
+    :param decay: TODO
+    :param decay_kwarg: TODO
     """
 
     def __init__(self,
@@ -135,21 +148,6 @@ class Season(_Season, Process):
                  process_variance: bool = True,
                  decay: Optional[Union[nn.ModuleDict, Tuple[float, float]]] = None,
                  decay_kwarg: Optional[str] = None):
-        """
-
-        :param id: Unique identifier for this process.
-        :param dt_unit: A numpy.timedelta64 (or string that will be converted to one) that indicates the time-units
-        used in the kalman-filter -- i.e., how far we advance with every timestep. Can be `None` if the data are in
-        arbitrary (non-datetime) units.
-        :param period: The number of timesteps it takes to get through a full seasonal cycle. Does not have to be an
-        integer (e.g. 365.25 for yearly to account for leap-years). Can also be a numpy.timedelta64 (or string that
-        will be converted to one).
-        :param K: The number of the fourier components.
-        :param measure: The name of the measure for this process.
-        :param process_variance: TODO
-        :param decay: TODO
-        :param decay_kwarg: TODO
-        """
 
         self.dt_unit_ns = None if dt_unit is None else self._get_dt_unit_ns(dt_unit)
         self.period = self._standardize_period(period, self.dt_unit_ns)

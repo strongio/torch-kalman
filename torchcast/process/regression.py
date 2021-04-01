@@ -44,6 +44,12 @@ class _RegressionBase(Process):
 class LinearModel(_RegressionBase):
     """
     A process which takes a model-matrix of predictors, and each state corresponds to the coefficient on each.
+
+    :param id: Unique identifier for the process
+    :param predictors: A sequence of strings with predictor-names.
+    :param measure: The name of the measure for this process.
+    :param process_variance: TODO
+    :param decay: TODO
     """
 
     def __init__(self,
@@ -52,13 +58,6 @@ class LinearModel(_RegressionBase):
                  measure: Optional[str] = None,
                  process_variance: bool = False,
                  decay: Optional[Tuple[float, float]] = None):
-        """
-        :param id: Unique identifier for the process
-        :param predictors: A sequence of strings with predictor-names.
-        :param measure: The name of the measure for this process.
-        :param process_variance: TODO
-        :param decay: TODO
-        """
         super().__init__(
             id=id,
             predictors=predictors,
@@ -74,6 +73,13 @@ class NN(_RegressionBase):
     A process which takes a model-matrix of predictors and feeds them into a neural-network; the output of this is then
     used in the KalmanFilter's observation matrix. This allows the KalmanFilter to have states corresponding to
     arbitrary combinations of predictors.
+
+    :param id: Unique identifier for the process
+    :param nn: A `nn.Module` that takes inputs from a model-matrix and tranlates them into entries in the
+    observation matrix H.
+    :param measure: The name of the measure for this process.
+    :param process_variance: TODO
+    :param decay: TODO
     """
 
     def __init__(self,
@@ -82,15 +88,6 @@ class NN(_RegressionBase):
                  measure: Optional[str] = None,
                  process_variance: bool = False,
                  decay: Optional[Tuple[float, float]] = None):
-        """
-
-        :param id: Unique identifier for the process
-        :param nn: A `nn.Module` that takes inputs from a model-matrix and tranlates them into entries in the
-        observation matrix H.
-        :param measure: The name of the measure for this process.
-        :param process_variance: TODO
-        :param decay: TODO
-        """
         num_outputs = self._infer_num_outputs(nn)
         super().__init__(
             id=id,

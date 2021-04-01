@@ -12,15 +12,14 @@
 #
 import os
 import sys
-sys.path.insert(0, os.path.abspath('../torchcast'))
 
+sys.path.insert(0, os.path.abspath('../torchcast'))
 
 # -- Project information -----------------------------------------------------
 
 project = 'torchcast'
 copyright = '2021, Jacob Dink'
 author = 'Jacob Dink'
-
 
 # -- General configuration ---------------------------------------------------
 
@@ -30,7 +29,7 @@ author = 'Jacob Dink'
 extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.intersphinx',
-    'nbsphinx'
+    'nbsphinx',
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -39,8 +38,7 @@ templates_path = ['_templates']
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
-
+exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', '**.ipynb_checkpoints', '_html']
 
 # -- Options for HTML output -------------------------------------------------
 

@@ -286,7 +286,7 @@ class Predictions(nn.Module):
         :param group_colname: The name of the group-column.
         :param time_colname: The name of the time-column.
         :param max_num_groups: Max. number of groups to plot; if the number of groups in the dataframe is greater than
-        this, a random subset will be taken.
+         this, a random subset will be taken.
         :param split_dt: If supplied, will draw a vertical line at this date (useful for showing pre/post validation).
         :param kwargs: Further keyword arguments to pass to `plotnine.theme` (e.g. `figure_size=(x,y)`)
         :return: A plot of the predicted and actual values.

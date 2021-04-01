@@ -11,6 +11,13 @@ from .utils import SingleOutput, Bounded
 class LocalLevel(Process):
     """
     A process representing a random-walk.
+
+    :param id: A unique identifier for this process.
+    :param decay: If the process has decay, then the random walk will tend towards zero as we forecast out further
+     (note that this means you should center your time-series, or you should include another process that does not
+     have this decaying behavior). Decay can be between 0 and 1, but values < .50 (or even .90) can often be too
+     rapid and you will run into trouble with vanishing gradients. When passing a pair of floats, the nn.Module will
+     assign a parameter representing the decay as a learned parameter somewhere between these bounds.
     """
 
     def __init__(self,
@@ -18,14 +25,6 @@ class LocalLevel(Process):
                  measure: Optional[str] = None,
                  decay: Optional[Union[torch.nn.Module, Tuple[float, float]]] = None,
                  decay_kwarg: Optional[str] = None):
-        """
-        :param id: A unique identifier for this process.
-        :param decay: If the process has decay, then the random walk will tend towards zero as we forecast out further
-        (note that this means you should center your time-series, or you should include another process that does not
-        have this decaying behavior). Decay can be between 0 and 1, but values < .50 (or even .90) can often be too
-        rapid and you will run into trouble with vanishing gradients. When passing a pair of floats, the nn.Module will
-        assign a parameter representing the decay as a learned parameter somewhere between these bounds.
-        """
         if decay_kwarg is None:
             assert not isinstance(decay, nn.Module)
             decay_kwarg = ''
@@ -55,6 +54,15 @@ class LocalLevel(Process):
 class LocalTrend(Process):
     """
     A process representing an evolving trend.
+
+    :param id: A unique identifier for this process.
+    :param decay_velocity: If set, then the trend will decay to zero as we forecast out further. The default is
+     to allow the trend to decay somewhere between .95 (moderate decay) and 1.00 (no decay), with the exact value
+     being a learned parameter.
+    :param decay_position: See `decay` in :class:`LocalLevel`. Default is no decay.
+    :param velocity_multi: Default 0.1. A multiplier on the velocity, so that
+     ``next_position = position + velocity_multi * velocity``. A value of << 1.0 can be helpful since the
+     trend has such a large effect on the prediction, so that large values can lead to exploding predictions.
     """
 
     def __init__(self,
@@ -64,16 +72,7 @@ class LocalTrend(Process):
                  decay_position: Optional[Union[torch.nn.Module, Tuple[float, float]]] = None,
                  velocity_multi: float = 0.1,
                  decay_kwarg: Optional[str] = None):
-        """
-        :param id: A unique identifier for this process.
-        :param decay_velocity: If set, then the trend will decay to zero as we forecast out further. The default is
-        to allow the trend to decay somewhere between .95 (moderate decay) and 1.00 (no decay), with the exact value
-         being a learned parameter.
-        :param decay_position: See `decay` in `LocalLevel`. Default is no decay.
-        :param velocity_multi: Default 0.1. A multiplier on the velocity, so that
-        `next_position = position + velocity_multi * velocity`. A value of << 1.0 can be helpful since the
-        trend has such a large effect on the prediction, so that large values can lead to exploding predictions.
-        """
+
         if decay_kwarg is None:
             assert not isinstance(decay_position, nn.Module) and not isinstance(decay_velocity, nn.Module)
             decay_kwarg = ''
