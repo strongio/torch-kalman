@@ -16,10 +16,10 @@
 
 # + {"nbsphinx": "hidden"}
 import torch
+import copy
 
 from torchcast.utils.datasets import load_air_quality_data
 from torchcast.kalman_filter import KalmanFilter
-from torchcast.process import LocalTrend, Season, LinearModel
 from torchcast.utils.data import TimeSeriesDataset
 
 import numpy as np
@@ -48,6 +48,8 @@ df_aq
 # First, we'll make our target the sum of these two types. We'll log-transform since this is strictly positive.
 
 # +
+from torchcast.process import LocalTrend, Season
+
 # create a dataset:
 df_aq['PM'] = df_aq['PM10'] + df_aq['PM2p5'] 
 df_aq['PMlog10'] = np.log10(df_aq['PM']) # TODO: underscore
@@ -115,14 +117,17 @@ pred_4step = kf_pm_univariate(
 )
 
 df_univariate_error = pred_4step.\
-    to_dataframe(dataset_pm_univariate).\
+    to_dataframe(dataset_pm_univariate, group_colname='station', time_colname='week').\
     pipe(inverse_transform).\
-    query("time > @SPLIT_DT").\
-    assign(error = lambda df: np.abs(df['mean'] - df['actual'])).\
-    groupby('group')\
-    ['error'].mean()
-df_univariate_error.hist()
-df_univariate_error.mean(), df_univariate_error.std()
+    merge(df_aq.loc[:,['station', 'week', 'PM']]).\
+    assign(
+        error = lambda df: np.abs(df['mean'] - df['actual']),
+        validation = lambda df: df['week'] > SPLIT_DT
+    ).\
+    groupby(['station','validation'])\
+    ['error'].mean().\
+    reset_index()
+df_univariate_error.groupby('validation')['error'].agg(['mean','std'])
 # -
 
 # ### Multivariate Forecasts
@@ -154,7 +159,7 @@ kf_pm_multivariate = KalmanFilter(measures=dataset_pm_multivariate.measures[0], 
 # fit:
 kf_pm_multivariate.fit(
     dataset_pm_multivariate_train.tensors[0],
-    start_datetimes=dataset_pm_multivariate_train.start_datetimes,
+    start_datetimes=dataset_pm_multivariate_train.start_datetimes
 )
 
 # +
@@ -179,27 +184,35 @@ _df_pred = TimeSeriesDataset.tensor_to_dataframe(
     measures=['predicted']
 )    
 df_multivariate_error = _df_pred.\
-    query("week > @SPLIT_DT").\
     merge(df_aq.loc[:,['station', 'week', 'PM']]).\
-    assign(error = lambda df: np.abs(df['predicted'] - df['PM'])).\
-    groupby('station')\
-    ['error'].mean()
-df_multivariate_error.mean(), df_multivariate_error.std()
+    assign(
+        error = lambda df: np.abs(df['predicted'] - df['PM']),
+        validation = lambda df: df['week'] > SPLIT_DT
+    ).\
+    groupby(['station','validation'])\
+    ['error'].mean().\
+    reset_index()
+df_multivariate_error.groupby('validation')['error'].agg(['mean','std'])
 # -
 
-(df_multivariate_error - df_univariate_error).hist()
+df_multivariate_error.\
+    merge(df_univariate_error, on=['station', 'validation']).\
+    assign(error_diff = lambda df: df['error_x'] - df['error_y']).\
+    boxplot('error_diff', by='validation')
 
 # ### Incorporating Predictors 
 
+# +
+from torchcast.process import LinearModel
+
+# create lagged predictors:
 predictors = pd.Series(['TEMP','PRES', 'DEWP'])
 df_lagged_preds = df_aq.set_index('week').groupby('station')[predictors].shift(4, freq='7D')
 df_lagged_preds.columns = df_lagged_preds.columns + '_lag4'
 predictors = df_lagged_preds.columns
 df_lagged_preds -= df_lagged_preds.mean()
 df_lagged_preds /= df_lagged_preds.std()
-df_lagged_preds
 
-# +
 # create a dataset:
 dataset_pm_multivariate = TimeSeriesDataset.from_dataframe(
     dataframe=df_aq.merge(df_lagged_preds.reset_index()),
@@ -226,7 +239,7 @@ y, X = dataset_pm_multivariate_train.tensors
 kf_pm_lm.fit(
     y,
     X=X,
-    start_datetimes=dataset_pm_multivariate_train.start_datetimes,
+    start_datetimes=dataset_pm_multivariate_train.start_datetimes
 )
 
 # +
@@ -250,88 +263,153 @@ _df_pred = TimeSeriesDataset.tensor_to_dataframe(
 )    
 
 df_mv_lm_error = _df_pred.\
-    query("week > @SPLIT_DT").\
     merge(df_aq.loc[:,['station', 'week', 'PM']]).\
-    assign(error = lambda df: np.abs(df['predicted'] - df['PM'])).\
-    groupby('station')\
-    ['error'].mean()
-df_mv_lm_error.mean(), df_mv_lm_error.std()
+    assign(
+        error = lambda df: np.abs(df['predicted'] - df['PM']),
+        validation = lambda df: df['week'] > SPLIT_DT
+    ).\
+    groupby(['station','validation'])\
+    ['error'].mean().\
+    reset_index()
+df_mv_lm_error.groupby('validation')['error'].agg(['mean','std'])
 # -
 
-(df_mv_lm_error - df_multivariate_error).hist()
+df_mv_lm_error.\
+    merge(df_multivariate_error, on=['station', 'validation']).\
+    assign(error_diff = lambda df: df['error_x'] - df['error_y']).\
+    boxplot('error_diff', by='validation')
 
-# ### Incorporating Predictors with a Neural Network
-
-from torchcast.utils import add_season_features
-from torchcast.process import NN
+# ### Predicting State with a Neural Network
 
 # +
-df_X = add_season_features(df_lagged_preds.reset_index(), K=5, period='yearly', time_colname='week')
+from torchcast.process import NN
 
-# create a dataset:
-dataset_pm_multivariate2 = TimeSeriesDataset.from_dataframe(
-    dataframe=df_aq.merge(df_X),
-    dt_unit='W',
-    y_colnames=['PM10_log10','PM2p5_log10'],
-    X_colnames=[x for x in df_X.columns if x not in ('week','station')],
-    group_colname='station', 
-    time_colname='week'
-)
-dataset_pm_multivariate2_train, _ = dataset_pm_multivariate2.train_val_split(dt=SPLIT_DT)
+# XXX
+state_nn = torch.nn.Sequential(torch.nn.Linear(len(predictors), 10), torch.nn.Tanh(), torch.nn.Linear(10, 2))
 
-# create a model:
 _processes = []
-for m in dataset_pm_multivariate2.measures[0]:
+for m in dataset_pm_multivariate.measures[0]:
     _processes.extend([
         LocalTrend(id=f'{m}_trend', measure=m),
-        NN(
-            id=f'{m}_lm', 
-            measure=m, 
-            nn=torch.nn.Sequential(
-                torch.nn.Linear(len(dataset_pm_multivariate2_train.measures[1]), 5)
-                # TODO: more layers would be more interesting, but overfits
-            )
-        )
+        NN(id=f'{m}_nn', measure=m, nn=state_nn),
+        Season(id=f'{m}_day_in_year', period=365.25 / 7, dt_unit='W', K=5, measure=m)
     ])
-kf_pm_nn = KalmanFilter(measures=dataset_pm_multivariate2.measures[0], processes=_processes)
+kf_pm_nn = KalmanFilter(measures=dataset_pm_multivariate.measures[0], processes=_processes)
+
+
+# -
+
+class EarlyStopping:
+    def __init__(self, 
+                 kf: KalmanFilter, 
+                 holdout_dataset: TimeSeriesDataset, 
+                 recent_len: int = 3, 
+                 tol: float = .001):
+        self.kf = kf
+        self.holdout_dataset = holdout_dataset
+        self.lh = []
+        assert recent_len > 1
+        self.recent_len = recent_len
+        self.tol = tol
+    
+    @torch.no_grad()
+    def __call__(self, *args):
+        y, X = self.holdout_dataset.tensors
+        pred = self.kf(y, X=X, start_datetimes=self.holdout_dataset.start_datetimes)
+        self.lh.append(-pred.log_prob(y).mean().item())
+        if len(self.lh) >= self.recent_len:
+            loss_decrease = -pd.Series(self.lh[-self.recent_len:]).diff()
+            if loss_decrease.max() < self.tol:
+                print(f"Holdout loss has not improved in last {self.recent_len-1}, stopping")
+                raise KeyboardInterrupt
+
+
+# +
 
 # fit:
-y, X = dataset_pm_multivariate2_train.tensors
+y, X = dataset_pm_multivariate_train[0:11].tensors
 kf_pm_nn.fit(
-    y, 
-    X=X, 
-    #max_iter=30
+    y,
+    X=X,
+    start_datetimes=dataset_pm_multivariate_train.start_datetimes[0:11],
+    callbacks=[EarlyStopping(kf=kf_pm_nn, holdout_dataset=dataset_pm_multivariate_train[11:])]
 )
 
 # +
 with torch.no_grad():
-    y, X = dataset_pm_multivariate2.tensors
+    y, X = dataset_pm_multivariate.tensors
     pred_4step = kf_pm_nn(
         y,
         X=X,
-        start_datetimes=dataset_pm_multivariate2.start_datetimes,
-        n_step=4
+        n_step=4,
+        start_datetimes=dataset_pm_multivariate.start_datetimes
     )
     mc_draws = 10 ** torch.distributions.MultivariateNormal(*pred_4step).rsample((500,))
     mc_predictions = mc_draws.sum(-1, keepdim=True).mean(0)
 _df_pred = TimeSeriesDataset.tensor_to_dataframe(
     mc_predictions, 
-    times=dataset_pm_multivariate2.times(),
-    group_names=dataset_pm_multivariate2.group_names,
+    times=dataset_pm_multivariate.times(),
+    group_names=dataset_pm_multivariate.group_names,
     group_colname='station',
     time_colname='week',
     measures=['predicted']
 )    
 
 df_mv_nn_error = _df_pred.\
-    query("week > @SPLIT_DT").\
     merge(df_aq.loc[:,['station', 'week', 'PM']]).\
-    assign(error = lambda df: np.abs(df['predicted'] - df['PM'])).\
-    groupby('station')\
-    ['error'].mean()
-df_mv_nn_error.mean(), df_mv_nn_error.std()
+    assign(
+        error = lambda df: np.abs(df['predicted'] - df['PM']),
+        validation = lambda df: df['week'] > SPLIT_DT
+    ).\
+    groupby(['station','validation'])\
+    ['error'].mean().\
+    reset_index()
+df_mv_nn_error.groupby('validation')['error'].agg(['mean','std'])
 # -
 
-(df_mv_nn_error - df_mv_lm_error).hist()
+df_mv_nn_error.\
+    merge(df_multivariate_error, on=['station', 'validation']).\
+    assign(error_diff = lambda df: df['error_x'] - df['error_y']).\
+    boxplot('error_diff', by='validation')
+
+)
+
+_processes = []
+    _processes.extend([
+        LocalTrend(id=f'{m}_trend', measure=m),
+    ])
+kf_pm_nn2 = KalmanFilter(
+    measures=dataset_pm_multivariate.measures[0], 
+    processes=_processes,
+    measure_covariance=Covariance.for_measures(
+        measures=dataset_pm_multivariate.measures[0], predict_variance=predict_mvar
+    ),
+    process_covariance=Covariance.for_processes(
+        processes=_processes, predict_variance=predict_pvar
+    )
+)
+
+# fit:
+    y, 
+    X=X, 
+)
+
+# +
+with torch.no_grad():
+        y,
+        X=X,
+    )
+    mc_draws = 10 ** torch.distributions.MultivariateNormal(*pred_4step).rsample((500,))
+    mc_predictions = mc_draws.sum(-1, keepdim=True).mean(0)
+_df_pred = TimeSeriesDataset.tensor_to_dataframe(
+    mc_predictions, 
+    group_colname='station',
+    time_colname='week',
+    measures=['predicted']
+)    
+
+    merge(df_aq.loc[:,['station', 'week', 'PM']]).\
+# -
+
 
 
