@@ -74,7 +74,7 @@ class KalmanFilter(nn.Module):
             y: Tensor,
             tol: float = .001,
             patience: int = 3,
-            max_iter: int = 2,  # 00,
+            max_iter: int = 200,
             optimizer: Optional[torch.optim.Optimizer] = None,
             verbose: int = 2,
             callbacks: Sequence[Callable] = (),
