@@ -70,6 +70,7 @@ class KalmanFilter(nn.Module):
         # can disable for debugging/tests:
         self._scale_by_measure_var = True
 
+    @torch.jit.ignore()
     def fit(self,
             y: Tensor,
             tol: float = .001,
