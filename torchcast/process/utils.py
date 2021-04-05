@@ -7,6 +7,18 @@ from torch import Tensor, nn
 from torchcast.utils.features import fourier_tensor
 
 
+class ScriptSequential(nn.ModuleList):
+    """
+    torch.nn.Sequential doesn't handle `Optional[Tensor]` as expected in JIT.
+    """
+
+    def forward(self, input: Optional[Tensor] = None):
+        out = input
+        for submodule in self:
+            out = submodule(out)
+        return out
+
+
 class SingleOutput(nn.Module):
     """
     Basically a callable parameter, with optional transform.

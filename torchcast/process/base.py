@@ -22,8 +22,7 @@ class Process(nn.Module):
                  f_modules: Optional[nn.ModuleDict] = None,
                  f_tensors: Optional[Dict[str, Tensor]] = None,
                  f_kwarg: str = '',
-                 init_mean_kwargs: Optional[List[str]] = None,
-                 time_varying_kwargs: Optional[List[str]] = None,
+                 init_mean_kwarg: Optional[str] = None,
                  no_pcov_state_elements: Optional[List[str]] = None,
                  no_icov_state_elements: Optional[List[str]] = None):
         """
@@ -45,8 +44,7 @@ class Process(nn.Module):
         a single call.
         :param f_tensors: A dictionary of tensors, specifying elements of the F-matrix. See `f_modules` for key format.
         :param f_kwarg: TODO
-        :param init_mean_kwargs: TODO
-        :param time_varying_kwargs: TODO
+        :param init_mean_kwarg: TODO
         :param no_pcov_state_elements: TODO
         :param no_icov_state_elements: TODO
         """
@@ -85,69 +83,45 @@ class Process(nn.Module):
         self.no_icov_state_elements: Optional[List[str]] = no_icov_state_elements
 
         #
-        self.expected_init_mean_kwargs: Optional[List[str]] = init_mean_kwargs
-        self.time_varying_kwargs: Optional[List[str]] = time_varying_kwargs
+        self.init_mean_kwarg: Optional[str] = init_mean_kwarg
 
-    def get_initial_state_mean(self, input: Optional[Dict[str, Tensor]] = None) -> Tensor:
+    def get_initial_state_mean(self, input: Optional[Tensor] = None) -> Tensor:
         # not used by base class:
-        assert input is None or len(input) == 0
+        assert input is None
         # if child class adds state elements this is easy to overlook:
         assert self.init_mean.shape[-1] == len(self.state_elements)
         return self.init_mean
 
     @jit.ignore
-    def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, str, Tensor]]:
-        if self.expected_init_mean_kwargs:
-            for key in self.expected_init_mean_kwargs:
-                found_key, value = get_owned_kwarg(self.id, key, kwargs)
-                yield found_key, key, 'init_mean', torch.as_tensor(value)
+    def get_init_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, Tensor]]:
+        if self.init_mean_kwarg is not None:
+            found_key, value = get_owned_kwarg(self.id, self.init_mean_kwarg, kwargs)
+            yield found_key, self.init_mean_kwarg, torch.as_tensor(value)
+
+    @jit.ignore
+    def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, Optional[Tensor]]]:
         for key in [self.f_kwarg, self.h_kwarg]:
             if key == '':
                 continue
             found_key, value = get_owned_kwarg(self.id, key, kwargs)
-            key_type = 'time_varying' if key in (self.time_varying_kwargs or []) else 'static'
-            yield found_key, key, key_type, torch.as_tensor(value)
+            if value is not None:
+                value = torch.as_tensor(value)
+            yield found_key, key, value
 
-    def forward(self,
-                inputs: Dict[str, Tensor],
-                cache: Dict[str, Tensor]) -> Tuple[Tensor, Tensor]:
-        return self.h_forward(inputs, cache), self.f_forward(inputs, cache)
+    def forward(self, inputs: Dict[str, Tensor]) -> Tuple[Tensor, Tensor]:
+        return self.h_forward(inputs.get(self.h_kwarg)), self.f_forward(inputs.get(self.f_kwarg))
 
-    def h_forward(self, inputs: Dict[str, Tensor], cache: Dict[str, Tensor]) -> Tensor:
-        h_input = torch.empty(0) if self.h_kwarg == '' else inputs[self.h_kwarg]
-        h_key = self._get_cache_key(self.h_kwarg, h_input, prefix=f'{self.id}_h')
-        if h_key is not None:
-            if h_key not in cache:
-                cache[h_key] = self._h_forward(h_input)
-            return cache[h_key]
-        else:
-            return self._h_forward(h_input)
-
-    def f_forward(self, inputs: Dict[str, Tensor], cache: Dict[str, Tensor]) -> Tensor:
-        f_input = torch.empty(0) if self.f_kwarg == '' else inputs[self.f_kwarg]
-        f_key = self._get_cache_key(self.f_kwarg, f_input, prefix=f'{self.id}_f')
-        if f_key is not None:
-            if f_key not in cache:
-                cache[f_key] = self._f_forward(f_input)
-            return cache[f_key]
-        else:
-            return self._f_forward(f_input)
-
-    def _get_cache_key(self, kwarg: str, input: Optional[Tensor], prefix: str) -> Optional[str]:
-        """
-        Subclasses could use `input` to determine the cache-key
-        """
-        if self.time_varying_kwargs is not None:
-            if kwarg in self.time_varying_kwargs:
-                return None
-        return f'{prefix}_static'
-
-    def _h_forward(self, input: Tensor) -> Tensor:
+    def h_forward(self, input: Optional[Tensor]) -> Tensor:
         if self.h_module is None:
             assert self.h_tensor is not None
             H = self.h_tensor
-        else:
+        elif self.h_kwarg != '':
+            assert input is not None
             H = self.h_module(input)
+        else:
+            if torch.jit.is_scripting():
+                raise NotImplementedError("h_modules that do not take inputs are currently unsupported for JIT")
+            H = self.h_module()
         if not self._validate_h_shape(H):
             msg = (
                 f"`Process(id='{self.id}').h_forward()` produced output with shape {H.shape}, "
@@ -156,6 +130,8 @@ class Process(nn.Module):
             if input is not None:
                 msg += f" Input had shape {input.shape}."
             raise RuntimeError(msg)
+        if torch.isnan(H).any() or torch.isinf(H).any():
+            raise RuntimeError(f"{self.id} produced H with nans")
         return H
 
     def _validate_h_shape(self, H: torch.Tensor) -> bool:
@@ -182,7 +158,7 @@ class Process(nn.Module):
                     return False
         return True
 
-    def _f_forward(self, input: Tensor) -> Tensor:
+    def f_forward(self, input: Optional[Tensor]) -> Tensor:
         diag: Optional[Tensor] = None
         assignments: List[Tuple[Tuple[int, int], Tensor]] = []
 
@@ -204,6 +180,7 @@ class Process(nn.Module):
             for from__to, module in self.f_modules.items():
                 rc = self._transition_key_to_rc(from__to)
                 tens = module(input)
+                # TODO: this should technically do `if f_kwarg=='': tens=module()` but this breaks JIT
                 if len(tens.shape) > 1:
                     assert num_groups == 1 or num_groups == tens.shape[0]
                     num_groups = tens.shape[0]
@@ -235,6 +212,9 @@ class Process(nn.Module):
             else:
                 assert len(tens.shape) <= 1
             F[:, r, c] = tens
+
+        if torch.isnan(F).any() or torch.isinf(F).any():
+            raise RuntimeError(f"{self.id} produced F with nans")
         return F
 
     def _transition_key_to_rc(self, transition_key: str) -> Optional[Tuple[int, int]]:

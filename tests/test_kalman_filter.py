@@ -7,7 +7,6 @@ from unittest import TestCase
 import torch
 from parameterized import parameterized
 
-from torch import nn
 from torchcast.internals.utils import get_nan_groups
 
 from torchcast.kalman_filter import KalmanFilter
@@ -129,9 +128,8 @@ class TestKalmanFilter(TestCase):
             input=data, out_timesteps=num_times, X=torch.randn(1, num_times, 3)
         )
         _kwargs.pop('init_mean_kwargs')
-        design_kwargs = torch_kf._get_design_kwargs_for_time(time=0, **_kwargs)
-        F, *_ = torch_kf.get_design_mats(num_groups=1, design_kwargs=design_kwargs, cache={})
-        F = F.squeeze(0)
+        Fs, *_ = torch_kf.build_design_mats(**_kwargs, num_groups=1, out_timesteps=num_times)
+        F = Fs[0][0]
 
         self.assertTrue((torch.diag(F) > .95).all())
         self.assertTrue((torch.diag(F) < 1.00).all())
@@ -159,14 +157,13 @@ class TestKalmanFilter(TestCase):
         expectedH = torch.tensor([[1., 0.]])
         _kwargs = torch_kf._parse_design_kwargs(input=data, out_timesteps=num_times)
         init_mean_kwargs = _kwargs.pop('init_mean_kwargs')
-        design_kwargs = torch_kf._get_design_kwargs_for_time(time=0, **_kwargs)
-        F, H, Q, R = torch_kf.get_design_mats(num_groups=1, design_kwargs=design_kwargs, cache={})
+        F, H, Q, R = (_[0] for _ in torch_kf.build_design_mats(**_kwargs, num_groups=1, out_timesteps=num_times))
         assert torch.isclose(expectedF, F).all()
         assert torch.isclose(expectedH, H).all()
 
         # make filterpy kf:
         filter_kf = filterpy_KalmanFilter(dim_x=2, dim_z=1)
-        filter_kf.x, filter_kf.P = torch_kf.get_initial_state(data, init_mean_kwargs, {}, measure_cov=R)
+        filter_kf.x, filter_kf.P = torch_kf.get_initial_state(data, init_mean_kwargs, {})
         filter_kf.x = filter_kf.x.detach().numpy().T
         filter_kf.P = filter_kf.P.detach().numpy().squeeze(0)
         filter_kf.Q = Q.numpy().squeeze(0)
@@ -202,7 +199,7 @@ class TestKalmanFilter(TestCase):
 
     @parameterized.expand([(1,), (2,), (3,)])
     @torch.no_grad()
-    def test_equations_preds(self, n_step: int):
+    def test_equations_preds(self, n_step: int = 1):
         from torchcast.utils.data import TimeSeriesDataset
         from pandas import DataFrame
 
@@ -248,14 +245,14 @@ class TestKalmanFilter(TestCase):
             else:
                 self.assertLess((resid ** 2).mean(), .02)
 
-    @parameterized.expand([(False,), (True,)])
-    def test_process_caching(self, compiled: bool):
+    @parameterized.expand(itertools.product([False, True], ['', 'X']))
+    def test_time_varying_kwargs(self, compiled: bool, h_kwarg: str):
         class CallCounter(torch.nn.Module):
             def __init__(self):
                 super(CallCounter, self).__init__()
                 self.call_count = 0
 
-            def forward(self, input: Optional[torch.Tensor]) -> torch.Tensor:
+            def forward(self, input: Optional[torch.Tensor] = None) -> torch.Tensor:
                 self.call_count += 1
                 return torch.ones(1) * self.call_count
 
@@ -265,19 +262,32 @@ class TestKalmanFilter(TestCase):
                 id='call_counter',
                 state_elements=['position'],
                 h_module=CallCounter(),
+                h_kwarg=h_kwarg,
                 f_tensors={'position->position': torch.ones(1)}
             )],
             measures=['y']
         )
         if compiled:
             kf = torch.jit.script(kf)
-        # with cache enabled, only called once
-        pred = kf(data)
-        self.assertTrue((pred.H == 1.).all())
 
-        # which is less than what we'd expect without the cache, which is data.shape[1] + 1 times
-        pred = kf(data, _disable_cache=True)
-        self.assertListEqual(pred.H.squeeze().tolist(), [float(x) for x in range(3, 8)])
+        if h_kwarg:
+            # with 2D input, only called once:
+            pred = kf(data, call_counter__X=data[:, 0])
+            self.assertTrue((pred.H == 1.).all())
+
+            # with 3d input, need to call each timestep:
+            pred = kf(data, call_counter__X=data)
+            self.assertListEqual(pred.H.squeeze().tolist(), [float(x) for x in range(2, 7)])
+
+        else:
+            # with no input, only called once
+            try:
+                pred = kf(data)
+            except (NotImplementedError, torch.jit.Error) as e:
+                if compiled and 'unsupported' in str(e):
+                    return
+                raise
+            self.assertTrue((pred.H == 1.).all())
 
     def test_keyword_dispatch(self):
         _counter = defaultdict(int)
@@ -312,7 +322,7 @@ class TestKalmanFilter(TestCase):
         # share input:
         kf = _make_kf()
         for nm, proc in kf.named_processes():
-            proc._h_forward = check_input(proc._h_forward, expected[nm])
+            proc.h_forward = check_input(proc.h_forward, expected[nm])
         kf(data, X=_predictors * 0.)
 
         # separate ---
@@ -320,14 +330,14 @@ class TestKalmanFilter(TestCase):
         # individual input:
         kf = _make_kf()
         for nm, proc in kf.named_processes():
-            proc._h_forward = check_input(proc._h_forward, expected[nm])
+            proc.h_forward = check_input(proc.h_forward, expected[nm])
         kf(data, lm1__X=_predictors * 0., lm2__X=_predictors)
 
         # specific overrides general
         kf(data, X=_predictors * 0., lm2__X=_predictors)
 
         # make sure check_input is being called:
-        self.assertGreaterEqual(_counter['_h_forward'] / data.shape[1] / 2, 3)
+        self.assertGreaterEqual(_counter['h_forward'] / data.shape[1] / 2, 3)
         with self.assertRaises(AssertionError) as cm:
             kf(data, X=_predictors * 0.)
         self.assertEqual(str(cm.exception).lower(), "false is not true")
@@ -361,8 +371,7 @@ class TestKalmanFilter(TestCase):
             _state['call_counter'] = 0
             pred = kf(data)
             # make sure test was called each time:
-            # +1 b/c we make an extra call to get_design_mats when getting initial state
-            self.assertEqual(_state['call_counter'], data.shape[1] + 1)
+            self.assertEqual(_state['call_counter'], data.shape[1])
 
             # more suited to a season test but we'll check anyways:
             if init_state == 1.:

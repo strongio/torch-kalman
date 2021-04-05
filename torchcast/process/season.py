@@ -12,7 +12,7 @@ from torchcast.internals.utils import zpad
 
 from torchcast.process.base import Process
 from torchcast.process.regression import _RegressionBase
-from torchcast.process.utils import SingleOutput, Multi, Bounded, TimesToFourier
+from torchcast.process.utils import SingleOutput, Multi, Bounded, TimesToFourier, ScriptSequential
 
 
 class _Season:
@@ -50,10 +50,10 @@ class _Season:
         else:
             offsets = self._get_offsets(kwargs['start_datetimes'])
         kwargs['current_times'] = offsets + kwargs['current_timestep']
-        for found_key, key_name, key_type, value in Process.get_kwargs(self, kwargs):
+        for found_key, key_name, value in Process.get_kwargs(self, kwargs):
             if found_key == 'current_times' and self.dt_unit_ns is not None:
                 found_key = 'start_datetimes'
-            yield found_key, key_name, key_type, value
+            yield found_key, key_name, value
 
 
 class FourierSeason(_Season, _RegressionBase):
@@ -116,8 +116,6 @@ class FourierSeason(_Season, _RegressionBase):
             decay=decay
         )
         self.h_kwarg = 'current_times'
-        assert len(self.time_varying_kwargs) == 1
-        self.time_varying_kwargs[0] = 'current_times'
 
 
 class Season(_Season, Process):
@@ -166,9 +164,6 @@ class Season(_Season, Process):
 
         state_elements, transitions, h_tensor = self._setup(K=K, period=self.period, decay=decay)
 
-        init_mean_kwargs = ['start_offsets']
-        if decay_kwarg:
-            init_mean_kwargs.append(decay_kwarg)
         super().__init__(
             id=id,
             state_elements=state_elements,
@@ -177,7 +172,7 @@ class Season(_Season, Process):
             h_tensor=torch.tensor(h_tensor),
             measure=measure,
             no_pcov_state_elements=[] if process_variance else state_elements,
-            init_mean_kwargs=init_mean_kwargs,
+            init_mean_kwarg='start_offsets',
             f_kwarg=decay_kwarg
         )
 
@@ -220,7 +215,7 @@ class Season(_Season, Process):
                 for from_, to_ in itertools.product([sj, s_star_j], [sj, s_star_j]):
                     tkey = f'{from_}->{to_}'
                     which = 2 * (j - 1) + int(from_ == to_)
-                    f_modules[tkey] = nn.Sequential(decay[which], Multi(f_tensors[tkey]))
+                    f_modules[tkey] = ScriptSequential([decay[which], Multi(f_tensors[tkey])])
 
         if f_modules:
             assert len(f_modules) == len(f_tensors)
@@ -229,26 +224,26 @@ class Season(_Season, Process):
             return state_elements, f_tensors, h_tensor
 
     @jit.ignore
-    def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, str, Tensor]]:
+    def get_init_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, Tensor]]:
         if self.dt_unit_ns is None:
             offsets = torch.zeros(1)
         else:
             offsets = self._get_offsets(kwargs['start_datetimes'])
         kwargs['start_offsets'] = offsets
-        for found_key, key_name, key_type, value in Process.get_kwargs(self, kwargs):
+        for found_key, key_name, value in Process.get_init_kwargs(self, kwargs):
             if found_key == 'start_offsets' and self.dt_unit_ns is not None:
                 found_key = 'start_datetimes'
-            yield found_key, key_name, key_type, value
+            yield found_key, key_name, value
 
-    def get_initial_state_mean(self, input: Optional[Dict[str, Tensor]] = None) -> Tensor:
+    def get_initial_state_mean(self, input: Optional[Tensor] = None) -> Tensor:
         assert input is not None
         if self.dt_unit_ns is None:
             return self.init_mean
 
-        start_offsets = input['start_offsets']
+        start_offsets = input
         num_groups = start_offsets.shape[0]
 
-        F = self.f_forward(input, cache={})
+        F = self.f_forward(None)
         if F.shape[0] != num_groups:
             F = F.expand(num_groups, -1, -1)
 

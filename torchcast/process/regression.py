@@ -35,7 +35,6 @@ class _RegressionBase(Process):
             f_modules=None if decay is None else transitions,
             h_module=h_module,
             h_kwarg='X',
-            time_varying_kwargs=['X'],
             no_pcov_state_elements=[] if process_variance else predictors,
             **kwargs
         )

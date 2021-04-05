@@ -43,12 +43,11 @@ class TestProcess(TestCase):
             ],
             measures=['y']
         )
-        kf = torch.jit.script(kf)  # TODO: why is this necessary?
         wrong_dim = 1 if num_preds > 1 else 2
         with self.assertRaises((RuntimeError, torch.jit.Error), msg=(num_groups, num_preds)) as cm:
             kf(data, X=torch.zeros((num_groups, 5, wrong_dim)))
-        expected = f"produced output with shape [{num_groups}, {wrong_dim}], but expected ({num_preds},) " \
-                   f"or (num_groups, {num_preds}). Input had shape [{num_groups}, {wrong_dim}]"
+        expected = f"produced output with shape torch.Size([{num_groups}, {wrong_dim}]), but expected ({num_preds},) " \
+                   f"or (num_groups, {num_preds}). Input had shape torch.Size([{num_groups}, {wrong_dim}])"
         self.assertIn(expected, str(cm.exception))
 
         kf(data, X=torch.ones(num_groups, data.shape[1], num_preds))

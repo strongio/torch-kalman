@@ -50,7 +50,6 @@ class LocalLevel(Process):
             f_kwarg=decay_kwarg
         )
 
-
 class LocalTrend(Process):
     """
     A process representing an evolving trend.
@@ -106,3 +105,4 @@ class LocalTrend(Process):
             h_tensor=torch.tensor([1., 0.]),
             f_kwarg=decay_kwarg
         )
+

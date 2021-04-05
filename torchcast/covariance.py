@@ -15,8 +15,17 @@ def num_off_diag(rank: int) -> int:
 
 
 class Covariance(nn.Module):
+    """
+    :cvar var_predict_multi: If `predict_variance` are standard modules like `torch.nn.Linear` or
+        `torch.nn.Embedding`, the random inits can often result in extreme variance-multipliers; these
+        poor inits can make early optimization unstable. `var_predict_multi` (default 0.1) simply multiplies the output
+        of `predict_variance` before passing them though `torch.exp`; this serves to dampen initial outputs while
+        still allowing large predictions if these are eventually warranted.
+    """
+    var_predict_multi = 0.1
+
     @classmethod
-    def for_processes(cls, processes: Sequence[Process], cov_type: str, **kwargs) -> 'Covariance':
+    def for_processes(cls, processes: Sequence[Process], cov_type: str = 'process', **kwargs) -> 'Covariance':
         assert cov_type in {'process', 'initial'}
         state_rank = 0
         no_cov_idx = []
@@ -52,28 +61,28 @@ class Covariance(nn.Module):
             kwargs['init_diag_multi'] = 1.0
         return cls(rank=len(measures), id='measure_covariance', **kwargs)
 
+    # aliases:
+    from_measures = for_measures
+    from_processes = for_processes
+
     def __init__(self,
                  rank: int,
                  empty_idx: List[int] = (),
-                 var_predict: Union[nn.Module, nn.ModuleDict] = None,
-                 time_varying_kwargs: Optional[List[str]] = None,
+                 predict_variance: Optional[nn.Module] = None,
                  id: Optional[str] = None,
                  method: str = 'log_cholesky',
-                 init_diag_multi: float = 0.1,
-                 var_predict_multi: float = 0.1):
+                 init_diag_multi: float = 0.1):
         """
         :param rank: The number of elements along the diagonal.
         :param empty_idx: In some cases (e.g. process-covariance) we will
-        :param var_predict: A nn.Module (or dictionary of these) that will predict a (log) multiplier for the variance.
+        :param predict_variance: A nn.Module (or dictionary of these) that will predict a (log) multiplier for the variance.
         These should output real-values with shape `(num_groups, self.param_rank)`; these values will then be
         converted to multipliers by applying `torch.exp` (i.e. don't pass the output through a softplus). If a single
-        Module is passed, you should pass `{self.id}__predictors` to the KalmanFilter's `forward` pass to supply
+        Module is passed, you should pass `{self.id}__X` to the KalmanFilter's `forward` pass to supply
         predictors. If a dictionary of module(s) is passed, the key(s) of this dictionary is used to identify the
         keyword-arg that will be passed to the KalmanFilter's `forward` method (e.g. `{'group_ids' : Embedding()}`
         would allow you to call the KalmanFilter with `forward(*args, group_ids=group_ids)` and predict group-specific
         variances).
-        :param time_varying_kwargs: If `var_predict_modules` is specified, we need to specify which (if any) of the
-        keyword-args contain inputs that vary with each timestep.
         :param id: Identifier for this covariance. Typically left `None` and set when passed to the KalmanFilter.
         :param method: The parameterization for the covariance. The default, "log_cholesky", parameterizes the
         covariance using the cholesky factorization (which is itself split into two tensors: the log-transformed
@@ -83,11 +92,6 @@ class Covariance(nn.Module):
         where D is a diagonal-matrix with the std-deviations**2, and V is the low-rank tensor.
         :param init_diag_multi: A float that will be applied as a multiplier to the initial values along the diagonal.
         This can be useful to provide intelligent starting-values to speed up optimization.
-        :param var_predict_multi: If `var_predict_modules` are standard modules like `torch.nn.Linear` or
-        `torch.nn.Embedding`, the random inits can often result in somewhat unrealistic variance-multipliers; these
-        poor inits can make early optimization unstable. `var_predict_multi` (default 0.1) simply multiplies the output
-        of `var_predict_modules` before passing them though `torch.exp`; this serves to dampen initial outputs while
-        still allowing large predictions if these are eventually warranted.
         """
 
         super(Covariance, self).__init__()
@@ -116,29 +120,9 @@ class Covariance(nn.Module):
         else:
             raise NotImplementedError(method)
 
-        self.var_predict_modules: Optional[nn.ModuleDict] = None
-        if isinstance(var_predict, nn.ModuleDict):
-            self.var_predict_modules = var_predict
-        elif isinstance(var_predict, nn.Module):
-            self.var_predict_modules = nn.ModuleDict({'predictors': var_predict})
-        elif isinstance(var_predict, dict):
-            self.var_predict_modules = nn.ModuleDict(var_predict)
-        elif var_predict is not None:
-            raise ValueError(
-                f"If `var_predict` is passed, should be a nn.Module or dictionary of these. Got {type(var_predict)}"
-            )
+        self.var_predict_module = predict_variance
 
-        self.expected_kwargs: Optional[List[str]] = None
-        self.time_varying_kwargs = time_varying_kwargs
-
-        self.var_predict_multi = var_predict_multi
-        if self.var_predict_modules is not None:
-            if time_varying_kwargs is not None:
-                assert set(time_varying_kwargs).issubset(self.var_predict_modules.keys())
-            self.expected_kwargs: List[str] = []
-            for expected_kwarg_plus, module in self.var_predict_modules.items():
-                pname, _, expected_kwarg = expected_kwarg_plus.rpartition("__")
-                self.expected_kwargs.append(expected_kwarg)
+        self.expected_kwarg = '' if self.var_predict_module is None else 'X'
 
     @jit.ignore
     def set_id(self, id: str) -> 'Covariance':
@@ -148,11 +132,10 @@ class Covariance(nn.Module):
         return self
 
     @jit.ignore
-    def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, str, Tensor]]:
-        for key in (self.expected_kwargs or []):
-            found_key, value = get_owned_kwarg(self.id, key, kwargs)
-            key_type = 'time_varying' if key in (self.time_varying_kwargs or []) else 'static'
-            yield found_key, key, key_type, torch.as_tensor(value)
+    def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, Tensor]]:
+        if self.expected_kwarg:
+            found_key, value = get_owned_kwarg(self.id, self.expected_kwarg, kwargs)
+            yield found_key, self.expected_kwarg, torch.as_tensor(value)
 
     @staticmethod
     def log_chol_to_chol(log_diag: torch.Tensor, off_diag: torch.Tensor) -> torch.Tensor:
@@ -168,56 +151,13 @@ class Covariance(nn.Module):
                 idx += 1
         return L
 
-    def forward(self, inputs: Dict[str, Tensor], cache: Dict[str, Tensor]) -> Tensor:
-        assert self.id is not None
-        key = self._get_cache_key(inputs, prefix=self.id)
-        if key is not None:
-            if key not in cache:
-                cache[key] = self._get_padded_cov(inputs)
-            cov = cache[key]
-        else:
-            cov = self._get_padded_cov(inputs)
-        return cov
-
-    def _get_cache_key(self, inputs: Dict[str, Tensor], prefix: str) -> Optional[str]:
-        """
-        Subclasses could use `inputs` to determine the cache-key
-        """
-        if self.time_varying_kwargs is not None:
-            if len(set(inputs).intersection(self.time_varying_kwargs)) > 0:
-                return None
-        return f'{prefix}_static'
-
-    def _get_padded_cov(self, inputs: Dict[str, Tensor]) -> Tensor:
-        params: Dict[str, List[Tensor]] = {}
-        if self.var_predict_modules is not None:
-            for expected_kwarg_plus, module in self.var_predict_modules.items():
-                pname, _, expected_kwarg = expected_kwarg_plus.rpartition("__")
-                if expected_kwarg not in inputs:
-                    raise TypeError(f"`{self.id}` missing required kwarg `{expected_kwarg}`")
-                if pname == '':
-                    pname = 'var_multi'
-                if pname not in params:
-                    params[pname] = []
-                params[pname].append(self.var_predict_multi * module(inputs[expected_kwarg]))
-
+    def _get_mini_cov(self) -> Tensor:
         if self.method == 'log_cholesky':
             assert self.cholesky_log_diag is not None
             assert self.cholesky_off_diag is not None
-            cholesky_log_diag = self.cholesky_log_diag
-            cholesky_off_diag = self.cholesky_off_diag
-            if 'cholesky_off_diag' in params and 'cholesky_log_diag' in params:
-                cholesky_log_diag = cholesky_log_diag + torch.sum(torch.stack(params['cholesky_log_diag'], 0))
-                cholesky_off_diag = cholesky_off_diag + torch.sum(torch.stack(params['cholesky_off_diag'], 0))
-            else:
-                assert 'cholesky_off_diag' not in params and 'cholesky_log_diag' not in params
-
-            L = self.log_chol_to_chol(cholesky_log_diag, cholesky_off_diag)
+            L = self.log_chol_to_chol(self.cholesky_log_diag, self.cholesky_off_diag)
             mini_cov = L @ L.t()
         elif self.method == 'low_rank':
-            if len(params) > 0 and (list(params.keys()) != ['var_multi']):
-                # TODO
-                raise NotImplementedError
             assert self.lr_mat is not None
             assert self.log_std_devs is not None
             mini_cov = (
@@ -233,10 +173,27 @@ class Covariance(nn.Module):
                 f"Values:\n{mini_cov.diag()}"
             )
             mini_cov = mini_cov + torch.eye(mini_cov.shape[-1]) * 1e-12
+        return mini_cov
 
-        if 'var_multi' in params.keys():
-            diag_multi = torch.exp(torch.sum(torch.stack(params['var_multi'], 0), 0))
-            diag_multi = torch.diag_embed(diag_multi)
+    def forward(self, input: Optional[Tensor] = None, _ignore_input: bool = False) -> Tensor:
+        mini_cov = self._get_mini_cov()
+
+        pred = None
+        if self.var_predict_module is not None and not _ignore_input:
+            pred = self.var_predict_multi * self.var_predict_module(input)
+            if torch.isnan(pred).any() or torch.isinf(pred).any():
+                raise RuntimeError(f"{self.id}'s `predict_variance` produced nans/infs")
+            if len(pred.shape) == 1:
+                raise ValueError(
+                    f"{self.id} `predict_variance` module output should have 2D output, got {len(pred.shape)}"
+                )
+            elif pred.shape[-1] not in (1, self.param_rank):
+                raise ValueError(
+                    f"{self.id} `predict_variance` module output should have `shape[-1]` of "
+                    f"{self.param_rank}, got {pred.shape[-1]}"
+                )
+        if pred is not None:
+            diag_multi = torch.diag_embed(torch.exp(pred))
             mini_cov = diag_multi @ mini_cov @ diag_multi
 
         return pad_covariance(mini_cov, [int(i not in self.empty_idx) for i in range(self.rank)])

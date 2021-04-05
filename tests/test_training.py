@@ -227,7 +227,7 @@ class TestTraining(unittest.TestCase):
         def _train(num_epochs: int = 15):
             kf = torch.jit.script(KalmanFilter(
                 processes=[
-                    TBATS(id='day_of_week', period='7D', dt_unit='D', K=1, process_variance=True, decay=(.85, 1.))
+                    TBATS(id='day_of_week', period='7D', dt_unit='D', K=1, decay=(.85, 1.))
                 ],
                 measures=['y']
             ))

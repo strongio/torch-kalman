@@ -17,8 +17,6 @@ class KalmanFilter(nn.Module):
     The KalmanFilter is a `nn.Module` which generates predictions and forecasts using a state-space model. Processes
     are used to specify how latent-states translate into the measurable data being forecasted.
 
-    Parameters
-    ----------
     :param processes: A list of :class:`.Process` modules.
     :param measures: A list of strings specifying the names of the dimensions of the time-series being measured.
     :param process_covariance: A module created with ``Covariance.from_processes(processes, cov_type='process')``.
@@ -76,11 +74,30 @@ class KalmanFilter(nn.Module):
             y: Tensor,
             tol: float = .001,
             patience: int = 3,
-            max_iter: int = 200,
+            max_iter: int = 2,  # 00,
             optimizer: Optional[torch.optim.Optimizer] = None,
             verbose: int = 2,
             callbacks: Sequence[Callable] = (),
             **kwargs):
+        """
+        A high-level interface for invoking the standard model-training boilerplate. This is helpful to common cases in
+        which the number of parameters is moderate and the data fit in memory. For other cases you are encouraged to
+        roll your own training loop.
+
+        :param y: Tensor containing the batch of time-series(es), see :func:`KalmanFilter.forward()`.
+        :param tol: Stopping tolerance.
+        :param patience: Patience: if loss changes by less than `tol` for this many epochs, then training will be
+         stopped.
+        :param max_iter: The maximum number of iterations after which training will stop regardless of loss.
+        :param optimizer: The optimizer to use. Default is to create an instance of :class:`torch.optim.LBFGS` with
+         args ``(max_iter=10, line_search_fn='strong_wolfe', lr=.5)``.
+        :param verbose: If True (default) will print the loss and epoch; for :class:`torch.optim.LBFGS` optimizer
+         (the default) this progress bar will tick within each epoch to track the calls to forward.
+        :param callbacks: A list of functions that will be called at the end of each epoch, which take the current
+         epoch's loss value.
+        :param kwargs: Further keyword-arguments passed to :func:`KalmanFilter.forward()`.
+        :return: This `KalmanFilter` instance.
+        """
 
         if optimizer is None:
             optimizer = torch.optim.LBFGS(self.parameters(), max_iter=10, line_search_fn='strong_wolfe', lr=.5)
@@ -88,9 +105,12 @@ class KalmanFilter(nn.Module):
         self.set_initial_values(y)
 
         prog = None
-        if verbose > 1 and isinstance(optimizer, torch.optim.LBFGS):
+        if verbose > 1:
             from tqdm.auto import tqdm
-            prog = tqdm(total=optimizer.param_groups[0]['max_eval'])
+            if isinstance(optimizer, torch.optim.LBFGS):
+                prog = tqdm(total=optimizer.param_groups[0]['max_eval'])
+            else:
+                prog = tqdm(total=1)
 
         epoch = 0
 
@@ -107,19 +127,21 @@ class KalmanFilter(nn.Module):
         prev_train_loss = float('inf')
         num_lower = 0
         for epoch in range(max_iter):
-            if prog:
-                prog.reset()
-            train_loss = optimizer.step(closure).item()
-            for callback in callbacks:
-                callback(train_loss)
-            if abs(train_loss - prev_train_loss) < tol:
-                num_lower += 1
-            else:
-                num_lower = 0
-            if num_lower == patience:
+            try:
+                if prog:
+                    prog.reset()
+                train_loss = optimizer.step(closure).item()
+                for callback in callbacks:
+                    callback(train_loss)
+                if abs(train_loss - prev_train_loss) < tol:
+                    num_lower += 1
+                else:
+                    num_lower = 0
+                if num_lower == patience:
+                    break
+                prev_train_loss = train_loss
+            except KeyboardInterrupt:
                 break
-
-            prev_train_loss = train_loss
 
         return self
 
@@ -215,7 +237,8 @@ class KalmanFilter(nn.Module):
          model to produce and discard intermediate predictions every timestep.
         :param kwargs: Further arguments passed to the `processes`. For example, many seasonal processes require a
          `state_datetimes` argument; the `LinearModel` and `NN` processes expect a `X` argument for predictors.
-        :return: A `Predictions` object with `log_prob()` and `to_dataframe()` methods.
+        :return: A :class:`Predictions` object with
+         :func:`Predictions.log_prob()` and :func:`Predictions.to_dataframe()` methods.
         """
 
         if out_timesteps is None and input is None:
@@ -227,7 +250,6 @@ class KalmanFilter(nn.Module):
             n_step=n_step,
             every_step=every_step,
             out_timesteps=out_timesteps,
-            _disable_cache=kwargs.pop('_disable_cache', False),
             **self._parse_design_kwargs(input=input, out_timesteps=out_timesteps or input.shape[1], **kwargs)
         )
         return Predictions(state_means=means, state_covs=covs, R=R, H=H, kalman_filter=self)
@@ -241,8 +263,7 @@ class KalmanFilter(nn.Module):
                         n_step: int = 1,
                         out_timesteps: Optional[int] = None,
                         initial_state: Optional[Tuple[Tensor, Tensor]] = None,
-                        every_step: bool = True,
-                        _disable_cache: bool = False) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+                        every_step: bool = True) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         """
         :param input: A (group X time X measures) tensor. Optional if `initial_state` is specified.
         :param static_kwargs: Keyword-arguments to the Processes which do not vary over time.
@@ -253,16 +274,15 @@ class KalmanFilter(nn.Module):
         :param out_timesteps: The number of timesteps in the output. Might be longer than input if forecasting.
         :param initial_state: A (mean, cov) tuple to use at the initial state; otherwise `get_initial_state` is called.
         :param every_step: Experimental. When n_step>1, we can generate these n-step-ahead predictions at every
-        timestep (e.g. 24-hour-ahead predictions every hour), in which case we'd save the 24-step-ahead prediction.
-        Alternatively, we could generate 24-hour-ahead predictions at every 24th hour, in which case we'd save
-        predictions 1-24. The former corresponds to every_step=True, the latter to every_step=False. If n_step=1
-        (the default) then this option has no effect.
+         timestep (e.g. 24-hour-ahead predictions every hour), in which case we'd save the 24-step-ahead prediction.
+         Alternatively, we could generate 24-hour-ahead predictions at every 24th hour, in which case we'd save
+         predictions 1-24. The former corresponds to every_step=True, the latter to every_step=False. If n_step=1
+         (the default) then this option has no effect.
         :return: means, covs, R, H
         """
         assert n_step > 0
 
         init_cov_kwargs = static_kwargs.pop('initial_covariance', {})
-        design_cache = {}
 
         if input is None:
             if out_timesteps is None:
@@ -281,34 +301,20 @@ class KalmanFilter(nn.Module):
                 out_timesteps = len(inputs)
 
             if initial_state is None:
-                design_kwargs = self._get_design_kwargs_for_time(0, static_kwargs, time_varying_kwargs)
-                *_, R = self.get_design_mats(
-                    num_groups=inputs[0].shape[0], design_kwargs=design_kwargs, cache=design_cache
-                )
                 initial_state = self.get_initial_state(
                     input=input,
                     init_mean_kwargs=init_mean_kwargs,
-                    init_cov_kwargs=init_cov_kwargs,
-                    measure_cov=R
+                    init_cov_kwargs=init_cov_kwargs
                 )
 
         mean1step, cov1step = initial_state
-        num_groups = mean1step.shape[0]
 
-        # build design-mats:
-        Fs: List[Tensor] = []
-        Hs: List[Tensor] = []
-        Qs: List[Tensor] = []
-        Rs: List[Tensor] = []
-        for t in range(out_timesteps):
-            design_kwargs = self._get_design_kwargs_for_time(t, static_kwargs, time_varying_kwargs)
-            if _disable_cache:
-                design_cache = {}
-            F, H, Q, R = self.get_design_mats(num_groups=num_groups, design_kwargs=design_kwargs, cache=design_cache)
-            Fs += [F]
-            Hs += [H]
-            Qs += [Q]
-            Rs += [R]
+        Fs, Hs, Qs, Rs = self.build_design_mats(
+            static_kwargs=static_kwargs,
+            time_varying_kwargs=time_varying_kwargs,
+            num_groups=mean1step.shape[0],
+            out_timesteps=out_timesteps
+        )
 
         # generate predictions:
         means: List[Tensor] = []
@@ -338,6 +344,98 @@ class KalmanFilter(nn.Module):
 
         return torch.stack(means, 1), torch.stack(covs, 1), torch.stack(Rs, 1), torch.stack(Hs, 1)
 
+    def build_design_mats(self,
+                          static_kwargs: Dict[str, Dict[str, Tensor]],
+                          time_varying_kwargs: Dict[str, Dict[str, List[Tensor]]],
+                          num_groups: int,
+                          out_timesteps: int) -> Tuple[List[Tensor], List[Tensor], List[Tensor], List[Tensor]]:
+        # measure scaling
+        measure_scaling = torch.diag_embed(self._get_measure_scaling())
+
+        # process-variance:
+        if 'process_covariance' in time_varying_kwargs and \
+                self.process_covariance.expected_kwarg in time_varying_kwargs['process_covariance']:
+            pvar_inputs = time_varying_kwargs['process_covariance'][self.process_covariance.expected_kwarg]
+            Qs: List[Tensor] = []
+            for t in range(out_timesteps):
+                Qs.append(measure_scaling @ self.process_covariance(pvar_inputs[t]) @ measure_scaling)
+        else:
+            pvar_input: Optional[Tensor] = None
+            if 'process_covariance' in static_kwargs and \
+                    self.process_covariance.expected_kwarg in static_kwargs['process_covariance']:
+                pvar_input = static_kwargs['process_covariance'].get(self.process_covariance.expected_kwarg)
+            Q = measure_scaling @ self.process_covariance(pvar_input) @ measure_scaling
+            if len(Q.shape) == 2:
+                Q = Q.expand(num_groups, -1, -1)
+            Qs = [Q] * out_timesteps
+
+        # measure-variance:
+        if 'measure_covariance' in time_varying_kwargs and \
+                self.measure_covariance.expected_kwarg in time_varying_kwargs['measure_covariance']:
+            mvar_inputs = time_varying_kwargs['measure_covariance'][self.measure_covariance.expected_kwarg]
+            Rs: List[Tensor] = []
+            for t in range(out_timesteps):
+                Rs.append(self.measure_covariance(mvar_inputs[t]))
+        else:
+            mvar_input: Optional[Tensor] = None
+            if 'measure_covariance' in static_kwargs and \
+                    self.measure_covariance.expected_kwarg in static_kwargs['measure_covariance']:
+                mvar_input = static_kwargs['measure_covariance'].get(self.measure_covariance.expected_kwarg)
+            R = self.measure_covariance(mvar_input)
+            if len(R.shape) == 2:
+                R = R.expand(num_groups, -1, -1)
+            Rs = [R] * out_timesteps
+
+        # Transition and Measurement Mats:
+        base_F = torch.zeros(
+            (num_groups, self.state_rank, self.state_rank),
+            dtype=measure_scaling.dtype,
+            device=measure_scaling.device
+        )
+        base_H = torch.zeros(
+            (num_groups, len(self.measures), self.state_rank),
+            dtype=measure_scaling.dtype,
+            device=measure_scaling.device
+        )
+        for pid, process1 in self.processes.items():
+            p_tv_kwargs = time_varying_kwargs.get(pid)
+            p_static_kwargs = static_kwargs.get(pid)
+            _process_slice1 = slice(*self.process_to_slice[pid])
+
+            # static H:
+            if p_tv_kwargs is None or process1.h_kwarg not in p_tv_kwargs:
+                h_input = None if p_static_kwargs is None else p_static_kwargs.get(process1.h_kwarg)
+                ph = process1.h_forward(h_input)
+                base_H[:, self.measure_to_idx[process1.measure], _process_slice1] = ph
+
+            # static F:
+            if p_tv_kwargs is None or process1.f_kwarg not in p_tv_kwargs:
+                f_input = None if p_static_kwargs is None else p_static_kwargs.get(process1.h_kwarg)
+                pf = process1.f_forward(f_input)
+                base_F[:, _process_slice1, _process_slice1] = pf
+
+        Fs: List[Tensor] = []
+        Hs: List[Tensor] = []
+        for t in range(out_timesteps):
+            Ft = base_F.clone()
+            Ht = base_H.clone()
+            for pid, process2 in self.processes.items():
+                p_tv_kwargs = time_varying_kwargs.get(pid)
+                _process_slice2 = slice(*self.process_to_slice[pid])
+
+                # tv H:
+                if p_tv_kwargs is not None and process2.h_kwarg in p_tv_kwargs:
+                    ph = process2.h_forward(p_tv_kwargs[process2.h_kwarg][t])
+                    Ht[:, self.measure_to_idx[process2.measure], _process_slice2] = ph
+
+                # tv F:
+                if p_tv_kwargs is not None and process2.f_kwarg in p_tv_kwargs:
+                    pf = process2.f_forward(p_tv_kwargs[process2.f_kwarg][t])
+                    Ft[:, _process_slice2, _process_slice2] = pf
+            Fs.append(Ft)
+            Hs.append(Ht)
+        return Fs, Hs, Qs, Rs
+
     @torch.no_grad()
     @torch.jit.ignore()
     def simulate(self,
@@ -354,26 +452,20 @@ class KalmanFilter(nn.Module):
         :param num_sims: The number of state-trajectories to simulate.
         :param progress: Should a progress-bar be displayed? Requires `tqdm`.
         :param kwargs: Further arguments passed to the `processes`.
-        :return: A `Simulations` object with a `sample()` method.
+        :return: A :class:`Simulations` object with a :func:`Simulations.sample()` method.
         """
 
         design_kwargs = self._parse_design_kwargs(input=None, out_timesteps=out_timesteps, **kwargs)
-        design_cache = {}
 
         if initial_state is None:
             init_mean_kwargs = design_kwargs.pop('init_mean_kwargs')
             init_cov_kwargs = design_kwargs['static_kwargs'].pop('initial_covariance', {})
             if num_sims is None:
                 raise RuntimeError("Must pass `initial_state` or `num_sims`")
-            design_kwargs_t = self._get_design_kwargs_for_time(0, **design_kwargs)
-            *_, R = self.get_design_mats(
-                num_groups=num_sims, design_kwargs=design_kwargs_t, cache=design_cache
-            )
             mean, cov = self.get_initial_state(
                 input=torch.zeros((num_sims, len(self.measures))),
                 init_mean_kwargs=init_mean_kwargs,
-                init_cov_kwargs=init_cov_kwargs,
-                measure_cov=R
+                init_cov_kwargs=init_cov_kwargs
             )
         else:
             if num_sims is not None:
@@ -391,21 +483,15 @@ class KalmanFilter(nn.Module):
                     progress = lambda x: x
             times = progress(times)
 
+        Fs, Hs, Qs, Rs = self.build_design_mats(num_groups=num_sims, out_timesteps=out_timesteps, **design_kwargs)
+
         dist_cls = self.kf_step.get_distribution()
 
         means: List[Tensor] = []
-        Hs: List[Tensor] = []
-        Rs: List[Tensor] = []
         for t in times:
             mean = dist_cls(mean, cov).rsample()
-            design_kwargs_t = self._get_design_kwargs_for_time(t, **design_kwargs)
-            F, H, Q, R = self.get_design_mats(
-                num_groups=num_sims, design_kwargs=design_kwargs_t, cache=design_cache
-            )
-            mean, cov = self.kf_step.predict(mean, .0001 * torch.eye(mean.shape[-1]), F=F, Q=Q)
-            means += [mean]
-            Rs += [R]
-            Hs += [H]
+            mean, cov = self.kf_step.predict(mean, .0001 * torch.eye(mean.shape[-1]), F=Fs[t], Q=Qs[t])
+            means.append(mean)
 
         return Simulations(torch.stack(means, 1), H=torch.stack(Hs, 1), R=torch.stack(Rs, 1), kalman_filter=self)
 
@@ -416,20 +502,18 @@ class KalmanFilter(nn.Module):
         init_mean_kwargs = defaultdict(dict)
         unused = set(kwargs)
         kwargs.update(input=input, current_timestep=torch.tensor(list(range(out_timesteps))).view(1, -1, 1))
-        for submodule_nm, submodule in list(self.named_processes()) + list(self.named_covariances()):
-            for found_key, key_name, key_type, value in submodule.get_kwargs(kwargs):
+        for submodule_nm, submodule in self.named_processes():
+            for found_key, key_name, value in submodule.get_init_kwargs(kwargs):
                 unused.discard(found_key)
-                if key_type == 'init_mean':
-                    init_mean_kwargs[submodule_nm][key_name] = value
-                elif key_type == 'time_varying':
+                init_mean_kwargs[submodule_nm][key_name] = value
+        for submodule_nm, submodule in list(self.named_processes()) + list(self.named_covariances()):
+            for found_key, key_name, value in submodule.get_kwargs(kwargs):
+                unused.discard(found_key)
+                if value is not None and len(value.shape) == 3:
                     time_varying_kwargs[submodule_nm][key_name] = value.unbind(1)
-                elif key_type == 'static':
+                elif value is not None:
+                    assert len(value.shape) <= 2, f"'{found_key}' has unexpected ndim {len(value.shape)}, expected <= 3"
                     static_kwargs[submodule_nm][key_name] = value
-                else:
-                    raise RuntimeError(
-                        f"'{submodule_nm}' gave unknown key_type {key_type}; expected 'init_mean', 'time_varying', "
-                        f"or 'static'"
-                    )
 
         if unused:
             warn(f"There are unused keyword arguments:\n{unused}")
@@ -439,138 +523,48 @@ class KalmanFilter(nn.Module):
             'init_mean_kwargs': dict(init_mean_kwargs)
         }
 
-    def _get_design_kwargs_for_time(
-            self,
-            time: int,
-            static_kwargs: Dict[str, Dict[str, Tensor]],
-            time_varying_kwargs: Dict[str, Dict[str, List[Tensor]]]
-    ) -> Dict[str, Dict[str, Tensor]]:
-        design_kwargs = static_kwargs.copy()
-        for id_, id_tv_kwargs in time_varying_kwargs.items():
-            if id_ not in design_kwargs.keys():
-                design_kwargs[id_] = {}
-            else:
-                design_kwargs[id_] = design_kwargs[id_].copy()
-            for k, v in id_tv_kwargs.items():
-                design_kwargs[id_][k] = v[time]
-        return design_kwargs
-
     def get_initial_state(self,
                           input: Tensor,
                           init_mean_kwargs: Dict[str, Dict[str, Tensor]],
-                          init_cov_kwargs: Dict[str, Tensor],
-                          measure_cov: Tensor) -> Tuple[Tensor, Tensor]:
+                          init_cov_kwargs: Dict[str, Tensor]) -> Tuple[Tensor, Tensor]:
         num_groups = input.shape[0]
 
-        measure_scaling = self._get_measure_scaling(measure_cov)
+        measure_scaling = self._get_measure_scaling()
 
         # initial state mean:
         mean = torch.zeros(num_groups, self.state_rank, dtype=measure_scaling.dtype, device=measure_scaling.device)
         for pid, p in self.processes.items():
             _process_slice = slice(*self.process_to_slice[pid])
-            mean[:, _process_slice] = p.get_initial_state_mean(init_mean_kwargs.get(pid, {}))
+            if p.init_mean_kwarg is None:
+                pinit_input = None
+            else:
+                pinit_input = init_mean_kwargs.get(pid, {}).get(p.init_mean_kwarg)
+            mean[:, _process_slice] = p.get_initial_state_mean(pinit_input)
 
         # initial cov:
-        cov = self.initial_covariance(init_cov_kwargs, cache={})
+        if self.initial_covariance.expected_kwarg == '':
+            init_cov_input = None
+        else:
+            init_cov_input = init_cov_kwargs.get(self.initial_covariance.expected_kwarg)
+        cov = self.initial_covariance(init_cov_input)
         if len(cov.shape) == 2:
             cov = cov.expand(num_groups, -1, -1)
         diag_multi = torch.diag_embed(measure_scaling)
         cov = diag_multi @ cov @ diag_multi
+
         return mean, cov
 
-    def get_design_mats(self,
-                        num_groups: int,
-                        design_kwargs: Dict[str, Dict[str, Tensor]],
-                        cache: Optional[Dict[str, Tensor]] = None) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-
-        if cache is None:
-            cache = {}
-
-        # measure-variance:
-        R = self.measure_covariance(design_kwargs.get('measure_covariance', {}), cache=cache)
-        if torch.isnan(R).any():
-            raise RuntimeError(
-                "`nans` in measurement covariance; possible caused by nan-gradients in training. Check your inputs."
-            )
-        if len(R.shape) == 2:
-            R = R.expand(num_groups, -1, -1)
-
-        # process-variance:
-        Q_raw = self.process_covariance(design_kwargs.get('process_covariance', {}), cache=cache)
-        if len(Q_raw.shape) == 2:
-            Q_raw = Q_raw.expand(num_groups, -1, -1)
-
-        # cache the scaling operation, which is not cheap:
-        if self.process_covariance.time_varying_kwargs is None and self.measure_covariance.time_varying_kwargs is None:
-            if 'q_scaled' not in cache.keys():
-                measure_scaling = torch.diag_embed(self._get_measure_scaling(R))
-                cache['q_scaled'] = measure_scaling @ Q_raw @ measure_scaling
-            Q = cache['q_scaled']
-        else:
-            measure_scaling = torch.diag_embed(self._get_measure_scaling(R))
-            Q = measure_scaling @ Q_raw @ measure_scaling
-
-        _empty = ['_']
-        if 'base_F' not in cache:
-            cache['base_F'] = \
-                torch.zeros((num_groups, self.state_rank, self.state_rank), dtype=R.dtype, device=R.device)
-            for pid, process in self.processes.items():
-                tv_kwargs = _empty
-                if process.time_varying_kwargs is not None:
-                    tv_kwargs = process.time_varying_kwargs
-                if process.f_kwarg not in tv_kwargs:
-                    _process_slice = slice(*self.process_to_slice[pid])
-                    pf = process.f_forward(design_kwargs.get(pid, {}), cache=cache)
-                    if torch.isnan(pf).any():
-                        raise RuntimeError(f"{process.id} produced F with nans")
-                    cache['base_F'][:, _process_slice, _process_slice] = pf
-
-        if 'base_H' not in cache:
-            cache['base_H'] = \
-                torch.zeros((num_groups, len(self.measures), self.state_rank), dtype=R.dtype, device=R.device)
-            for pid, process in self.processes.items():
-                tv_kwargs = _empty
-                if process.time_varying_kwargs is not None:
-                    tv_kwargs = process.time_varying_kwargs
-                if process.h_kwarg not in tv_kwargs:
-                    _process_slice = slice(*self.process_to_slice[pid])
-                    ph = process.h_forward(design_kwargs.get(pid, {}), cache=cache)
-                    if torch.isnan(ph).any():
-                        raise RuntimeError(f"{process.id} produced H with nans")
-                    cache['base_H'][:, self.measure_to_idx[process.measure], _process_slice] = ph
-
-        H = cache['base_H'].clone()
-        F = cache['base_F'].clone()
-        for pid, process in self.processes.items():
-            if process.time_varying_kwargs is not None:
-                _process_slice = slice(*self.process_to_slice[pid])
-                if process.h_kwarg in process.time_varying_kwargs:
-                    ph = process.h_forward(design_kwargs.get(pid, {}), cache=cache)
-                    if torch.isnan(ph).any():
-                        raise RuntimeError(f"{process.id} produced H with nans")
-                    H[:, self.measure_to_idx[process.measure], _process_slice] = ph
-
-                if process.f_kwarg in process.time_varying_kwargs:
-                    pf = process.f_forward(design_kwargs.get(pid, {}), cache=cache)
-                    if torch.isnan(pf).any():
-                        raise RuntimeError(f"{process.id} produced F with nans")
-                    F[:, _process_slice, _process_slice] = pf
-
-        return F, H, Q, R
-
-    def _get_measure_scaling(self, measure_cov: Tensor) -> Tensor:
+    def _get_measure_scaling(self) -> Tensor:
+        mcov = self.measure_covariance(None, _ignore_input=True)
         if self._scale_by_measure_var:
-            measure_var = measure_cov.diagonal(dim1=-2, dim2=-1)
-            multi = torch.zeros(measure_cov.shape[0:-2] + (self.state_rank,),
-                                dtype=measure_cov.dtype, device=measure_cov.device)
+            measure_var = mcov.diagonal(dim1=-2, dim2=-1)
+            multi = torch.zeros(mcov.shape[0:-2] + (self.state_rank,), dtype=mcov.dtype, device=mcov.device)
             for pid, process in self.processes.items():
                 pidx = self.process_to_slice[pid]
                 multi[..., slice(*pidx)] = measure_var[..., self.measure_to_idx[process.measure]].sqrt().unsqueeze(-1)
             assert (multi > 0).all()
         else:
-            multi = torch.ones(
-                measure_cov.shape[0:-2] + (self.state_rank,), dtype=measure_cov.dtype, device=measure_cov.device
-            )
+            multi = torch.ones((self.state_rank,), dtype=mcov.dtype, device=mcov.device)
         return multi
 
     def __repr__(self) -> str:
