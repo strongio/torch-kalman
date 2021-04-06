@@ -1,4 +1,4 @@
-from typing import Tuple, Type
+from typing import Tuple, Type, Final
 
 import torch
 from torch import nn, Tensor
@@ -10,7 +10,7 @@ class GaussianStep(nn.Module):
     Used internally by `KalmanFilter` to apply the kalman-filtering algorithm. Subclasses can implement additional
     logic such as outlier-rejection, censoring, etc.
     """
-    use_stable_cov_update = True
+    use_stable_cov_update: Final[bool] = True
 
     # this would ideally be a class-attribute but torch.jit.trace strips them
     @torch.jit.ignore()
