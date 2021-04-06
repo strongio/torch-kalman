@@ -6,6 +6,7 @@ import torch
 from torch import nn, Tensor
 
 import numpy as np
+
 from torchcast.internals.utils import get_nan_groups, is_near_zero
 
 from torchcast.utils.data import TimeSeriesDataset
@@ -28,7 +29,11 @@ class Predictions(nn.Module):
                  kalman_filter: Union['KalmanFilter', dict]):
         super().__init__()
         self.state_means = state_means
+        if torch.isnan(self.state_means).any():
+            raise ValueError("`nans` in `state_means`")
         self.state_covs = state_covs
+        if torch.isnan(self.state_covs).any():
+            raise ValueError("`nans` in `state_covs`")
         self.H = H
         self.R = R
 
@@ -146,9 +151,12 @@ class Predictions(nn.Module):
                     H=H_flat[mask1d]
                 )
                 gt_obs = obs_flat[mask1d]
-            lp_flat[gt_idx] = self.distribution_cls(gt_means_flat, gt_covs_flat).log_prob(gt_obs)
+            lp_flat[gt_idx] = self._log_prob(gt_obs, gt_means_flat, gt_covs_flat)
 
         return lp_flat.view(obs.shape[0:2])
+
+    def _log_prob(self, obs: Tensor, means: Tensor, covs: Tensor):
+        return self.distribution_cls(means, covs, validate_args=False).log_prob(obs)
 
     def to_dataframe(self,
                      dataset: Union[TimeSeriesDataset, dict],
