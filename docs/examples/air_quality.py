@@ -107,7 +107,7 @@ print(forecast.plot(df_forecast, max_num_groups=3, split_dt=SPLIT_DT))
 # #### Evaluating Performance: Expanding Window
 #
 #
-# To evaluate our forecasts, we will not use the long-range forecasts above. Instead, we will use an [expanding window](https://eng.uber.com/forecasting-introduction/) approach to evaluate a shorter forecast horizon. In this approach, we generate N-step-ahead forecasts at every timepoint:
+# To evaluate our forecasts, we will not use the long-range forecasts above. Instead, we will use an [expanding window](https://eng.uber.com/forecasting-introduction#:~:text=Comparing) approach to evaluate a shorter forecast horizon. In this approach, we generate N-step-ahead forecasts at every timepoint:
 #
 # ![title](expanding_window.png)
 #
@@ -224,3 +224,5 @@ df_multivariate_error.\
     merge(df_univariate_error, on=['station', 'validation']).\
     assign(error_diff = lambda df: df['error_x'] - df['error_y']).\
     boxplot('error_diff', by='validation')
+
+

@@ -86,11 +86,9 @@ kf_first = KalmanFilter(measures=dataset_train.measures[0], processes=processes)
 #
 # The `KalmanFilter` class provides a convenient `fit()` method that's useful for avoiding standard boilerplate for full-batch training:
 
-# %%time
 kf_first.fit(
     dataset_train.tensors[0], 
-    start_datetimes=dataset_train.start_datetimes, 
-    tol=.01
+    start_offsets=dataset_train.start_datetimes
 )
 
 # Calling `forward()` on our `KalmanFilter` produces a `Predictions` object. If you're writing your own training loop, you'd simply use the `log_prob()` method as the loss function:
@@ -98,7 +96,7 @@ kf_first.fit(
 # +
 pred = kf_first(
         dataset_train.tensors[0], 
-        start_datetimes=dataset_train.start_datetimes,
+        start_offsets=dataset_train.start_datetimes,
         out_timesteps=dataset_all.tensors[0].shape[1]
 )
 
@@ -127,6 +125,3 @@ print(pred.plot(df_pred.query("group=='Changping'"), split_dt=SPLIT_DT))
 # Finally you can produce dataframes that decompose the predictions into the underlying `processes` that produced them:
 
 pred.plot(pred.to_dataframe(dataset_all, type='components').query("group=='Changping'"), split_dt=SPLIT_DT)
-
-# +
-# TODO: links to more
