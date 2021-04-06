@@ -10,6 +10,7 @@ class GaussianStep(nn.Module):
     Used internally by `KalmanFilter` to apply the kalman-filtering algorithm. Subclasses can implement additional
     logic such as outlier-rejection, censoring, etc.
     """
+    use_stable_cov_update = True
 
     # this would ideally be a class-attribute but torch.jit.trace strips them
     @torch.jit.ignore()
@@ -73,15 +74,12 @@ class GaussianStep(nn.Module):
         return new_mean, new_cov
 
     def covariance_update(self, cov: Tensor, K: Tensor, H: Tensor, R: Tensor) -> Tensor:
-        """
-        "Joseph stabilized" covariance correction.
-        """
-        num_groups = cov.shape[0]
-        I = torch.eye(cov.shape[1], dtype=cov.dtype, device=cov.device).expand(num_groups, -1, -1)
-        p1 = I - K.matmul(H)
-        p2 = p1.matmul(cov).matmul(p1.permute(0, 2, 1))
-        p3 = K.matmul(R).matmul(K.permute(0, 2, 1))
-        return p2 + p3
+        I = torch.eye(cov.shape[1], dtype=cov.dtype, device=cov.device)[None, :, :]
+        ikh = I - K @ H
+        if self.use_stable_cov_update:
+            return ikh @ cov @ ikh.permute(0, 2, 1) + K @ R @ K.permute(0, 2, 1)
+        else:
+            return ikh @ cov
 
     def kalman_gain(self, cov: Tensor, H: Tensor, R: Tensor) -> Tensor:
         Ht = H.permute(0, 2, 1)
