@@ -155,7 +155,7 @@ class Predictions(nn.Module):
 
         return lp_flat.view(obs.shape[0:2])
 
-    def _log_prob(self, obs: Tensor, means: Tensor, covs: Tensor):
+    def _log_prob(self, obs: Tensor, means: Tensor, covs: Tensor) -> Tensor:
         return self.distribution_cls(means, covs, validate_args=False).log_prob(obs)
 
     def to_dataframe(self,

@@ -1,6 +1,7 @@
 from typing import Tuple, Sequence, List, Dict, Optional, Iterable
 
 import torch
+from numpy import ndarray
 
 from torch import nn, Tensor, jit
 from torchcast.internals.utils import get_owned_kwarg
@@ -8,8 +9,8 @@ from torchcast.internals.utils import get_owned_kwarg
 
 class Process(nn.Module):
     """
-    The Process is defined by the state-elements it generates predictions for. It generates three kinds of predictions:
-    (1) the initial state, (2) the observation matrix, (3) the transition matrix.
+    The Process is defined by the state-elements it generates predictions for. It generates two kinds of predictions:
+    (1) the observation matrix, (2) the transition matrix.
     """
 
     def __init__(self,
@@ -22,7 +23,6 @@ class Process(nn.Module):
                  f_modules: Optional[nn.ModuleDict] = None,
                  f_tensors: Optional[Dict[str, Tensor]] = None,
                  f_kwarg: str = '',
-                 init_mean_kwarg: Optional[str] = None,
                  no_pcov_state_elements: Optional[List[str]] = None,
                  no_icov_state_elements: Optional[List[str]] = None):
         """
@@ -44,7 +44,6 @@ class Process(nn.Module):
         a single call.
         :param f_tensors: A dictionary of tensors, specifying elements of the F-matrix. See `f_modules` for key format.
         :param f_kwarg: TODO
-        :param init_mean_kwarg: TODO
         :param no_pcov_state_elements: TODO
         :param no_icov_state_elements: TODO
         """
@@ -56,9 +55,6 @@ class Process(nn.Module):
         self.state_elements = state_elements
         self.se_to_idx = {se: i for i, se in enumerate(self.state_elements)}
         assert len(state_elements) == len(self.se_to_idx), f"state-elements are not unique:{state_elements}"
-
-        # the initial mean of the state elements
-        self.init_mean = nn.Parameter(.1 * torch.randn(len(self.state_elements)))
 
         # observation matrix:
         if (int(h_module is None) + int(h_tensor is None)) != 1:
@@ -82,21 +78,9 @@ class Process(nn.Module):
         # elements without initial covariance, defaults to none:
         self.no_icov_state_elements: Optional[List[str]] = no_icov_state_elements
 
-        #
-        self.init_mean_kwarg: Optional[str] = init_mean_kwarg
-
-    def get_initial_state_mean(self, input: Optional[Tensor] = None) -> Tensor:
-        # not used by base class:
-        assert input is None
-        # if child class adds state elements this is easy to overlook:
-        assert self.init_mean.shape[-1] == len(self.state_elements)
-        return self.init_mean
-
     @jit.ignore
-    def get_init_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, Tensor]]:
-        if self.init_mean_kwarg is not None:
-            found_key, value = get_owned_kwarg(self.id, self.init_mean_kwarg, kwargs)
-            yield found_key, self.init_mean_kwarg, torch.as_tensor(value)
+    def offset_initial_state(self, initial_state: Tensor, start_offsets: Optional[Sequence] = None) -> Tensor:
+        return initial_state
 
     @jit.ignore
     def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, Optional[Tensor]]]:

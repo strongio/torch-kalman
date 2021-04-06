@@ -127,7 +127,6 @@ class TestKalmanFilter(TestCase):
         _kwargs = torch_kf._parse_design_kwargs(
             input=data, out_timesteps=num_times, X=torch.randn(1, num_times, 3)
         )
-        _kwargs.pop('init_mean_kwargs')
         Fs, *_ = torch_kf.build_design_mats(**_kwargs, num_groups=1, out_timesteps=num_times)
         F = Fs[0][0]
 
@@ -156,14 +155,13 @@ class TestKalmanFilter(TestCase):
         expectedF = torch.tensor([[1., 1.], [0., 1.]])
         expectedH = torch.tensor([[1., 0.]])
         _kwargs = torch_kf._parse_design_kwargs(input=data, out_timesteps=num_times)
-        init_mean_kwargs = _kwargs.pop('init_mean_kwargs')
         F, H, Q, R = (_[0] for _ in torch_kf.build_design_mats(**_kwargs, num_groups=1, out_timesteps=num_times))
         assert torch.isclose(expectedF, F).all()
         assert torch.isclose(expectedH, H).all()
 
         # make filterpy kf:
         filter_kf = filterpy_KalmanFilter(dim_x=2, dim_z=1)
-        filter_kf.x, filter_kf.P = torch_kf.get_initial_state(data, init_mean_kwargs, {})
+        filter_kf.x, filter_kf.P = torch_kf._prepare_initial_state((None, None))
         filter_kf.x = filter_kf.x.detach().numpy().T
         filter_kf.P = filter_kf.P.detach().numpy().squeeze(0)
         filter_kf.Q = Q.numpy().squeeze(0)
@@ -215,7 +213,8 @@ class TestKalmanFilter(TestCase):
             measures=['y']
         )
         kf._scale_by_measure_var = False
-        kf.state_dict()['processes.lm.init_mean'][:] = torch.tensor([1.5, -0.5])
+
+        kf.state_dict()['initial_mean'][:] = torch.tensor([1.5, -0.5])
         kf.state_dict()['measure_covariance.cholesky_log_diag'][0] = np.log(.1 ** .5)
 
         num_times = 100
@@ -367,7 +366,7 @@ class TestKalmanFilter(TestCase):
         kf._scale_by_measure_var = False
         data = torch.arange(7).view(1, -1, 1)
         for init_state in [0., 1.]:
-            kf.state_dict()['processes.s1.init_mean'][:] = torch.ones(1) * init_state
+            kf.state_dict()['initial_mean'][:] = torch.ones(1) * init_state
             _state['call_counter'] = 0
             pred = kf(data)
             # make sure test was called each time:

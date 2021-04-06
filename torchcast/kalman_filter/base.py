@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Tuple, List, Optional, Sequence, Dict, Iterable, Callable
+from typing import Tuple, List, Optional, Sequence, Dict, Iterable, Callable, Union
 from warnings import warn
 
 import torch
@@ -66,6 +66,9 @@ class KalmanFilter(nn.Module):
             self.processes[p.id] = p
             self.process_to_slice[p.id] = (self.state_rank, self.state_rank + len(p.state_elements))
             self.state_rank += len(p.state_elements)
+
+        # the initial mean
+        self.initial_mean = torch.nn.Parameter(.1 * torch.randn(self.state_rank))
 
         # can disable for debugging/tests:
         self._scale_by_measure_var = True
@@ -215,8 +218,9 @@ class KalmanFilter(nn.Module):
     def forward(self,
                 input: Optional[Tensor],
                 n_step: int = 1,
+                start_offsets: Optional[Sequence] = None,
                 out_timesteps: Optional[int] = None,
-                initial_state: Optional[Tuple[Tensor, Tensor]] = None,
+                initial_state: Union[Tensor, Tuple[Optional[Tensor], Optional[Tensor]]] = (None, None),
                 every_step: bool = True,
                 **kwargs) -> Predictions:
         """
@@ -225,11 +229,17 @@ class KalmanFilter(nn.Module):
         :param input: A (group X time X measures) tensor. Optional if `initial_state` is specified.
         :param n_step: What is the horizon for the predictions output for each timepoint? Defaults to one-step-ahead
          predictions (i.e. n_step=1).
+        :param start_offsets: If your model includes seasonal processes, then these needs to know the start-time for
+         each group in ``input``. If you passed ``dt_unit`` when constructing those processes, then you should pass an
+         array datetimes here. Otherwise you can pass an array of integers (or leave `None` if there are no seasonal
+         processes).
         :param out_timesteps: The number of timesteps to produce in the output. This is useful when passing a tensor
          of predictors that goes later in time than the `input` tensor -- you can specify `out_timesteps=X.shape[1]` to
          get forecasts into this later time horizon.
-        :param initial_state: Optional, default is `None` (with the initial state being determined internally). Can
-         pass a `mean`, `cov` tuple from a previous call.
+        :param initial_state: The initial prediction for the state of the system: a tuple of tensors representing the
+         initial mean and covariance. Default is ``(self.initial_mean, self.initial_covariance()``. You can pass your
+         own for one or both of these, which can come from either a previous prediction or from a separate |nn.Module|
+         that predicts the initial state.
         :param every_step: By default, `n_step` ahead predictions will be generated at every timestep. If
          `every_step=False`, then these predictions will only be generated every `n_step` timesteps. For example, with
          hourly data, `n_step=24` and every_step=True, each timepoint would be a forecast generated with data 24-hours
@@ -246,6 +256,14 @@ class KalmanFilter(nn.Module):
         if out_timesteps is None and input is None:
             raise RuntimeError("If `input` is None must specify `out_timesteps`")
 
+        if isinstance(initial_state, Tensor):
+            initial_state = (initial_state, None)
+        initial_state = self._prepare_initial_state(
+            initial_state,
+            start_offsets=start_offsets,
+            num_groups=None if input is None else input.shape[0]
+        )
+
         means, covs, R, H = self._script_forward(
             input=input,
             initial_state=initial_state,
@@ -256,25 +274,57 @@ class KalmanFilter(nn.Module):
         )
         return Predictions(state_means=means, state_covs=covs, R=R, H=H, kalman_filter=self)
 
+    @torch.jit.ignore
+    def _prepare_initial_state(self,
+                               initial_state,
+                               start_offsets: Optional[Sequence] = None,
+                               num_groups: Optional[int] = None) -> Tuple[Tensor, Tensor]:
+        init_mean, init_cov = initial_state
+        if init_mean is None:
+            init_mean = self.initial_mean[None, :]
+        assert len(init_mean.shape) == 2
+
+        if init_cov is None:
+            # TODO: what about predicting with kwargs?
+            init_cov = self.initial_covariance()[None, :]
+
+        if num_groups is None and start_offsets is not None:
+            num_groups = len(start_offsets)
+
+        if num_groups is not None:
+            assert init_mean.shape[0] in (num_groups, 1)
+            init_mean = init_mean.expand(num_groups, -1)
+            init_cov = init_cov.expand(num_groups, -1, -1)
+
+        measure_scaling = torch.diag_embed(self._get_measure_scaling())
+        init_cov = measure_scaling @ init_cov @ measure_scaling
+
+        # seasonal processes need to offset the initial mean:
+        init_mean_offset = []
+        for pid, p in self.named_processes():
+            _process_slice = slice(*self.process_to_slice[pid])
+            init_mean_offset.append(p.offset_initial_state(init_mean[:, _process_slice], start_offsets))
+        init_mean_offset = torch.cat(init_mean_offset, 1)
+
+        return init_mean_offset, init_cov
+
     @torch.jit.export
     def _script_forward(self,
                         input: Optional[Tensor],
                         static_kwargs: Dict[str, Dict[str, Tensor]],
                         time_varying_kwargs: Dict[str, Dict[str, List[Tensor]]],
-                        init_mean_kwargs: Dict[str, Dict[str, Tensor]],
+                        initial_state: Tuple[Tensor, Tensor],
                         n_step: int = 1,
                         out_timesteps: Optional[int] = None,
-                        initial_state: Optional[Tuple[Tensor, Tensor]] = None,
                         every_step: bool = True) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         """
         :param input: A (group X time X measures) tensor. Optional if `initial_state` is specified.
         :param static_kwargs: Keyword-arguments to the Processes which do not vary over time.
         :param time_varying_kwargs: Keyword-arguments to the Process which do vary over time. At each timestep, each
         kwarg gets sliced for that timestep.
-        :param init_mean_kwargs: Keyword-arguments passed to `get_initial_state`
+        :param initial_state: A (mean, cov) tuple to use as the initial state.
         :param n_step: What is the horizon for predictions? Defaults to one-step-ahead (i.e. n_step=1).
         :param out_timesteps: The number of timesteps in the output. Might be longer than input if forecasting.
-        :param initial_state: A (mean, cov) tuple to use at the initial state; otherwise `get_initial_state` is called.
         :param every_step: Experimental. When n_step>1, we can generate these n-step-ahead predictions at every
          timestep (e.g. 24-hour-ahead predictions every hour), in which case we'd save the 24-step-ahead prediction.
          Alternatively, we could generate 24-hour-ahead predictions at every 24th hour, in which case we'd save
@@ -284,37 +334,34 @@ class KalmanFilter(nn.Module):
         """
         assert n_step > 0
 
-        init_cov_kwargs = static_kwargs.pop('initial_covariance', {})
+        mean1step, cov1step = initial_state
 
         if input is None:
             if out_timesteps is None:
                 raise RuntimeError("If `input` is None must pass `out_timesteps`")
-            if initial_state is None:
-                raise RuntimeError("If `input` is None must pass `initial_state`")
             inputs = []
+
+            num_groups = mean1step.shape[0]
         else:
             if len(input.shape) != 3:
                 raise ValueError(f"Expected len(input.shape) == 3 (group,time,measure)")
             if input.shape[-1] != len(self.measures):
                 raise ValueError(f"Expected input.shape[-1] == {len(self.measures)} (len(self.measures))")
 
+            num_groups = input.shape[0]
+            if mean1step.shape[0] == 1:
+                mean1step = mean1step.expand(num_groups, -1)
+            if cov1step.shape[0] == 1:
+                cov1step = cov1step.expand(num_groups, -1, -1)
+
             inputs = input.unbind(1)
             if out_timesteps is None:
                 out_timesteps = len(inputs)
 
-            if initial_state is None:
-                initial_state = self.get_initial_state(
-                    input=input,
-                    init_mean_kwargs=init_mean_kwargs,
-                    init_cov_kwargs=init_cov_kwargs
-                )
-
-        mean1step, cov1step = initial_state
-
         Fs, Hs, Qs, Rs = self.build_design_mats(
             static_kwargs=static_kwargs,
             time_varying_kwargs=time_varying_kwargs,
-            num_groups=mean1step.shape[0],
+            num_groups=num_groups,
             out_timesteps=out_timesteps
         )
 
@@ -442,7 +489,8 @@ class KalmanFilter(nn.Module):
     @torch.jit.ignore()
     def simulate(self,
                  out_timesteps: int,
-                 initial_state: Optional[Tuple[Tensor, Tensor]] = None,
+                 initial_state: Tuple[Optional[Tensor], Optional[Tensor]] = (None, None),
+                 start_offsets: Optional[Sequence] = None,
                  num_sims: Optional[int] = None,
                  progress: bool = False,
                  **kwargs):
@@ -451,6 +499,10 @@ class KalmanFilter(nn.Module):
 
         :param out_timesteps: The number of timesteps to generate in the output.
         :param initial_state: The initial state of the system: a tuple of `mean`, `cov`.
+        :param start_offsets: If your model includes seasonal processes, then these needs to know the start-time for
+         each group in ``input``. If you passed ``dt_unit`` when constructing those processes, then you should pass an
+         array datetimes here. Otherwise you can pass an array of integers (or leave `None` if there are no seasonal
+         processes).
         :param num_sims: The number of state-trajectories to simulate.
         :param progress: Should a progress-bar be displayed? Requires `tqdm`.
         :param kwargs: Further arguments passed to the `processes`.
@@ -459,20 +511,7 @@ class KalmanFilter(nn.Module):
 
         design_kwargs = self._parse_design_kwargs(input=None, out_timesteps=out_timesteps, **kwargs)
 
-        if initial_state is None:
-            init_mean_kwargs = design_kwargs.pop('init_mean_kwargs')
-            init_cov_kwargs = design_kwargs['static_kwargs'].pop('initial_covariance', {})
-            if num_sims is None:
-                raise RuntimeError("Must pass `initial_state` or `num_sims`")
-            mean, cov = self.get_initial_state(
-                input=torch.zeros((num_sims, len(self.measures))),
-                init_mean_kwargs=init_mean_kwargs,
-                init_cov_kwargs=init_cov_kwargs
-            )
-        else:
-            if num_sims is not None:
-                raise RuntimeError("Cannot pass both `num_sims` and `initial_state`")
-            mean, cov = initial_state
+        mean, cov = self._prepare_initial_state(initial_state, start_offsets=start_offsets, num_groups=num_sims)
 
         times = range(out_timesteps)
         if progress:
@@ -501,13 +540,8 @@ class KalmanFilter(nn.Module):
     def _parse_design_kwargs(self, input: Optional[Tensor], out_timesteps: int, **kwargs) -> Dict[str, dict]:
         static_kwargs = defaultdict(dict)
         time_varying_kwargs = defaultdict(dict)
-        init_mean_kwargs = defaultdict(dict)
         unused = set(kwargs)
         kwargs.update(input=input, current_timestep=torch.tensor(list(range(out_timesteps))).view(1, -1, 1))
-        for submodule_nm, submodule in self.named_processes():
-            for found_key, key_name, value in submodule.get_init_kwargs(kwargs):
-                unused.discard(found_key)
-                init_mean_kwargs[submodule_nm][key_name] = value
         for submodule_nm, submodule in list(self.named_processes()) + list(self.named_covariances()):
             for found_key, key_name, value in submodule.get_kwargs(kwargs):
                 unused.discard(found_key)
@@ -521,40 +555,8 @@ class KalmanFilter(nn.Module):
             warn(f"There are unused keyword arguments:\n{unused}")
         return {
             'static_kwargs': dict(static_kwargs),
-            'time_varying_kwargs': dict(time_varying_kwargs),
-            'init_mean_kwargs': dict(init_mean_kwargs)
+            'time_varying_kwargs': dict(time_varying_kwargs)
         }
-
-    def get_initial_state(self,
-                          input: Tensor,
-                          init_mean_kwargs: Dict[str, Dict[str, Tensor]],
-                          init_cov_kwargs: Dict[str, Tensor]) -> Tuple[Tensor, Tensor]:
-        num_groups = input.shape[0]
-
-        measure_scaling = self._get_measure_scaling()
-
-        # initial state mean:
-        mean = torch.zeros(num_groups, self.state_rank, dtype=measure_scaling.dtype, device=measure_scaling.device)
-        for pid, p in self.processes.items():
-            _process_slice = slice(*self.process_to_slice[pid])
-            if p.init_mean_kwarg is None:
-                pinit_input = None
-            else:
-                pinit_input = init_mean_kwargs.get(pid, {}).get(p.init_mean_kwarg)
-            mean[:, _process_slice] = p.get_initial_state_mean(pinit_input)
-
-        # initial cov:
-        if self.initial_covariance.expected_kwarg == '':
-            init_cov_input = None
-        else:
-            init_cov_input = init_cov_kwargs.get(self.initial_covariance.expected_kwarg)
-        cov = self.initial_covariance(init_cov_input)
-        if len(cov.shape) == 2:
-            cov = cov.expand(num_groups, -1, -1)
-        diag_multi = torch.diag_embed(measure_scaling)
-        cov = diag_multi @ cov @ diag_multi
-
-        return mean, cov
 
     def _get_measure_scaling(self) -> Tensor:
         mcov = self.measure_covariance(None, _ignore_input=True)

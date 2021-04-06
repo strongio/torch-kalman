@@ -21,7 +21,7 @@ class TestProcess(TestCase):
             measures=['y']
         )
         kf._scale_by_measure_var = False
-        kf.state_dict()['processes.day_of_week.init_mean'][:] = torch.tensor([1., 0., 0., 0., 0., 0.])
+        kf.state_dict()['initial_mean'][:] = torch.tensor([1., 0., 0., 0., 0., 0.])
         kf.state_dict()['measure_covariance.cholesky_log_diag'] -= 2
         pred = kf(data, start_datetimes=start_datetimes)
         for g in range(6):

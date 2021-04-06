@@ -37,23 +37,13 @@ class _Season:
         return int(dt_unit_ns)
 
     @jit.ignore
-    def _get_offsets(self, start_datetimes: np.ndarray) -> np.ndarray:
-        assert self.dt_unit_ns is not None
-        ns_since_epoch = (start_datetimes.astype("datetime64[ns]") - np.datetime64(0, 'ns')).view('int64')
-        offsets = ns_since_epoch % (self.period * self.dt_unit_ns) / self.dt_unit_ns
-        return torch.as_tensor(offsets.astype('float32')).view(-1, 1, 1)
-
-    @jit.ignore
-    def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, str, Tensor]]:
+    def _standardize_offsets(self, offsets: Sequence) -> np.ndarray:
         if self.dt_unit_ns is None:
-            offsets = torch.zeros(1)
-        else:
-            offsets = self._get_offsets(kwargs['start_datetimes'])
-        kwargs['current_times'] = offsets + kwargs['current_timestep']
-        for found_key, key_name, value in Process.get_kwargs(self, kwargs):
-            if found_key == 'current_times' and self.dt_unit_ns is not None:
-                found_key = 'start_datetimes'
-            yield found_key, key_name, value
+            return offsets
+        offsets = np.asanyarray(offsets, dtype='datetime64[ns]')
+        ns_since_epoch = (offsets - np.datetime64(0, 'ns')).view('int64')
+        offsets = ns_since_epoch % (self.period * self.dt_unit_ns) / self.dt_unit_ns # todo: cancels out?
+        return torch.as_tensor(offsets.astype('float32')).view(-1, 1, 1)
 
 
 class FourierSeason(_Season, _RegressionBase):
@@ -117,6 +107,15 @@ class FourierSeason(_Season, _RegressionBase):
         )
         self.h_kwarg = 'current_times'
 
+    @jit.ignore
+    def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, str, Tensor]]:
+        offsets = self._standardize_offsets(kwargs['start_datetimes'])
+        kwargs['current_times'] = offsets + kwargs['current_timestep']
+        for found_key, key_name, value in Process.get_kwargs(self, kwargs):
+            if found_key == 'current_times' and self.dt_unit_ns is not None:
+                found_key = 'start_datetimes'
+            yield found_key, key_name, value
+
 
 class Season(_Season, Process):
     """
@@ -172,7 +171,6 @@ class Season(_Season, Process):
             h_tensor=torch.tensor(h_tensor),
             measure=measure,
             no_pcov_state_elements=[] if process_variance else state_elements,
-            init_mean_kwarg='start_offsets',
             f_kwarg=decay_kwarg
         )
 
@@ -224,34 +222,24 @@ class Season(_Season, Process):
             return state_elements, f_tensors, h_tensor
 
     @jit.ignore
-    def get_init_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, Tensor]]:
-        if self.dt_unit_ns is None:
-            offsets = torch.zeros(1)
-        else:
-            offsets = self._get_offsets(kwargs['start_datetimes'])
-        kwargs['start_offsets'] = offsets
-        for found_key, key_name, value in Process.get_init_kwargs(self, kwargs):
-            if found_key == 'start_offsets' and self.dt_unit_ns is not None:
-                found_key = 'start_datetimes'
-            yield found_key, key_name, value
+    def offset_initial_state(self, initial_state: Tensor, start_offsets: Optional[Sequence] = None) -> Tensor:
+        if start_offsets is None:
+            if self.dt_unit_ns is None:
+                return initial_state
+            raise RuntimeError(f"Process '{self.id}' has `dt_unit`, so need to pass datetimes for `start_offsets`")
 
-    def get_initial_state_mean(self, input: Optional[Tensor] = None) -> Tensor:
-        assert input is not None
-        if self.dt_unit_ns is None:
-            return self.init_mean
+        start_offsets = self._standardize_offsets(start_offsets)
+        num_groups = len(start_offsets)
+        assert initial_state.shape[0] == num_groups
 
-        start_offsets = input
-        num_groups = start_offsets.shape[0]
-
-        F = self.f_forward(None)
-        if F.shape[0] != num_groups:
-            F = F.expand(num_groups, -1, -1)
+        # TODO: incompatible with predicting decay?
+        F = self.f_forward(None).expand(num_groups, -1, -1)
 
         # TODO: this is imprecise for non-integer periods
         start_offsets = start_offsets.round()
 
         means = []
-        mean = self.init_mean.expand(num_groups, -1).unsqueeze(-1)
+        mean = initial_state.unsqueeze(-1)
         for i in range(int(self.period) + 1):
             means.append(mean.squeeze(-1))
             mean = F @ mean
@@ -291,8 +279,6 @@ class DiscreteSeason(Process):
             h_tensor=torch.tensor([1.] + [0.] * (num_seasons - 1)),
             f_modules=f_modules,
             f_kwarg='current_timestep',
-            init_mean_kwargs=['start_datetimes'],
-            time_varying_kwargs=['current_timestep'],
             no_pcov_state_elements=[] if process_variance else state_elements
         )
 

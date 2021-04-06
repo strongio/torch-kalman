@@ -98,8 +98,6 @@ class TestTraining(unittest.TestCase):
         X = torch.randn((num_groups, num_times, 5))
         kf_generator = _make_kf()
         with torch.no_grad():
-            for i in range(ndim):
-                kf_generator.state_dict()[f'processes.lm{i + 1}.init_mean'][:] += torch.randn(5)
             sim = kf_generator.simulate(out_timesteps=num_times, num_sims=num_groups, X=X)
             y = sim.sample()
         assert not y.requires_grad
@@ -239,7 +237,7 @@ class TestTraining(unittest.TestCase):
                 optimizer.zero_grad()
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
-                    pred = kf(dataset.tensors[0], start_datetimes=dataset.start_datetimes)
+                    pred = kf(dataset.tensors[0], start_offsets=dataset.start_datetimes)
                 loss = -pred.log_prob(dataset.tensors[0]).mean()
                 loss.backward()
                 return loss
@@ -264,6 +262,6 @@ class TestTraining(unittest.TestCase):
             raise RuntimeError("MAX_TRIES exceeded")
 
         with torch.no_grad():
-            pred = kf(dataset.tensors[0], start_datetimes=dataset.start_datetimes)
+            pred = kf(dataset.tensors[0], start_offsets=dataset.start_datetimes)
         df_pred = pred.to_dataframe(dataset)
         self.assertLess(np.mean((df_pred['actual'] - df_pred['mean']) ** 2), .05)

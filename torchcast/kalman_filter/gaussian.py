@@ -38,6 +38,13 @@ class GaussianStep(nn.Module):
         assert len(input.shape) > 1
         if len(input.shape) != 2:
             raise NotImplementedError
+        num_groups = input.shape[0]
+        if mean.shape[0] != num_groups:
+            assert mean.shape[0] == 1
+            mean = mean.expand(num_groups, -1)
+        if cov.shape[0] != num_groups:
+            assert cov.shape[0] == 1
+            cov = cov.expand(num_groups, -1, -1)
 
         isnan = torch.isnan(input)
         if isnan.all():
