@@ -74,7 +74,7 @@ kf_pm_univariate = KalmanFilter(
 # fit:
 kf_pm_univariate.fit(
     dataset_pm_univariate_train.tensors[0],
-    start_datetimes=dataset_pm_univariate_train.start_datetimes
+    start_offsets=dataset_pm_univariate_train.start_datetimes
 )
 
 
@@ -96,7 +96,7 @@ def inverse_transform(df):
 # generate forecasts:
 forecast = kf_pm_univariate(
         dataset_pm_univariate_train.tensors[0],
-        start_datetimes=dataset_pm_univariate_train.start_datetimes,
+        start_offsets=dataset_pm_univariate_train.start_datetimes,
         out_timesteps=dataset_pm_univariate.tensors[0].shape[1]
 )
 
@@ -118,7 +118,7 @@ print(forecast.plot(df_forecast, max_num_groups=3, split_dt=SPLIT_DT))
 with torch.no_grad():
     pred_4step = kf_pm_univariate(
         dataset_pm_univariate.tensors[0],
-        start_datetimes=dataset_pm_univariate.start_datetimes,
+        start_offsets=dataset_pm_univariate.start_datetimes,
         n_step=4
     )
 
@@ -165,7 +165,7 @@ kf_pm_multivariate = KalmanFilter(measures=dataset_pm_multivariate.measures[0], 
 # fit:
 kf_pm_multivariate.fit(
     dataset_pm_multivariate_train.tensors[0],
-    start_datetimes=dataset_pm_multivariate_train.start_datetimes
+    start_offsets=dataset_pm_multivariate_train.start_datetimes
 )
 # -
 
@@ -174,7 +174,7 @@ kf_pm_multivariate.fit(
 with torch.no_grad():
     pred_4step = kf_pm_multivariate(
         dataset_pm_multivariate.tensors[0],
-        start_datetimes=dataset_pm_multivariate.start_datetimes,
+        start_offsets=dataset_pm_multivariate.start_datetimes,
         n_step=4
     )
 pred_4step.means.shape
