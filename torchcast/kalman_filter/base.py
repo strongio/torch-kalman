@@ -162,7 +162,8 @@ class KalmanFilter(nn.Module):
                 hits[process.measure].append(pid)
                 measure_idx = list(self.measures).index(process.measure)
                 with torch.no_grad():
-                    process.init_mean[0] = y[:, 0, measure_idx].mean()
+                    t0 = y[:, 0, measure_idx]
+                    process.init_mean[0] = t0[~torch.isnan(t0) & ~torch.isinf(t0)].mean()
 
         for measure, procs in hits.items():
             if len(procs) > 1:
