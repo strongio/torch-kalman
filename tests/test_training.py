@@ -206,14 +206,16 @@ class TestTraining(unittest.TestCase):
                            'cos': np.cos(2. * 3.1415 * np.arange(0., 5 * 7.) / 7.)})
         df['y'] = df['cos'].where(df.index < 12, other=df['sin'])
 
+        # create multiple groups. make sure we're testing the `offset_initial_mean`
         df = pd.concat([
             df.assign(
                 observed=lambda df: df['y'] + np.random.normal(scale=.2, size=len(df.index)),
                 group=str(i + 1),
-                time=lambda df: np.array(df.index.tolist(), dtype='datetime64[D]') + np.random.randint(low=0, high=4)
-            )
+                time=lambda df: np.array(df.index.tolist(), dtype='datetime64[D]')
+            ).iloc[i:, :]
             for i in range(10)
-        ])
+        ]).reset_index(drop=True)
+
         dataset = TimeSeriesDataset.from_dataframe(
             df,
             group_colname='group',
