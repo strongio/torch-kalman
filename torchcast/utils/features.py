@@ -21,7 +21,7 @@ def add_season_features(data: 'DataFrame',
     from pandas import concat
 
     if time_colname is None:
-        for col in ('datetime', 'date', 'timestamp', 'time'):
+        for col in ('datetime', 'date', 'timestamp', 'time', 'dt'):
             if col in data.columns:
                 time_colname = col
                 break

@@ -14,11 +14,8 @@ from torchcast.utils.data import TimeSeriesDataset
 
 class Predictions(nn.Module):
     """
-    The output of the KalmanFilter forward pass, containing the underlying state means and covariances, as well as the
-    predicted observations and covariances.
-
-    Contains methods for evaluating the predictions (log_prob), converting them into dataframes (to_dataframe), and
-    forecasting beyond these predictions (forecast).
+    The output of the :class:`.KalmanFilter` forward pass, containing the underlying state means and covariances, as
+    well as the predicted observations and covariances.
     """
 
     def __init__(self,
@@ -64,17 +61,18 @@ class Predictions(nn.Module):
         For each group, get the state (tuple of (mean, cov)) for a timepoint. This is often useful since predictions
         are right-aligned and padded, so that the final prediction for each group is arbitrarily padded and does not
         correspond to a timepoint of interest -- e.g. for forecasting (i.e., calling
-        `KalmanFilter.forward(initial_state=get_state_at_times(...))`).
+        ``KalmanFilter.forward(initial_state=get_state_at_times(...))``).
 
-        :param times: Either (a) indices corresponding to each group (e.g. `times[0]` corresponds to the timestep to
-        take for the 0th group, `times[1]` the timestep to take for the 1th group, etc.) or (b) if `start_times` is
-        passed, an array of datetimes. Will also support a single datetime.
-        :param start_times: If `times` is an array of datetimes, must also pass `start_datetimes`, i.e. the datetimes
-        at which each group started.
-        :param dt_unit: If `times` is an array of datetimes, must also pass `dt_unit`, i.e. the a np.timedelta64 that
-        indicates how much time passes at each timestep. (times-start_times)/dt_unit should be an array of integers.
+        :param times: Either (a) indices corresponding to each group (e.g. ``times[0]`` corresponds to the timestep to
+         take for the 0th group, ``times[1]`` the timestep to take for the 1th group, etc.) or (b) if ``start_times``
+         is passed, an array of datetimes. Will also support a single datetime.
+        :param start_times: If ``times`` is an array of datetimes, must also pass ``start_datetimes``, i.e. the
+         datetimes at which each group started.
+        :param dt_unit: If ``times`` is an array of datetimes, must also pass ``dt_unit``, i.e. a
+         :class:`numpy.timedelta64` that indicates how much time passes at each timestep. (times-start_times)/dt_unit
+         should be an array of integers.
         :return: A tuple of state-means and state-covs, appropriate for forecasting by passing as `initial_state`
-        for KalmanFilter.forward.
+         for :func:`KalmanFilter.forward()`.
         """
         sliced = self._subset_to_times(times=times, start_times=start_times, dt_unit=dt_unit)
         return sliced.state_means.squeeze(1), sliced.state_covs.squeeze(1)
@@ -165,13 +163,14 @@ class Predictions(nn.Module):
                      time_colname: str = 'time',
                      multi: Optional[float] = 1.96) -> 'DataFrame':
         """
-        :param dataset: Either a TimeSeriesDataset, or a dictionary with 'start_times', 'group_names', & 'dt_unit'
+        :param dataset: Either a :class:`.TimeSeriesDataset`, or a dictionary with 'start_times', 'group_names', &
+         'dt_unit'
         :param type: Either 'predictions' or 'components'.
         :param group_colname: Column-name for 'group'
         :param time_colname: Column-name for 'time'
         :param multi: Multiplier on std-dev for lower/upper CIs. Default 1.96.
-        :return: A pandas DataFrame with group, 'time', 'measure', 'mean', 'lower', 'upper'. For type='components'
-        additionally includes: 'process' and 'state_element'.
+        :return: A pandas DataFrame with group, 'time', 'measure', 'mean', 'lower', 'upper'. For ``type='components'``
+         additionally includes: 'process' and 'state_element'.
         """
 
         from pandas import concat
@@ -290,13 +289,13 @@ class Predictions(nn.Module):
              split_dt: Optional[np.datetime64] = None,
              **kwargs) -> 'DataFrame':
         """
-        :param df: The output of `.to_dataframe()`.
+        :param df: The output of :func:`Predictions.to_dataframe()`.
         :param group_colname: The name of the group-column.
         :param time_colname: The name of the time-column.
         :param max_num_groups: Max. number of groups to plot; if the number of groups in the dataframe is greater than
          this, a random subset will be taken.
         :param split_dt: If supplied, will draw a vertical line at this date (useful for showing pre/post validation).
-        :param kwargs: Further keyword arguments to pass to `plotnine.theme` (e.g. `figure_size=(x,y)`)
+        :param kwargs: Further keyword arguments to pass to ``plotnine.theme`` (e.g. ``figure_size=(x,y)``)
         :return: A plot of the predicted and actual values.
         """
 

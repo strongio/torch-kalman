@@ -1,7 +1,6 @@
 from typing import Tuple, Sequence, List, Dict, Optional, Iterable
 
 import torch
-from numpy import ndarray
 
 from torch import nn, Tensor, jit
 from torchcast.internals.utils import get_owned_kwarg
@@ -9,8 +8,28 @@ from torchcast.internals.utils import get_owned_kwarg
 
 class Process(nn.Module):
     """
-    The Process is defined by the state-elements it generates predictions for. It generates two kinds of predictions:
-    (1) the observation matrix, (2) the transition matrix.
+    This is the base class. The process is defined by the state-elements it generates predictions for. It generates
+    two kinds of predictions: (1) the observation matrix, (2) the transition matrix.
+
+    :param id: Unique identifier for the process
+    :param state_elements: List of strings with the state-element names
+    :param measure: The name of the measure for this process.
+    :param h_module: A torch.nn.Module which, when called (default with no input; can be overridden in subclasses
+     with self.h_kwarg), will produce the 'observation' matrix: a XXXX. Only one of h_module or h_tensor should be
+     passed.
+    :param h_tensor: A tensor that is the 'observation' matrix (see `h_module`). Only one of h_module or h_tensor
+     should be  passed.
+    :param h_kwarg: TODO
+    :param f_modules: A torch.nn.ModuleDict; each element specifying a transition between state-elements. The keys
+     specify the state-elements in the format '{from_el}->{to_el}'. The values are torch.nn.Modules which, when
+     called (default with no input; can be overridden in subclasses with self.f_kwarg), will produce that element
+     for the transition matrix. Additionally, the key can be 'all_self', in which case the output should have
+     ``shape[-1] == len(state_elements)``; this allows specifying the transition of each state-element to itself with
+     a single call.
+    :param f_tensors: A dictionary of tensors, specifying elements of the F-matrix. See `f_modules` for key format.
+    :param f_kwarg: TODO
+    :param no_pcov_state_elements: TODO
+    :param no_icov_state_elements: TODO
     """
 
     def __init__(self,
@@ -25,28 +44,6 @@ class Process(nn.Module):
                  f_kwarg: str = '',
                  no_pcov_state_elements: Optional[List[str]] = None,
                  no_icov_state_elements: Optional[List[str]] = None):
-        """
-
-        :param id: Unique identifier for the process
-        :param state_elements: List of strings with the state-element names
-        :param measure: The name of the measure for this process.
-        :param h_module: A torch.nn.Module which, when called (default with no input; can be overridden in subclasses
-        with self.h_kwarg), will produce the 'observation' matrix: a XXXX. Only one of h_module or h_tensor should be
-        passed.
-        :param h_tensor: A tensor that is the 'observation' matrix (see `h_module`). Only one of h_module or h_tensor
-        should be  passed.
-        :param h_kwarg: TODO
-        :param f_modules: A torch.nn.ModuleDict; each element specifying a transition between state-elements. The keys
-        specify the state-elements in the format '{from_el}->{to_el}'. The values are torch.nn.Modules which, when
-        called (default with no input; can be overridden in subclasses with self.f_kwarg), will produce that element
-        for the transition matrix. Additionally, the key can be 'all_self', in which case the output should have
-        `shape[-1] == len(state_elements)`; this allows specifying the transition of each state-element to itself with
-        a single call.
-        :param f_tensors: A dictionary of tensors, specifying elements of the F-matrix. See `f_modules` for key format.
-        :param f_kwarg: TODO
-        :param no_pcov_state_elements: TODO
-        :param no_icov_state_elements: TODO
-        """
 
         super(Process, self).__init__()
         self.id = id
@@ -93,6 +90,8 @@ class Process(nn.Module):
             yield found_key, key, value
 
     def forward(self, inputs: Dict[str, Tensor]) -> Tuple[Tensor, Tensor]:
+        """
+        """
         return self.h_forward(inputs.get(self.h_kwarg)), self.f_forward(inputs.get(self.f_kwarg))
 
     def h_forward(self, input: Optional[Tensor]) -> Tensor:

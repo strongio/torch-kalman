@@ -42,7 +42,7 @@ class _Season:
             return offsets
         offsets = np.asanyarray(offsets, dtype='datetime64[ns]')
         ns_since_epoch = (offsets - np.datetime64(0, 'ns')).view('int64')
-        offsets = ns_since_epoch % (self.period * self.dt_unit_ns) / self.dt_unit_ns # todo: cancels out?
+        offsets = ns_since_epoch % (self.period * self.dt_unit_ns) / self.dt_unit_ns  # todo: cancels out?
         return torch.as_tensor(offsets.astype('float32')).view(-1, 1, 1)
 
 
@@ -155,6 +155,8 @@ class Season(_Season, Process):
             # assert not isinstance(decay, nn.Module) # TODO
             decay_kwarg = ''
 
+        if isinstance(decay, bool) and decay:
+            decay = (.98, 1.00)
         if isinstance(decay, tuple) and (decay[0] ** self.period) < .01:
             warn(
                 f"Given the seasonal period, the lower bound on `{id}`'s `decay` ({decay}) may be too low to "

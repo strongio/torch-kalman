@@ -14,17 +14,14 @@ from torchcast.process.regression import Process
 
 class KalmanFilter(nn.Module):
     """
-    The KalmanFilter is a `nn.Module` which generates predictions and forecasts using a state-space model. Processes
-    are used to specify how latent-states translate into the measurable data being forecasted.
+    The KalmanFilter is a :class:`torch.nn.Module` which generates predictions and forecasts using a state-space model.
+    Processes are used to specify how latent-states translate into the measurable data being forecasted.
 
     :param processes: A list of :class:`.Process` modules.
     :param measures: A list of strings specifying the names of the dimensions of the time-series being measured.
     :param process_covariance: A module created with ``Covariance.from_processes(processes, cov_type='process')``.
     :param measure_covariance: A module created with ``Covariance.from_measures(measures)``.
     :param initial_covariance: A module created with ``Covariance.from_processes(processes, cov_type='initial')``.
-    :param compiled: Should the core modules be passed through :class:`torch.jit.script` to compile them to
-     TorchScript? Can be disabled if compilation issues arise.
-    :param kwargs: Further arguments passed to ScriptKalmanFilter's child-classes (base-class takes no kwargs).
     """
     kf_step_cls = GaussianStep
 
@@ -75,7 +72,7 @@ class KalmanFilter(nn.Module):
 
     @torch.jit.ignore()
     def fit(self,
-            y: Tensor,
+            *args,
             tol: float = .001,
             patience: int = 3,
             max_iter: int = 200,
@@ -88,7 +85,7 @@ class KalmanFilter(nn.Module):
         which the number of parameters is moderate and the data fit in memory. For other cases you are encouraged to
         roll your own training loop.
 
-        :param y: Tensor containing the batch of time-series(es), see :func:`KalmanFilter.forward()`.
+        :param args: A tensor containing the batch of time-series(es), see :func:`KalmanFilter.forward()`.
         :param tol: Stopping tolerance.
         :param patience: Patience: if loss changes by less than `tol` for this many epochs, then training will be
          stopped.
@@ -102,6 +99,10 @@ class KalmanFilter(nn.Module):
         :param kwargs: Further keyword-arguments passed to :func:`KalmanFilter.forward()`.
         :return: This `KalmanFilter` instance.
         """
+
+        # this may change in the future
+        assert len(args) == 1
+        y = args[0]
 
         if optimizer is None:
             optimizer = torch.optim.LBFGS(self.parameters(), max_iter=10, line_search_fn='strong_wolfe', lr=.5)
@@ -217,17 +218,17 @@ class KalmanFilter(nn.Module):
 
     @torch.jit.ignore()
     def forward(self,
-                input: Optional[Tensor],
-                n_step: int = 1,
+                *args,
+                n_step: Union[int, float] = 1,
                 start_offsets: Optional[Sequence] = None,
-                out_timesteps: Optional[int] = None,
+                out_timesteps: Optional[Union[int, float]] = None,
                 initial_state: Union[Tensor, Tuple[Optional[Tensor], Optional[Tensor]]] = (None, None),
                 every_step: bool = True,
                 **kwargs) -> Predictions:
         """
         Generate n-step-ahead predictions from the model.
 
-        :param input: A (group X time X measures) tensor. Optional if `initial_state` is specified.
+        :param args: A (group X time X measures) tensor. Optional if ``initial_state`` is specified.
         :param n_step: What is the horizon for the predictions output for each timepoint? Defaults to one-step-ahead
          predictions (i.e. n_step=1).
         :param start_offsets: If your model includes seasonal processes, then these needs to know the start-time for
@@ -235,27 +236,34 @@ class KalmanFilter(nn.Module):
          array datetimes here. Otherwise you can pass an array of integers (or leave `None` if there are no seasonal
          processes).
         :param out_timesteps: The number of timesteps to produce in the output. This is useful when passing a tensor
-         of predictors that goes later in time than the `input` tensor -- you can specify `out_timesteps=X.shape[1]` to
-         get forecasts into this later time horizon.
+         of predictors that goes later in time than the `input` tensor -- you can specify ``out_timesteps=X.shape[1]``
+         to get forecasts into this later time horizon.
         :param initial_state: The initial prediction for the state of the system: a tuple of tensors representing the
-         initial mean and covariance. Default is ``(self.initial_mean, self.initial_covariance()``. You can pass your
-         own for one or both of these, which can come from either a previous prediction or from a separate |nn.Module|
-         that predicts the initial state.
-        :param every_step: By default, `n_step` ahead predictions will be generated at every timestep. If
-         `every_step=False`, then these predictions will only be generated every `n_step` timesteps. For example, with
-         hourly data, `n_step=24` and every_step=True, each timepoint would be a forecast generated with data 24-hours
-         in the past. But with `every_step=False` in this case, then the first timestep would be 1-step-ahead, the 2nd
+         initial mean and covariance. Default is ``self.initial_mean, self.initial_covariance()``. You can pass your
+         own for one or both of these, which can come from either a previous prediction or from a separate
+         :class:`torch.nn.Module` that predicts the initial state.
+        :param every_step: By default, ``n_step`` ahead predictions will be generated at every timestep. If
+         ``every_step=False``, then these predictions will only be generated every `n_step` timesteps. For example,
+         with hourly data, ``n_step=24`` and ``every_step=True``, each timepoint would be a forecast generated with
+         data 24-hours in the past. But with ``every_step=False`` the first timestep would be 1-step-ahead, the 2nd
          would be 2-step-ahead, ... the 23rd would be 24-step-ahead, the 24th would be 1-step-ahead, etc. The advantage
-         to every_step=False is speed: training data for long-range forecasts can be generated without requiring the
-         model to produce and discard intermediate predictions every timestep.
-        :param kwargs: Further arguments passed to the `processes`. For example, many seasonal processes require a
-         `state_datetimes` argument; the `LinearModel` and `NN` processes expect a `X` argument for predictors.
-        :return: A :class:`Predictions` object with
-         :func:`Predictions.log_prob()` and :func:`Predictions.to_dataframe()` methods.
+         to ``every_step=False`` is speed: training data for long-range forecasts can be generated without requiring
+         the model to produce and discard intermediate predictions every timestep.
+        :param kwargs: Further arguments passed to the `processes`. For example, the :class:`.LinearModel` and
+         :class:`.NN` processes expect a ``X`` argument for predictors.
+        :return: A :class:`.Predictions` object with :func:`Predictions.log_prob()` and
+        :func:`Predictions.to_dataframe()` methods.
         """
 
+        # this may change in the future
+        assert len(args) <= 1
+        if len(args):
+            input = args[0]
+        else:
+            input = None
+
         if out_timesteps is None and input is None:
-            raise RuntimeError("If `input` is None must specify `out_timesteps`")
+            raise RuntimeError("If no input is passed, must specify `out_timesteps`")
 
         if isinstance(initial_state, Tensor):
             initial_state = (initial_state, None)
@@ -264,6 +272,15 @@ class KalmanFilter(nn.Module):
             start_offsets=start_offsets,
             num_groups=None if input is None else input.shape[0]
         )
+
+        if isinstance(n_step, float):
+            if not n_step.is_integer():
+                raise ValueError("`n_step` must be an int.")
+            n_step = int(n_step)
+        if isinstance(out_timesteps, float):
+            if not out_timesteps.is_integer():
+                raise ValueError("`out_timesteps` must be an int.")
+            out_timesteps = int(out_timesteps)
 
         means, covs, R, H = self._script_forward(
             input=input,
@@ -507,7 +524,7 @@ class KalmanFilter(nn.Module):
         :param num_sims: The number of state-trajectories to simulate.
         :param progress: Should a progress-bar be displayed? Requires `tqdm`.
         :param kwargs: Further arguments passed to the `processes`.
-        :return: A :class:`Simulations` object with a :func:`Simulations.sample()` method.
+        :return: A :class:`.Simulations` object with a :func:`Simulations.sample()` method.
         """
 
         design_kwargs = self._parse_design_kwargs(input=None, out_timesteps=out_timesteps, **kwargs)

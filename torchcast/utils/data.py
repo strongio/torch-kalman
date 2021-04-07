@@ -14,13 +14,13 @@ from torchcast.internals.utils import ragged_cat, true1d_idx
 
 class TimeSeriesDataset(TensorDataset):
     """
-    TimeSeriesDataset includes additional information about each of the Tensors' dimensions: the name for each group in
-    the first dimension, the start (date)time (and optionally datetime-unit) for the second dimension, and the name of
-    the measures for the third dimension.
+    :class:`.TimeSeriesDataset` includes additional information about each of the Tensors' dimensions: the name for
+    each group in the first dimension, the start (date)time (and optionally datetime-unit) for the second dimension,
+    and the name of the measures for the third dimension.
 
-    Note that unlike TensorDataset, indexing a TimeSeriesDataset returns another TimeSeriesDataset, not a tuple of
-    tensors. So when using TimeSeriesDataset, use `TimeSeriesDataLoader` (or just use
-    `DataLoader(collate_fn=TimeSeriesDataset.collate)`).
+    Note that unlike :class:`torch.utils.data.TensorDataset`, indexing a :class:`.TimeSeriesDataset` returns another
+    :class:`.TimeSeriesDataset`, not a tuple of tensors. So when using :class:`.TimeSeriesDataset`, use
+    :class:`.TimeSeriesDataLoader` (equivalent to ``DataLoader(collate_fn=TimeSeriesDataset.collate)``).
     """
     _repr_attrs = ('sizes', 'measures')
 
@@ -87,11 +87,11 @@ class TimeSeriesDataset(TensorDataset):
                         dt: Union[np.datetime64, dict] = None) -> Tuple['TimeSeriesDataset', 'TimeSeriesDataset']:
         """
         :param train_frac: The proportion of the data to keep for training. This is calculated on a per-group basis, by
-        taking the last observation for each group (i.e., the last observation that a non-nan value on any measure). If
-        neither `train_frac` nor `dt` are passed, `train_frac=.75` is used.
+         taking the last observation for each group (i.e., the last observation that a non-nan value on any measure). If
+         neither `train_frac` nor `dt` are passed, ``train_frac=.75`` is used.
         :param dt: A datetime to use in dividing train/validation (first datetime for validation), or a dictionary of
-        group-names : date-times.
-        :return: Two TimeSeriesDatasets, one with data before the split, the other with >= the split.
+         group-names : date-times.
+        :return: Two ``TimeSeriesDatasets``, one with data before the split, the other with >= the split.
         """
 
         # get split times:
@@ -135,10 +135,10 @@ class TimeSeriesDataset(TensorDataset):
 
     def with_new_start_times(self, start_times: Union[np.ndarray, Sequence]) -> 'TimeSeriesDataset':
         """
-        Subset a TimeSeriesDataset so that some/all of the groups have later start times.
+        Subset a :class:`.TimeSeriesDataset` so that some/all of the groups have later start times.
 
         :param start_times: An array/list of new datetimes.
-        :return: A new TimeSeriesDataset.
+        :return: A new :class:`.TimeSeriesDataset`.
         """
         new_tensors = []
         for i, tens in enumerate(self.tensors):
@@ -186,10 +186,10 @@ class TimeSeriesDataset(TensorDataset):
         Take a dataset with one tensor, split it into a dataset with multiple tensors.
 
         :param measure_groups: Each argument should be be a list of measure-names, or an indexer (i.e. list of ints or
-        a slice).
+         a slice).
         :param which: If there are already multiple measure groups, the split will occur within one of them; must
-        specify which.
-        :return: A TimeSeriesDataset, now with multiple tensors for the measure-groups
+         specify which.
+        :return: A :class:`.TimeSeriesDataset`, now with multiple tensors for the measure-groups.
         """
 
         if which is None:
@@ -406,7 +406,7 @@ class TimeSeriesDataset(TensorDataset):
         A 2D array of datetimes (or integers if dt_unit is None) for this dataset.
 
         :param which: If this dataset has multiple tensors of different number of timesteps, which should be used for
-        constructing the `times` array? Defaults to the one with the most timesteps.
+         constructing the `times` array? Defaults to the one with the most timesteps.
         :return: A 2D numpy array of datetimes (or integers if dt_unit is None).
         """
         if which is None:
@@ -426,7 +426,7 @@ class TimeSeriesDataset(TensorDataset):
     def last_measured_times(self) -> np.ndarray:
         """
         :return: The datetimes (or integers if dt_unit is None) for the last measurement in the first tensor, where a
-        measurement is any non-nan value in at least one dimension.
+         measurement is any non-nan value in at least one dimension.
         """
         times = self.times(which=0)
         last_measured_idx = self._last_measured_idx()
@@ -449,10 +449,10 @@ class TimeSeriesDataset(TensorDataset):
 
 class TimeSeriesDataLoader(DataLoader):
     """
-    This is a convenience wrapper around `DataLoader(collate_fn=TimeSeriesDataset.collate)`. Additionally, it provides
-    a `from_dataframe()` classmethod so that the data-loader can be created directly from a pandas dataframe. This can
-    be more memory-efficient than the alternative route of first creating a TimeSeriesDataset from a dataframe, and then
-     passing that object to a data-loader.
+    This is a convenience wrapper around ``DataLoader(collate_fn=TimeSeriesDataset.collate)``. Additionally, it
+    provides a ``from_dataframe()`` classmethod so that the data-loader can be created directly from a pandas
+    dataframe. This can be more memory-efficient than the alternative route of first creating a
+    :class:`.TimeSeriesDataset` from a dataframe, and then passing that object to a data-loader.
     """
 
     def __init__(self, *args, **kwargs):

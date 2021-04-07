@@ -75,7 +75,7 @@ class NN(_RegressionBase):
 
     :param id: Unique identifier for the process
     :param nn: A `nn.Module` that takes inputs from a model-matrix and tranlates them into entries in the
-    observation matrix H.
+     observation matrix H.
     :param measure: The name of the measure for this process.
     :param process_variance: TODO
     :param decay: TODO
