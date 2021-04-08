@@ -261,7 +261,7 @@ def pad_covariance(unpadded_cov: Tensor, mask_1d: List[int]) -> Tensor:
         # shortcut
         return unpadded_cov
 
-    out = torch.zeros(unpadded_cov.shape[:-2] + (rank, rank))
+    out = torch.zeros(unpadded_cov.shape[:-2] + (rank, rank), device=unpadded_cov.device, dtype=unpadded_cov.dtype)
     for to_r in range(rank):
         for to_c in range(to_r, rank):
             from_r = padded_to_unpadded.get(to_r)
