@@ -67,6 +67,10 @@ class TimeSeriesDataset(TensorDataset):
         self.start_times = start_times
         super().__init__(*tensors)
 
+    def to(self, *args, **kwargs) -> 'TimeSeriesDataset':
+        new_tensors = [x.to(*args, **kwargs) for x in self.tensors]
+        return self.with_new_tensors(*new_tensors)
+
     def __repr__(self) -> str:
         kwargs = []
         for k in self._repr_attrs:
@@ -279,7 +283,7 @@ class TimeSeriesDataset(TensorDataset):
                             measures: Sequence[str]) -> 'DataFrame':
         from pandas import DataFrame, concat
 
-        tensor = tensor.numpy()
+        tensor = tensor.cpu().numpy()
         assert tensor.shape[0] == len(group_names)
         assert tensor.shape[0] == len(times)
         assert tensor.shape[1] <= times.shape[1]
@@ -315,7 +319,9 @@ class TimeSeriesDataset(TensorDataset):
                        X_colnames: Optional[Sequence[str]] = None,
                        y_colnames: Optional[Sequence[str]] = None,
                        pad_X: Optional[float] = None,
-                       dtype: torch.dtype = torch.float32) -> 'TimeSeriesDataset':
+                       **kwargs) -> 'TimeSeriesDataset':
+        if 'dtype' not in kwargs:
+            kwargs['dtype'] = torch.float32
 
         if measure_colnames is None:
             if X_colnames is None or y_colnames is None:
@@ -368,10 +374,10 @@ class TimeSeriesDataset(TensorDataset):
 
         # second pass organizes into tensor
         time_len = max(time_idx[-1] + 1 for time_idx in time_idxs)
-        tens = torch.empty((len(arrays), time_len, len(measure_colnames)), dtype=dtype)
+        tens = torch.empty((len(arrays), time_len, len(measure_colnames)), **kwargs)
         tens[:] = np.nan
         for i, (array, time_idx) in enumerate(zip(arrays, time_idxs)):
-            tens[i, time_idx, :] = torch.tensor(array, dtype=dtype)
+            tens[i, time_idx, :] = torch.tensor(array, **kwargs)
 
         dataset = cls(
             tens,

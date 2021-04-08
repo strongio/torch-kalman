@@ -25,6 +25,9 @@ import pandas as pd
 
 np.random.seed(2021-1-21)
 torch.manual_seed(2021-1-21)
+
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(DEVICE)
 # -
 
 GROUPS = [f'MT_00{i}' for i in range(1,7) if i!=3]
@@ -99,7 +102,8 @@ dataset_train = TimeSeriesDataset.from_dataframe(
     X_colnames=season_cols,
     group_colname='group_ym', 
     time_colname='time',
-    pad_X=True
+    pad_X=True,
+    device=DEVICE
 )
 assert not torch.isnan(dataset_train.tensors[1]).any()
 dataset_train
@@ -151,12 +155,15 @@ with torch.no_grad():
 # register these parameters in our KF so that they show up in `kf_lm.parameters()` (and therefore the optimizer)
 for k, v in initial_state_nn.named_parameters():
     kf_lm.register_parameter(f'initial_state_nn__{k}',v)
+    
+#
+kf_lm.to(DEVICE)
 
 
 # +
 def get_group_ids(dataset):
     group_names = pd.Series(dataset.group_names).str.split(":", expand=True)[0]
-    return torch.as_tensor([group_id_mapping[gn] for gn in group_names])
+    return torch.as_tensor([group_id_mapping[gn] for gn in group_names], device=DEVICE)
 
 def _get_initial_state():
     return initial_state_nn(get_group_ids(dataset_train)) + kf_lm.initial_mean[None,:]
