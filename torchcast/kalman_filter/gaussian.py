@@ -1,7 +1,9 @@
-from typing import Tuple, Type, Final
+from typing import Tuple, Type
 
 import torch
 from torch import nn, Tensor
+from typing_extensions import Final
+
 from torchcast.internals.utils import get_nan_groups
 
 
