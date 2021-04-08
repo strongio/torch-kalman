@@ -16,16 +16,54 @@ def num_off_diag(rank: int) -> int:
 
 class Covariance(nn.Module):
     """
-    :cvar var_predict_multi: If `predict_variance` are standard modules like `torch.nn.Linear` or
-        `torch.nn.Embedding`, the random inits can often result in extreme variance-multipliers; these
-        poor inits can make early optimization unstable. `var_predict_multi` (default 0.1) simply multiplies the output
-        of `predict_variance` before passing them though `torch.exp`; this serves to dampen initial outputs while
-        still allowing large predictions if these are eventually warranted.
+    The :class:`.Covariance` object can be used in setting where you'd like to predict the variance in your forecasts.
+    For example, if you're training on diverse time-serieses that vary in scale/behavior, you could use an
+    :class:`torch.nn.Embedding` with the group-ids as predictors:
+
+    .. code-block:: python3
+
+        kf = KalmanFilter(
+            measures=measures,
+            processes=processes,
+            measure_covariance=Covariance.for_measures(
+                measures,
+                predict_variance=torch.nn.Embedding(len(group_ids), len(measures), padding_idx=0)
+            ),
+            process_covariance=Covariance.for_processes(
+                processes,
+                predict_variance=torch.nn.Embedding(
+                    len(group_ids),
+                    Covariance.for_processes(processes).param_rank,
+                    padding_idx=0
+                )
+            )
+        )
+
     """
     var_predict_multi = 0.1
+    """
+    :cvar var_predict_multi: If ``predict_variance`` are standard modules like :class:`torch.nn.Linear` or
+     :class:`torch.nn.Embedding`, the random inits can often result in extreme variance-multipliers; these poor
+     inits can make early optimization unstable. `var_predict_multi` (default 0.1) simply multiplies the output
+     of ``predict_variance`` before passing them though :func:`torch.exp`; this serves to dampen initial outputs
+     while still allowing large predictions if these are eventually warranted.
+    """
 
     @classmethod
-    def for_processes(cls, processes: Sequence[Process], cov_type: str = 'process', **kwargs) -> 'Covariance':
+    def for_processes(cls,
+                      processes: Sequence[Process],
+                      cov_type: str = 'process',
+                      predict_variance: Optional[nn.Module] = None,
+                      **kwargs) -> 'Covariance':
+        """
+        :param processes: The ``processes`` used in your :class:`.KalmanFilter`.
+        :param cov_type: The type of covariance, either 'process' or 'initial' (default: 'process').
+        :param predict_variance: A :class:`torch.nn.Module` that will predict a (log) multiplier for the variance.
+         These should output real-values with shape ``(num_groups, self.param_rank)``; these values will then be
+         converted to multipliers by applying :func:`torch.exp` (i.e. don't pass the output through a softplus).
+        :param kwargs: Other arguments passed to :func:`Covariance.__init__`.
+        :return: A :class:`.Covariance` object that can be used in your :class:`.KalmanFilter`.
+        """
         assert cov_type in {'process', 'initial'}
         state_rank = 0
         no_cov_idx = []
@@ -48,10 +86,27 @@ class Covariance(nn.Module):
         else:
             raise ValueError(f"Unrecognized cov_type {cov_type}, expected 'initial' or 'process'.")
 
-        return cls(rank=state_rank, empty_idx=no_cov_idx, id=f'{cov_type}_covariance', **kwargs)
+        return cls(
+            rank=state_rank,
+            empty_idx=no_cov_idx,
+            id=f'{cov_type}_covariance',
+            predict_variance=predict_variance,
+            **kwargs
+        )
 
     @classmethod
-    def for_measures(cls, measures: Sequence[str], **kwargs) -> 'Covariance':
+    def for_measures(cls,
+                     measures: Sequence[str],
+                     predict_variance: Optional[nn.Module] = None,
+                     **kwargs) -> 'Covariance':
+        """
+        :param measures: The ``measures`` used in your :class:`.KalmanFilter`.
+        :param predict_variance: A :class:`torch.nn.Module` that will predict a (log) multiplier for the variance.
+         These should output real-values with shape ``(num_groups, num_measures)``; these values will then be
+         converted to multipliers by applying :func:`torch.exp` (i.e. don't pass the output through a softplus).
+        :param kwargs: Other arguments passed to :func:`Covariance.__init__`.
+        :return: A :class:`.Covariance` object that can be used in your :class:`.KalmanFilter`.
+        """
         if isinstance(measures, str):
             measures = [measures]
             warn(f"`measures` should be a list of strings not a string; interpreted as `{measures}`.")
@@ -59,11 +114,7 @@ class Covariance(nn.Module):
             kwargs['method'] = 'low_rank'
         if 'init_diag_multi' not in kwargs:
             kwargs['init_diag_multi'] = 1.0
-        return cls(rank=len(measures), id='measure_covariance', **kwargs)
-
-    # aliases:
-    from_measures = for_measures
-    from_processes = for_processes
+        return cls(rank=len(measures), id='measure_covariance', predict_variance=predict_variance, **kwargs)
 
     def __init__(self,
                  rank: int,
@@ -73,25 +124,24 @@ class Covariance(nn.Module):
                  method: str = 'log_cholesky',
                  init_diag_multi: float = 0.1):
         """
+        You should rarely call this directly. Instead, call :func:`Covariance.for_measures` and
+        :func:`Covariance.for_processes`.
+
         :param rank: The number of elements along the diagonal.
-        :param empty_idx: In some cases (e.g. process-covariance) we will
-        :param predict_variance: A nn.Module (or dictionary of these) that will predict a (log) multiplier for the variance.
-        These should output real-values with shape `(num_groups, self.param_rank)`; these values will then be
-        converted to multipliers by applying `torch.exp` (i.e. don't pass the output through a softplus). If a single
-        Module is passed, you should pass `{self.id}__X` to the KalmanFilter's `forward` pass to supply
-        predictors. If a dictionary of module(s) is passed, the key(s) of this dictionary is used to identify the
-        keyword-arg that will be passed to the KalmanFilter's `forward` method (e.g. `{'group_ids' : Embedding()}`
-        would allow you to call the KalmanFilter with `forward(*args, group_ids=group_ids)` and predict group-specific
-        variances).
-        :param id: Identifier for this covariance. Typically left `None` and set when passed to the KalmanFilter.
+        :param empty_idx: In some cases (e.g. process-covariance) we will have some elements with no variance.
+        :param predict_variance: A :class:`torch.nn.Module` that will predict a (log) multiplier for the variance.
+         These should output real-values with shape ``(num_groups, self.param_rank)``; these values will then be
+         converted to multipliers by applying :func:`torch.exp` (i.e. don't pass the output through a softplus).
+        :param id: Identifier for this covariance. Typically left ``None`` and set when passed to the
+         :class:`.KalmanFilter`.
         :param method: The parameterization for the covariance. The default, "log_cholesky", parameterizes the
-        covariance using the cholesky factorization (which is itself split into two tensors: the log-transformed
-        diagonal elements and the off-diagonal). The other currently supported option is "low_rank", which
-        parameterizes the covariance with two tensors: (a) the log-transformed std-devations, and (b) a 'low rank' G*K
-        tensor where G is the number of random-effects and K is int(sqrt(G)). Then the covariance is D + V @ V.t()
-        where D is a diagonal-matrix with the std-deviations**2, and V is the low-rank tensor.
+         covariance using the cholesky factorization (which is itself split into two tensors: the log-transformed
+         diagonal elements and the off-diagonal). The other currently supported option is "low_rank", which
+         parameterizes the covariance with two tensors: (a) the log-transformed std-devations, and (b) a 'low rank' G*K
+         tensor where G is the number of random-effects and K is int(sqrt(G)). Then the covariance is D + V @ V.t()
+         where D is a diagonal-matrix with the std-deviations**2, and V is the low-rank tensor.
         :param init_diag_multi: A float that will be applied as a multiplier to the initial values along the diagonal.
-        This can be useful to provide intelligent starting-values to speed up optimization.
+         This can be useful to provide intelligent starting-values to speed up optimization.
         """
 
         super(Covariance, self).__init__()

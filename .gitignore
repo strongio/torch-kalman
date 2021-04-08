@@ -106,3 +106,4 @@ ENV/
 examples/*.csv
 docs/_html/*
 *.csv
+*.pt

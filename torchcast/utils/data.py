@@ -308,7 +308,7 @@ class TimeSeriesDataset(TensorDataset):
     @classmethod
     def from_dataframe(cls,
                        dataframe: 'DataFrame',
-                       group_colname: str,
+                       group_colname: Optional[str],
                        time_colname: str,
                        dt_unit: Optional[str],
                        measure_colnames: Optional[Sequence[str]] = None,
@@ -332,6 +332,9 @@ class TimeSeriesDataset(TensorDataset):
                 measure_colnames = [measure_colnames]
                 warn(f"`measure_colnames` should be list of strings not a string; interpreted as `{measure_colnames}`.")
 
+        if group_colname is None:
+            dataframe = dataframe.assign(_group=1)
+            group_colname = '_group'
         assert isinstance(group_colname, str)
         assert isinstance(time_colname, str)
         assert len(measure_colnames) == len(set(measure_colnames))
@@ -484,3 +487,54 @@ class TimeSeriesDataLoader(DataLoader):
             ]
         )
         return cls(dataset=dataset, **kwargs)
+
+
+def complete_times(data: 'DataFrame',
+                   group_colname: str,
+                   time_colname: Optional[str] = None,
+                   dt_unit: Optional[str] = None):
+    """
+    Given a dataframe time-serieses, convert implicit missings within each time-series to explicit missings.
+
+    :param data: A pandas dataframe.
+    :param group_colname: The column name for the groups.
+    :param time_colname: The column name for the times. Will attempt to guess based on common labels.
+    :param dt_unit: A :class:`numpy.datetime64` or string representing the datetime increments. If not supplied will
+     try to guess based on the smallest difference in the data.
+    :return: A dataframe where implicit missings are converted to explicit missings, but the min/max time for each
+     group is preserved.
+    """
+    import pandas as pd
+
+    if time_colname is None:
+        for col in ('datetime', 'date', 'timestamp', 'time', 'dt'):
+            if col in data.columns:
+                time_colname = col
+                break
+        if time_colname is None:
+            raise ValueError("Unable to guess `time_colname`, please pass")
+    if dt_unit is None:
+        diffs = data[time_colname].drop_duplicates().sort_values().diff()
+        dt_unit = diffs.min()
+        if dt_unit != diffs.value_counts().index[0]:
+            raise ValueError("Unable to guess dt_unit, please pass")
+
+    df_grid = pd.DataFrame(
+        {time_colname: pd.date_range(data[time_colname].min(), data[time_colname].max(), freq=dt_unit)}
+    )
+
+    df_group_summary = data. \
+        groupby(group_colname). \
+        agg(_min=(time_colname, 'min'),
+            _max=(time_colname, 'max')). \
+        reset_index()
+
+    # cross-join for all times to all groups (todo: not very memory efficient)
+    df_cj = df_grid. \
+        assign(_cj=1). \
+        merge(df_group_summary.assign(_cj=1), how='left', on=['_cj'])
+    # filter to min/max for each group
+    df_cj = df_cj. \
+        loc[df_cj[time_colname].between(df_cj['_min'], df_cj['_max']), [group_colname, time_colname]]. \
+        reset_index(drop=True)
+    return df_cj.merge(data, how='left', on=[group_colname, time_colname])
