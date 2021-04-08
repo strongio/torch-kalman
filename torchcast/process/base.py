@@ -48,6 +48,9 @@ class Process(nn.Module):
         super(Process, self).__init__()
         self.id = id
 
+        self._info: Tensor
+        self.register_buffer('_info', torch.empty(0), persistent=False)  # for dtype/device info
+
         # state elements:
         self.state_elements = state_elements
         self.se_to_idx = {se: i for i, se in enumerate(self.state_elements)}
@@ -57,11 +60,15 @@ class Process(nn.Module):
         if (int(h_module is None) + int(h_tensor is None)) != 1:
             raise TypeError("Exactly one of `h_module`, `h_tensor` must be passed.")
         self.h_module = h_module
-        self.h_tensor = h_tensor
+        self.h_tensor: Tensor
+        self.register_buffer('h_tensor', h_tensor, persistent=False)  # so that `.to()` works
         self.h_kwarg = h_kwarg
 
         # transition matrix:
         self.f_tensors = f_tensors
+        if self.f_tensors is not None:
+            for k, v in self.f_tensors.items():
+                self.register_buffer(f'f_tensors__{k}', v, persistent=False)
         if isinstance(f_modules, dict):
             f_modules = nn.ModuleDict(f_modules)
         self.f_modules = f_modules
@@ -74,6 +81,14 @@ class Process(nn.Module):
         self.no_pcov_state_elements: Optional[List[str]] = no_pcov_state_elements
         # elements without initial covariance, defaults to none:
         self.no_icov_state_elements: Optional[List[str]] = no_icov_state_elements
+
+    @property
+    def device(self) -> torch.device:
+        return self._info.device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return self._info.dtype
 
     @jit.ignore
     def offset_initial_state(self, initial_state: Tensor, start_offsets: Optional[Sequence] = None) -> Tensor:
@@ -175,12 +190,12 @@ class Process(nn.Module):
 
         # in the second pass, create the F-matrix and assign (r,c)s:
         state_size = len(self.state_elements)
-        F = torch.zeros(num_groups, state_size, state_size)
+        F = torch.zeros(num_groups, state_size, state_size, dtype=self.dtype, device=self.device)
         # common application is diagonal F, efficient to store/assign that as one
         if diag is not None:
             if diag.shape[-1] != state_size:
                 assert len(diag.shape) == 1 and diag.shape[0] == 1
-                diag_mat = diag * torch.eye(state_size)
+                diag_mat = diag * torch.eye(state_size, dtype=self.dtype, device=self.device)
             else:
                 diag_mat = torch.diag_embed(diag)
                 assert F.shape[-2:] == diag_mat.shape[-2:]

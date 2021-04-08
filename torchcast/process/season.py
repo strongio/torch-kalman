@@ -43,7 +43,7 @@ class _Season:
         offsets = np.asanyarray(offsets, dtype='datetime64[ns]')
         ns_since_epoch = (offsets - np.datetime64(0, 'ns')).view('int64')
         offsets = ns_since_epoch % (self.period * self.dt_unit_ns) / self.dt_unit_ns  # todo: cancels out?
-        return torch.as_tensor(offsets.astype('float32')).view(-1, 1, 1)
+        return offsets
 
 
 class FourierSeason(_Season, _RegressionBase):
@@ -110,6 +110,7 @@ class FourierSeason(_Season, _RegressionBase):
     @jit.ignore
     def get_kwargs(self, kwargs: dict) -> Iterable[Tuple[str, str, str, Tensor]]:
         offsets = self._standardize_offsets(kwargs['start_datetimes'])
+        offsets = torch.as_tensor(offsets).view(-1, 1, 1)
         kwargs['current_times'] = offsets + kwargs['current_timestep']
         for found_key, key_name, value in Process.get_kwargs(self, kwargs):
             if found_key == 'current_times' and self.dt_unit_ns is not None:
@@ -231,14 +232,13 @@ class Season(_Season, Process):
             raise RuntimeError(f"Process '{self.id}' has `dt_unit`, so need to pass datetimes for `start_offsets`")
 
         start_offsets = self._standardize_offsets(start_offsets)
+        # TODO: this is imprecise for non-integer periods
+        start_offsets = start_offsets.round()
         num_groups = len(start_offsets)
         assert initial_state.shape[0] == num_groups
 
         # TODO: incompatible with predicting decay?
         F = self.f_forward(None).expand(num_groups, -1, -1)
-
-        # TODO: this is imprecise for non-integer periods
-        start_offsets = start_offsets.round()
 
         means = []
         mean = initial_state.unsqueeze(-1)
