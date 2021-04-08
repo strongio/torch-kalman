@@ -67,13 +67,14 @@ def ragged_cat(tensors: Sequence[torch.Tensor], ragged_dim: int, cat_dim: int = 
     return torch.cat(out, cat_dim)
 
 
+@torch.no_grad()
 def true1d_idx(arr: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
-    if isinstance(arr, torch.Tensor):
-        arr = arr.detach().numpy()
-    arr = arr.astype('bool')
+    if not isinstance(arr, torch.Tensor):
+        arr = torch.as_tensor(arr)
+    arr = arr.bool()
     if len(arr.shape) > 1:
         raise ValueError("Expected 1d array.")
-    return np.where(arr)[0]
+    return arr.nonzero(as_tuple=True)[0]
 
 
 def is_near_zero(tens: torch.Tensor, rtol: float = 1e-05, atol: float = 1e-08, equal_nan: bool = False) -> torch.Tensor:
