@@ -124,6 +124,8 @@ class KalmanFilter(nn.Module):
 
         epoch = 0
 
+        callable_kwargs = callable_kwargs or {}
+
         def closure():
             optimizer.zero_grad()
             kwargs.update({k: v() for k, v in callable_kwargs.items()})

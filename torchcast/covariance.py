@@ -5,6 +5,7 @@ from warnings import warn
 import torch
 
 from torch import Tensor, nn, jit
+from typing_extensions import Final
 
 from torchcast.internals.utils import get_owned_kwarg, is_near_zero
 from torchcast.process.base import Process
@@ -40,7 +41,7 @@ class Covariance(nn.Module):
         )
 
     """
-    var_predict_multi = 0.1
+    var_predict_multi: Final[float] = 0.1
     """
     :cvar var_predict_multi: If ``predict_variance`` are standard modules like :class:`torch.nn.Linear` or
      :class:`torch.nn.Embedding`, the random inits can often result in extreme variance-multipliers; these poor
