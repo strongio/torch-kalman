@@ -1,4 +1,4 @@
-from typing import Tuple, Sequence, List, Dict, Optional, Iterable
+from typing import Tuple, Sequence, List, Dict, Optional, Iterable, Callable
 
 import torch
 
@@ -66,9 +66,6 @@ class Process(nn.Module):
 
         # transition matrix:
         self.f_tensors = f_tensors
-        if self.f_tensors is not None:
-            for k, v in self.f_tensors.items():
-                self.register_buffer(f'f_tensors__{k}', v, persistent=False)
         if isinstance(f_modules, dict):
             f_modules = nn.ModuleDict(f_modules)
         self.f_modules = f_modules
@@ -81,6 +78,13 @@ class Process(nn.Module):
         self.no_pcov_state_elements: Optional[List[str]] = no_pcov_state_elements
         # elements without initial covariance, defaults to none:
         self.no_icov_state_elements: Optional[List[str]] = no_icov_state_elements
+
+    def _apply(self, fn: Callable) -> 'Process':
+        # can't register f_tensors as buffers, see https://github.com/pytorch/pytorch/issues/43815
+        if self.f_tensors is not None:
+            for k, v in self.f_tensors.items():
+                self.f_tensors[k] = fn(v)
+        return super()._apply(fn)
 
     @property
     def device(self) -> torch.device:
