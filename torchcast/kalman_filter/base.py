@@ -33,6 +33,9 @@ class KalmanFilter(nn.Module):
                  initial_covariance: Optional[Covariance] = None):
         super(KalmanFilter, self).__init__()
 
+        if isinstance(measures, str):
+            measures = [measures]
+            warn(f"`measures` should be a list of strings not a string; interpreted as `{measures}`.")
         self._validate(processes, measures)
 
         # covariances:
@@ -79,6 +82,7 @@ class KalmanFilter(nn.Module):
             optimizer: Optional[torch.optim.Optimizer] = None,
             verbose: int = 2,
             callbacks: Sequence[Callable] = (),
+            loss_callback: Optional[Callable] = None,
             callable_kwargs: Optional[Dict[str, Callable]] = None,
             **kwargs):
         """
@@ -97,6 +101,8 @@ class KalmanFilter(nn.Module):
          (the default) this progress bar will tick within each epoch to track the calls to forward.
         :param callbacks: A list of functions that will be called at the end of each epoch, which take the current
          epoch's loss value.
+        :param loss_callback: A callback that takes the loss and returns a modified loss, called before each call to
+         `backward()`. This can be used for example to add regularization.
         :param callable_kwargs: Some keyword-arguments to :func:`KalmanFilter.forward()` aren't static, but need to be
          recomputed every time. ``callable_kwargs`` is a dictionary where the keys are keyword-names and the values
          are no-argument functions that will be called each iteration to recompute the corresponding arguments. For
@@ -131,6 +137,8 @@ class KalmanFilter(nn.Module):
             kwargs.update({k: v() for k, v in callable_kwargs.items()})
             pred = self(y, **kwargs)
             loss = -pred.log_prob(y).mean()
+            if loss_callback:
+                loss = loss_callback(loss)
             loss.backward()
             if prog:
                 prog.update()
@@ -155,6 +163,8 @@ class KalmanFilter(nn.Module):
                 prev_train_loss = train_loss
             except KeyboardInterrupt:
                 break
+            finally:
+                optimizer.zero_grad(set_to_none=True)
 
         return self
 
@@ -192,11 +202,8 @@ class KalmanFilter(nn.Module):
 
     @staticmethod
     def _validate(processes: Sequence[Process], measures: Sequence[str]):
-        if isinstance(measures, str):
-            measures = [measures]
-            warn(f"`measures` should be a list of strings not a string; interpreted as `{measures}`.")
-        elif not hasattr(measures, '__getitem__'):
-            warn(f"`measures` appears to be an unordered collection")
+        if not hasattr(measures, '__getitem__'):
+            warn(f"`measures` appears to be an unordered collection -- needs to be ordered")
 
         for p in processes:
             if isinstance(p, torch.jit.RecursiveScriptModule):
