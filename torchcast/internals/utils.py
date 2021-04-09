@@ -50,8 +50,14 @@ def identity(x: Any) -> Any:
     return x
 
 
-def ragged_cat(tensors: Sequence[torch.Tensor], ragged_dim: int, cat_dim: int = 0) -> torch.Tensor:
+def ragged_cat(tensors: Sequence[torch.Tensor],
+               ragged_dim: int,
+               cat_dim: int = 0,
+               padding: Optional[float] = None) -> torch.Tensor:
+
     max_dim_len = max(tensor.shape[ragged_dim] for tensor in tensors)
+    if padding is None:
+        padding = float('nan')
     out = []
     num_dims = len(tensors[0].shape)
     for tensor in tensors:
@@ -59,8 +65,8 @@ def ragged_cat(tensors: Sequence[torch.Tensor], ragged_dim: int, cat_dim: int = 
         shape = list(tensor.shape)
         assert len(shape) == num_dims
         shape[ragged_dim] = max_dim_len
-        padded = torch.empty(shape)
-        padded[:] = float('nan')
+        padded = torch.empty(shape, dtype=tensors[0].dtype, device=tensors[0].device)
+        padded[:] = padding
         idx = tuple(slice(0, this_tens_dim_len) if i == ragged_dim else slice(None) for i in range(num_dims))
         padded[idx] = tensor
         out.append(padded)

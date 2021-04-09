@@ -1,13 +1,13 @@
 import datetime
 import itertools
 
-from typing import Sequence, Any, Union, Optional, Tuple
+from typing import Sequence, Any, Union, Optional, Tuple, Callable
 from warnings import warn
 
 import numpy as np
 import torch
 from torch import Tensor
-from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
+from torch.utils.data import TensorDataset, DataLoader, ConcatDataset, Dataset
 
 from torchcast.internals.utils import ragged_cat, true1d_idx
 
@@ -233,31 +233,37 @@ class TimeSeriesDataset(TensorDataset):
 
     # Creation/Transformation ------------------------:
     @classmethod
-    def collate(cls, batch: Sequence['TimeSeriesDataset']) -> 'TimeSeriesDataset':
+    def make_collate_fn(cls, pad_X: Optional[float] = 0.) -> Callable:
+        def collate_fn(batch: Sequence['TimeSeriesDataset']) -> 'TimeSeriesDataset':
+            to_concat = {
+                'tensors': [batch[0].tensors],
+                'group_names': [batch[0].group_names],
+                'start_times': [batch[0].start_times]
+            }
+            fixed = {'dt_unit': batch[0].dt_unit, 'measures': batch[0].measures}
+            for i, ts_dataset in enumerate(batch[1:], 1):
+                for attr, appendlist in to_concat.items():
+                    to_concat[attr].append(getattr(ts_dataset, attr))
+                for attr, required_val in fixed.items():
+                    new_val = getattr(ts_dataset, attr)
+                    if new_val != required_val:
+                        raise ValueError(
+                            f"Element {i} has `{attr}` = {new_val}, but for element 0 it's {required_val}."
+                        )
 
-        to_concat = {
-            'tensors': [batch[0].tensors],
-            'group_names': [batch[0].group_names],
-            'start_times': [batch[0].start_times]
-        }
-        fixed = {'dt_unit': batch[0].dt_unit, 'measures': batch[0].measures}
-        for i, ts_dataset in enumerate(batch[1:], 1):
-            for attr, appendlist in to_concat.items():
-                to_concat[attr].append(getattr(ts_dataset, attr))
-            for attr, required_val in fixed.items():
-                new_val = getattr(ts_dataset, attr)
-                if new_val != required_val:
-                    raise ValueError(f"Element {i} has `{attr}` = {new_val}, but for element 0 it's {required_val}.")
+            tensors = []
+            for i, t in enumerate(zip(*to_concat['tensors'])):
+                tensors.append(ragged_cat(t, ragged_dim=1, padding=None if i == 0 else pad_X))
 
-        tensors = tuple(ragged_cat(t, ragged_dim=1) for t in zip(*to_concat['tensors']))
+            return cls(
+                *tensors,
+                group_names=np.concatenate(to_concat['group_names']),
+                start_times=np.concatenate(to_concat['start_times']),
+                measures=fixed['measures'],
+                dt_unit=fixed['dt_unit']
+            )
 
-        return cls(
-            *tensors,
-            group_names=np.concatenate(to_concat['group_names']),
-            start_times=np.concatenate(to_concat['start_times']),
-            measures=fixed['measures'],
-            dt_unit=fixed['dt_unit']
-        )
+        return collate_fn
 
     def to_dataframe(self,
                      group_colname: str = 'group',
@@ -318,7 +324,7 @@ class TimeSeriesDataset(TensorDataset):
                        measure_colnames: Optional[Sequence[str]] = None,
                        X_colnames: Optional[Sequence[str]] = None,
                        y_colnames: Optional[Sequence[str]] = None,
-                       pad_X: Optional[float] = None,
+                       pad_X: Optional[float] = 0.,
                        **kwargs) -> 'TimeSeriesDataset':
         if 'dtype' not in kwargs:
             kwargs['dtype'] = torch.float32
@@ -393,7 +399,8 @@ class TimeSeriesDataset(TensorDataset):
             # don't use nan-padding on the y tensor:
             if pad_X is not None:
                 for i, time_idx in enumerate(time_idxs):
-                    X[i, time_idx.max():, :] = pad_X
+                    pad_idx = time_idx.max() + 1
+                    X[i, pad_idx:, :] = pad_X
 
         return dataset
 
@@ -458,15 +465,27 @@ class TimeSeriesDataset(TensorDataset):
 
 class TimeSeriesDataLoader(DataLoader):
     """
-    This is a convenience wrapper around ``DataLoader(collate_fn=TimeSeriesDataset.collate)``. Additionally, it
-    provides a ``from_dataframe()`` classmethod so that the data-loader can be created directly from a pandas
-    dataframe. This can be more memory-efficient than the alternative route of first creating a
-    :class:`.TimeSeriesDataset` from a dataframe, and then passing that object to a data-loader.
+    This is a convenience wrapper around
+    ``DataLoader(collate_fn=TimeSeriesDataset.make_collate_fn())``. Additionally, it provides a ``from_dataframe()``
+    classmethod so that the data-loader can be created directly from a pandas dataframe. This can be more
+    memory-efficient than the alternative route of first creating a :class:`.TimeSeriesDataset` from a dataframe, and
+    then passing that object to a data-loader.
     """
 
-    def __init__(self, *args, **kwargs):
-        kwargs['collate_fn'] = kwargs.get('collate_fn') or TimeSeriesDataset.collate
-        super().__init__(*args, **kwargs)
+    def __init__(self,
+                 dataset: 'Dataset',
+                 batch_size: Optional[int],
+                 pad_X: Optional[float] = 0.,
+                 **kwargs):
+        """
+        :param dataset: A TimeSeriesDataset
+        :param batch_size: Series per batch to load.
+        :param pad_X: When stacking time-serieses of unequal length, we left-align them and so get trailing nans.
+         Setting ``pad_X`` allows you to select the padding value for these.
+        :param kwargs: Other arguments passed to :class:`torch.utils.data.DataLoader`
+        """
+        kwargs['collate_fn'] = TimeSeriesDataset.make_collate_fn(pad_X)
+        super().__init__(dataset=dataset, batch_size=batch_size, **kwargs)
 
     @classmethod
     def from_dataframe(cls,
@@ -477,7 +496,27 @@ class TimeSeriesDataLoader(DataLoader):
                        measure_colnames: Optional[Sequence[str]] = None,
                        X_colnames: Optional[Sequence[str]] = None,
                        y_colnames: Optional[Sequence[str]] = None,
+                       pad_X: Optional[float] = 0.,
                        **kwargs) -> 'TimeSeriesDataLoader':
+        """
+
+        :param dataframe: A pandas ``DataFrame``
+        :param group_colname: Name for the group-column name
+        :param time_colname:
+        :param dt_unit:
+        :param measure_colnames:
+        :param X_colnames:
+        :param y_colnames:
+        :param pad_X: When stacking time-serieses of unequal length, we left-align them and so get trailing nans.
+         Setting ``pad_X`` allows you to select the padding value for these. Default 0-padding.
+        :param kwargs:
+        :return:
+        """
+        _kwargs = {}
+        for k in ('device', 'dtype'):
+            if k in kwargs:
+                _kwargs[k] = kwargs.pop(k)
+
         dataset = ConcatDataset(
             datasets=[
                 TimeSeriesDataset.from_dataframe(
@@ -487,12 +526,13 @@ class TimeSeriesDataLoader(DataLoader):
                     measure_colnames=measure_colnames,
                     X_colnames=X_colnames,
                     y_colnames=y_colnames,
-                    dt_unit=dt_unit
+                    dt_unit=dt_unit,
+                    **_kwargs
                 )
                 for g, df in dataframe.groupby(group_colname)
             ]
         )
-        return cls(dataset=dataset, **kwargs)
+        return cls(dataset=dataset, pad_X=pad_X, **kwargs)
 
 
 def complete_times(data: 'DataFrame',
