@@ -364,7 +364,7 @@ class TestKalmanFilter(TestCase):
             measures=['y']
         )
         kf._scale_by_measure_var = False
-        data = torch.arange(7).view(1, -1, 1)
+        data = torch.arange(7).view(1, -1, 1).to(torch.float32)
         for init_state in [0., 1.]:
             kf.state_dict()['initial_mean'][:] = torch.ones(1) * init_state
             _state['call_counter'] = 0

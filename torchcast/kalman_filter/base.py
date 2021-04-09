@@ -267,6 +267,7 @@ class KalmanFilter(nn.Module):
         assert len(args) <= 1
         if len(args):
             input = args[0]
+            assert torch.is_floating_point(input)
         else:
             input = None
 

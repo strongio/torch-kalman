@@ -1,4 +1,4 @@
-from typing import Tuple, Type
+from typing import Tuple, Type, Optional
 
 import torch
 from torch import nn, Tensor
@@ -40,6 +40,7 @@ class GaussianStep(nn.Module):
         assert len(input.shape) > 1
         if len(input.shape) != 2:
             raise NotImplementedError
+
         num_groups = input.shape[0]
         if mean.shape[0] != num_groups:
             assert mean.shape[0] == 1
@@ -75,11 +76,23 @@ class GaussianStep(nn.Module):
             return self._update(input=input, mean=mean, cov=cov, H=H, R=R)
 
     def _update(self, input: Tensor, mean: Tensor, cov: Tensor, H: Tensor, R: Tensor) -> Tuple[Tensor, Tensor]:
-        # this should just be part of `update()`, but recursive calls not currently supported in torchscript
+        assert torch.is_floating_point(input)
+        orig_dtype: Optional[torch.dtype] = None
+        if input.dtype not in (torch.float32, torch.float64):
+            orig_dtype = input.dtype
+            input = input.float()
+            mean = mean.float()
+            cov = cov.float()
+            H = H.float()
+            R = R.float()
+
         K = self.kalman_gain(cov=cov, H=H, R=R)
         measured_mean = H.matmul(mean.unsqueeze(2)).squeeze(2)
         new_mean = mean + K.matmul((input - measured_mean).unsqueeze(2)).squeeze(2)
         new_cov = self.covariance_update(cov=cov, K=K, H=H, R=R)
+        if orig_dtype is not None:
+            new_mean = new_mean.to(orig_dtype)
+            new_cov = new_cov.to(orig_dtype)
         return new_mean, new_cov
 
     def covariance_update(self, cov: Tensor, K: Tensor, H: Tensor, R: Tensor) -> Tensor:
