@@ -63,7 +63,10 @@ class TimeSeriesDataset(TensorDataset):
                 raise ValueError("`dt_unit` is not None but `start_times` is not an array of datetimes")
         else:
             if not isinstance(start_times[0], int) and not float(start_times[0]).is_integer():
-                raise ValueError("`dt_unit` is None but `start_times` does not appear to be integers.")
+                raise ValueError(
+                    f"`dt_unit` is None but `start_times` does not appear to be integers "
+                    f"(e.g. start_times[0] is {start_times[0]})."
+                )
         self.start_times = start_times
         super().__init__(*tensors)
 
