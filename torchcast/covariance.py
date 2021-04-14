@@ -223,7 +223,7 @@ class Covariance(nn.Module):
                 f"`{self.id}` has near-zero along the diagonal. Will add 1e-12 to the diagonal. "
                 f"Values:\n{mini_cov.diag()}"
             )
-            mini_cov = mini_cov + torch.eye(mini_cov.shape[-1]) * 1e-12
+            mini_cov = mini_cov + torch.eye(mini_cov.shape[-1], device=mini_cov.device, dtype=mini_cov.dtype) * 1e-12
         return mini_cov
 
     def forward(self, input: Optional[Tensor] = None, _ignore_input: bool = False) -> Tensor:

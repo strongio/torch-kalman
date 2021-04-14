@@ -584,3 +584,18 @@ def complete_times(data: 'DataFrame',
         loc[df_cj[time_colname].between(df_cj['_min'], df_cj['_max']), [group_colname, time_colname]]. \
         reset_index(drop=True)
     return df_cj.merge(data, how='left', on=[group_colname, time_colname])
+
+
+def nanmean(v: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+    """
+    https://github.com/pytorch/pytorch/issues/21987#issuecomment-539402619
+
+    :param v: A tensor
+    :param args: Arguments one might pass to `mean` like `dim`.
+    :param kwargs: Arguments one might pass to `mean` like `dim`.
+    :return: The mean, excluding nans.
+    """
+    v = v.clone()
+    is_nan = torch.isnan(v)
+    v[is_nan] = 0
+    return v.sum(*args, **kwargs) / (~is_nan).float().sum(*args, **kwargs)
