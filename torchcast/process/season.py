@@ -39,7 +39,7 @@ class _Season:
     @jit.ignore
     def _standardize_offsets(self, offsets: Sequence) -> np.ndarray:
         if self.dt_unit_ns is None:
-            return offsets
+            return np.asanyarray(offsets) % self.period
         offsets = np.asanyarray(offsets, dtype='datetime64[ns]')
         ns_since_epoch = (offsets - np.datetime64(0, 'ns')).view('int64')
         offsets = ns_since_epoch % (self.period * self.dt_unit_ns) / self.dt_unit_ns  # todo: cancels out?

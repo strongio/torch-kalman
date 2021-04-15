@@ -114,11 +114,14 @@ class TimeSeriesDataset(TensorDataset):
             if train_frac is not None:
                 raise TypeError("Can pass only one of `train_frac`, `dt`.")
             if isinstance(dt, dict):
-                split_times = np.array([dt[group_name] for group_name in self.group_names], dtype='datetime64[ns]')
+                split_times = np.array([dt[group_name] for group_name in self.group_names],
+                                       dtype='datetime64[ns]' if self.dt_unit else 'int')
             else:
-                # todo: make compatible with pandas.Timestamp
-                if not isinstance(dt, np.datetime64):
-                    dt = np.datetime64(dt, self.dt_unit)
+                if self.dt_unit:
+                    if hasattr(dt, 'to_datetime64'):
+                        dt = dt.to_datetime64()
+                    if not isinstance(dt, np.datetime64):
+                        dt = np.datetime64(dt, self.dt_unit)
                 split_times = np.full(shape=len(self.group_names), fill_value=dt)
 
         # val:
@@ -440,6 +443,10 @@ class TimeSeriesDataset(TensorDataset):
 
     @property
     def start_datetimes(self) -> np.ndarray:
+        return self.start_times
+
+    @property
+    def start_offsets(self) -> np.ndarray:
         return self.start_times
 
     def last_measured_times(self) -> np.ndarray:
