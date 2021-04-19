@@ -28,6 +28,13 @@ def add_season_features(data: 'DataFrame',
         if time_colname is None:
             raise ValueError("Unable to guess `time_colname`, please pass")
     df_season = fourier_model_mat(data[time_colname].values, K=K, period=period, output_fmt='dataframe')
+    already = df_season.columns.isin(data.columns)
+    if already.all():
+        return data
+    elif already.any():
+        raise RuntimeError(
+            f"Some, but not all, of the following columns are already in `data`:\n{df_season.columns.tolist()}"
+        )
     # TODO: check that `data` has default index
     return concat([data, df_season], axis=1)
 
