@@ -500,19 +500,23 @@ class KalmanFilter(nn.Module):
         Fs: List[Tensor] = []
         Hs: List[Tensor] = []
         for t in range(out_timesteps):
-            Ft = base_F.clone()
-            Ht = base_H.clone()
+            Ft = base_F
+            Ht = base_H
             for pid, process2 in self.processes.items():
                 p_tv_kwargs = time_varying_kwargs.get(pid)
                 _process_slice2 = slice(*self.process_to_slice[pid])
 
                 # tv H:
                 if p_tv_kwargs is not None and process2.h_kwarg in p_tv_kwargs:
+                    if Ht is base_H:
+                        Ht = Ht.clone()
                     ph = process2.h_forward(p_tv_kwargs[process2.h_kwarg][t])
                     Ht[:, self.measure_to_idx[process2.measure], _process_slice2] = ph
 
                 # tv F:
                 if p_tv_kwargs is not None and process2.f_kwarg in p_tv_kwargs:
+                    if Ft is base_F:
+                        Ft = Ft.clone()
                     pf = process2.f_forward(p_tv_kwargs[process2.f_kwarg][t])
                     Ft[:, _process_slice2, _process_slice2] = pf
             Fs.append(Ft)
