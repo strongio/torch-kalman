@@ -205,17 +205,24 @@ class KalmanFilter(nn.Module):
         if not hasattr(measures, '__getitem__'):
             warn(f"`measures` appears to be an unordered collection -- needs to be ordered")
 
+        assert len(measures) == len(set(measures))
+
+        process_names = set()
         for p in processes:
+            if p.id in process_names:
+                raise ValueError(f"There are multiple processes with id '{p.id}'.")
+            else:
+                process_names.add(p.id)
             if isinstance(p, torch.jit.RecursiveScriptModule):
                 raise TypeError(
                     f"Processes should not be wrapped in `torch.jit.script` *before* being passed to `KalmanFilter`"
                 )
             if p.measure:
                 if p.measure not in measures:
-                    raise RuntimeError(f"'{p.id}' has measure '{p.measure}' not in `measures`.")
+                    raise ValueError(f"'{p.id}' has measure '{p.measure}' not in `measures`.")
             else:
                 if len(measures) > 1:
-                    raise RuntimeError(f"Must set measure for '{p.id}' since there are multiple measures.")
+                    raise ValueError(f"Must set measure for '{p.id}' since there are multiple measures.")
                 p.measure = measures[0]
 
     @torch.jit.ignore()

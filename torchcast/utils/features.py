@@ -21,16 +21,14 @@ def add_season_features(data: 'DataFrame',
     from pandas import concat
 
     if time_colname is None:
-        for col in ('datetime', 'date', 'timestamp', 'time', 'dt'):
-            if col in data.columns:
-                time_colname = col
-                break
-        if time_colname is None:
+        try:
+            time_colname = next(col for col in ('datetime', 'date', 'timestamp', 'time', 'dt') if col in data.columns)
+        except StopIteration:
             raise ValueError("Unable to guess `time_colname`, please pass")
     df_season = fourier_model_mat(data[time_colname].values, K=K, period=period, output_fmt='dataframe')
     already = df_season.columns.isin(data.columns)
     if already.all():
-        return data
+        return data.copy(deep=False)
     elif already.any():
         raise RuntimeError(
             f"Some, but not all, of the following columns are already in `data`:\n{df_season.columns.tolist()}"
