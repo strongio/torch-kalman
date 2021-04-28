@@ -92,4 +92,4 @@ class GaussianStep(nn.Module):
 
     @classmethod
     def log_prob(cls, obs: Tensor, obs_mean: Tensor, obs_cov: Tensor) -> Tensor:
-        return cls.distribution_cls(obs_mean, obs_cov).log_prob(obs)
+        return cls.distribution_cls(obs_mean, obs_cov, validate_args=False).log_prob(obs)
