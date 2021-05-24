@@ -42,10 +42,9 @@ if 'drive/MyDrive' in BASE_DIR and not os.path.exists(BASE_DIR):
 
 # # Using NN's for Long-Range Forecasts: Electricity Data
 #
-# Here's we'll show how to manage some obstacles that can arise in forecasting real data:
+# In this example we'll show how to handle complex series, in which we don't want to treat individual components of the series as independent. For this example (electricity data) there is no 'hour-in-day' component that's independent of the 'day-of-week' or 'day-in-year' component -- everything is interrelated. Here we'll show how to do this by leveraging `torchcast`'s ability to integrate with any PyTorch neural-network. 
 #
-# - The time-serieses are complex. We can't treat individual components of the series as independent. For example, there is no 'hour-in-day' component that's independent of the 'day-of-week' or 'day-in-year' component -- everything is interrelated. Here we'll show how to do this by leveraging `torchcast`'s ability to integrate with any PyTorch neural-network.
-# - The time-serieses are long. Running the model through thousands of timesteps on every forward/backward pass is computationally expensive relative to what it gains us. We can avoid this by splitting each series into sub-series.
+# This example will also showcase how to handle a very large number of series. We will train in batches, and use supporting `torch.nn.Embedding` models to allow the model to express differences across different series.
 #
 # We'll use a dataset from the [UCI Machine Learning Data Repository](https://archive.ics.uci.edu/ml/datasets/ElectricityLoadDiagrams20112014), which consists of electricity-usage for 370 locations, taken every 15 minutes (we'll downsample to hourly).
 
@@ -83,7 +82,6 @@ torch.manual_seed(2021-1-21)
 # -
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(DEVICE)
 
 # ## Data-Cleaning
 #
@@ -140,8 +138,6 @@ train_groups = train_groups[:SUBSET or -1]
 df_elec = df_elec.loc[df_elec['group'].isin(train_groups),:].reset_index(drop=True)
 # -
 
-# ### Training/Validation/Test
-#
 # We'll split the data at 2014. For half the groups, this will be used as validation data; for the other half, it will be used as test data.
 
 SPLIT_DT = np.datetime64('2014-01-01')
@@ -182,9 +178,6 @@ kf = KalmanFilter(
 df_elec['kW_sqrt'] = np.sqrt(df_elec['kW'])
 
 # for efficiency of training, we split this single group into multiple groups
-# this is helpful since pytorch has a non-trivial overhead for separate tensors --
-# i.e., it scales well with an increasing batch-size (fewer, but bigger, tensors), 
-# but poorly with an increasing time-seriees length (smaller, but more, tensors)
 df_elec['gym'] =\
      df_elec['group'] + ":" +\
      df_elec['time'].dt.year.astype('str') + "_" +\
@@ -209,11 +202,16 @@ except FileNotFoundError:
     kf.fit(
         train_MT_052.tensors[0],
         start_offsets=train_MT_052.start_datetimes,
-        n_step=int(24 * 7.5),
+        n_step=int(24 * 7),
         every_step=False
     )
     torch.save(kf.state_dict(), os.path.join(BASE_DIR, "kf_standard.pt"))
 # -
+
+# Despite this being the 'standard' approach, we are still using some nonstandard tricks here:
+#
+# - We are using the `n_step` argument to train our model on one-week ahead forecasts, instead of one step (i.e. hour) ahead. This improves the efficiency of training by 'encouraging' the model to 'care about' longer range forecasts vs. over-focusing on the easier problem of forecasting the next hour.
+# - We are splitting our single series into multiple groups. This is helpful since pytorch has a non-trivial overhead for separate tensors -- i.e., it scales well with an increasing batch-size (fewer, but bigger, tensors), but poorly with an increasing time-seriees length (smaller, but more, tensors).
 
 # ### Model-Evaluation
 #
@@ -237,7 +235,7 @@ with torch.no_grad():
 df_pred52 = df_pred52.loc[~df_pred52['actual'].isnull(),:].reset_index(drop=True)
 pred.plot(df_pred52, split_dt=SPLIT_DT)
 
-# With hourly data, visualizing long-range forecasts in this way isn't very illuminating: it's just really hard to see the data! Let's try splitting it into weekdays vs. weekends and daytimes vs. nightimes:
+# Unfortunately, with hourly data, visualizing long-range forecasts in this way isn't very illuminating: it's just really hard to see the data! Let's try splitting it into weekdays vs. weekends and daytimes vs. nightimes:
 
 # +
 df_pred52_split = df_pred52.\
@@ -245,17 +243,19 @@ df_pred52_split = df_pred52.\
            assign(weekend = lambda df: df['time'].dt.weekday.isin([5,6]).astype('int'),
                   night = lambda df: (df['time'].dt.hour == 8).astype('int')).\
         reset_index(drop=True)
+df_pred52_split['forecast'] = df_pred52_split.pop('mean')
+
 
 fig, axes = plt.subplots(ncols=2, nrows=2, figsize=(15,10))
 for (weekend, night), df in df_pred52_split.groupby(['weekend','night']):
     df.plot('time','actual', ax=axes[weekend,night], linewidth=.5, color='black')
-    df.plot('time', 'mean', ax=axes[weekend,night], alpha=.75, color='red')
+    df.plot('time', 'forecast', ax=axes[weekend,night], alpha=.75, color='red')
     axes[weekend,night].axvline(x=SPLIT_DT, color='black', ls='dashed')
     axes[weekend,night].set_title("{}, {}".format('Weekend' if weekend else 'Weekday', 'Night' if night else 'Day'))
 plt.tight_layout()
 # -
 
-# This helps us understand the problem: the annual seasonal pattern is very different from daytimes and nighttimes, but the model isn't (and can't be) capturing that. For example, it incorrectly forecasts a 'hump' during summer days and weekend nights, even though this hump is really only present on weekday nights. The model only allows for a single seasonal pattern, rather than a separate one for different times of the day and days of the week.
+# Viewing the forecastsing this way helps us understand the problem: the annual seasonal pattern is very different for daytimes and nighttimes, but the model isn't (and can't be) capturing that. For example, it incorrectly forecasts a 'hump' during summer days and weekend nights, even though this hump is really only present on weekday nights. The model only allows for a single seasonal pattern, rather than a separate one for different times of the day and days of the week.
 
 # ## Incorporating a Neural Network
 #
@@ -302,7 +302,7 @@ val_batch = TimeSeriesDataset.from_dataframe(
 #
 # Since `torchcast` is built on top of PyTorch, we can train a model end-to-end: i.e. we could start with a neural network with random-inits, plug it into a `KalmanFilter`, and train the whole thing.
 #
-# In practice, we'll generally want to take a neural-network that has already been partially or fully trained to generate sensible predictions. A standard feedforward network will take many many more epochs to train than a `KalmanFilter`, so it's helpful to keep the two models separate intially.
+# In practice, we'll generally want to take a neural-network that has already been partially or fully trained to generate sensible predictions. A standard feedforward network will take many many more epochs to train than a `KalmanFilter` (which itself will be slower per-epoch), so it's helpful to keep the two models separate intially.
 #
 # Here we'll use a network that combines a per-building embedding with a standard architecture that's shared across buildings. This allows the network's shared layers to find representations that are shared across many buildings.
 #
@@ -406,7 +406,12 @@ except FileNotFoundError:
 
 # ### Training our Hybrid Forecasting Model
 #
-# Now that we have a network that
+# Now that we have a network that has the representational capacity to transform datetimes into interacting seasonal structure, we can plug this network into a new `KalmanFilter` model.
+#
+# Additionally, this model is using a few tricks to support training across the many diverse time-serieses in this dataset:
+#
+# - **Predicting Variance:** We use a `torch.nn.Embedding` model to predict a separate variance-structure for each building. This incorporates both the measure-variance -- the amount of white-noise in the data -- as well as the process-variance -- how variable each component of the series is. 
+# - **Predicting Initial Values:** We are still splitting each series into multiple sub-series to aid in efficiency of training. This means that we need to let each series start off with its own unique internal state that encodes its unique seasonal and random-walk structure. 
 
 # +
 from torchcast.process import NN, LocalLevel, LocalTrend, Season
@@ -459,7 +464,6 @@ except FileNotFoundError:
         batch_size=100,
         shuffle=True
     )
-    len(train_batches)
 
     from torch_optimizer import Adahessian
     kf_nn.optimizer = Adahessian([
@@ -469,7 +473,7 @@ except FileNotFoundError:
 
     kf_nn.loss_history = []
     kf_nn.val_history = []
-    for epoch in range(250):
+    for epoch in range(200):
         # training:
         train_loss = 0
         for batch in tqdm(train_batches, total=len(train_batches), desc=f"Epoch {epoch}"):
@@ -521,6 +525,11 @@ except FileNotFoundError:
             display.display(plt.gcf())
         torch.save(kf_nn.state_dict(), os.path.join(BASE_DIR,"kf_nn.pt"))
 
+# ### Model Evaluation
+#
+# Reviewing the same example-building from before, we see the forecasts are more closely hewing to the actual seasonal structure for each time of day/week. Instead of the forecasts in each panel being essentially identical, each differs in shape. 
+
+# + nbsphinx="hidden"
 withtest_batches = TimeSeriesDataLoader.from_dataframe(
     df_elec,
     group_colname='group', 
@@ -554,11 +563,12 @@ df_pred52_nn = df_pred_nn.\
            assign(weekend = lambda df: df['time'].dt.weekday.isin([5,6]).astype('int'),
                   night = lambda df: (df['time'].dt.hour == 8).astype('int')).\
         reset_index(drop=True)
+df_pred52_nn['forecast'] = df_pred52_nn.pop('mean')
 
 fig, axes = plt.subplots(ncols=2, nrows=2, figsize=(15,10))
 for (weekend, night), df in df_pred52_nn.groupby(['weekend','night']):
     df.plot('time','actual', ax=axes[weekend,night], linewidth=.5, color='black')
-    df.plot('time', 'mean', ax=axes[weekend,night], alpha=.75, color='red')
+    df.plot('time', 'forecast', ax=axes[weekend,night], alpha=.75, color='red')
     axes[weekend,night].axvline(x=SPLIT_DT, color='black', ls='dashed')
     axes[weekend,night].set_title("{}, {}".format('Weekend' if weekend else 'Weekday', 'Night' if night else 'Day'))
 plt.tight_layout()
@@ -568,3 +578,22 @@ plt.tight_layout()
 - MT_029 -- need (way) higher K for annual season?
 - MT_018, MT_024 -- still systematic bias in certain parts of the day. why?
 """;
+# -
+
+# While it's fairly obvious from looking at the forecasts, we can confirm that the 2nd model does indeed substantially reduce forecast error, relative to the 'standard' model:
+
+# +
+df_nn_err = df_pred_nn.\
+    assign(error = lambda df: (df['mean'] - df['actual']).abs(),
+           validation = lambda df: df['time'] > SPLIT_DT).\
+    groupby(['group','validation']).\
+    agg(error = ('error', 'mean')).\
+    reset_index()
+
+df_pred52.\
+    assign(error = lambda df: (df['mean'] - df['actual']).abs(),
+           validation = lambda df: df['time'] > SPLIT_DT).\
+    groupby(['group','validation']).\
+    agg(error = ('error', 'mean')).\
+    reset_index().\
+    merge(df_nn_err, on=['group', 'validation'])

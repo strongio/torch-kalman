@@ -17,7 +17,7 @@ def num_off_diag(rank: int) -> int:
 
 class Covariance(nn.Module):
     """
-    The :class:`.Covariance` object can be used in setting where you'd like to predict the variance in your forecasts.
+    The :class:`.Covariance` object can be used in settings where you'd like to predict the variance in your forecasts.
     For example, if you're training on diverse time-serieses that vary in scale/behavior, you could use an
     :class:`torch.nn.Embedding` with the group-ids as predictors:
 

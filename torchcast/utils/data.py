@@ -332,6 +332,24 @@ class TimeSeriesDataset(TensorDataset):
                        y_colnames: Optional[Sequence[str]] = None,
                        pad_X: Optional[float] = 0.,
                        **kwargs) -> 'TimeSeriesDataset':
+        """
+        :param dataframe: A pandas ``DataFrame``
+        :param group_colname: Name for the group-column name.
+        :param time_colname: Name for the time-column name.
+        :param dt_unit: A numpy.timedelta64 (or string that will be converted to one) that indicates the time-units
+         used -- i.e., how far we advance with every timestep. Can be `None` if the data are in arbitrary (non-datetime)
+         units.
+        :param measure_colnames: A list of names of columns that include the actual time-series data in the dataframe.
+         Optional if `X_colnames` and `y_colnames` are passed.
+        :param X_colnames: In many settings we have a set of columns corresponding to predictors and a set of columns
+         corresponding to the actual time-series data. The former should be passed as `X_colnames` and the latter as
+         `y_colnames`.
+        :param y_colnames: See above.
+        :param pad_X: When stacking time-serieses of unequal length, we left-align them and so get trailing missings.
+         Setting ``pad_X`` allows you to select the padding value for these. Default 0-padding.
+        :param kwargs: The `dtype` and/or the `device`.
+        :return: A :class:`TimeSeriesDataset`.
+        """
         if 'dtype' not in kwargs:
             kwargs['dtype'] = torch.float32
 
@@ -509,18 +527,22 @@ class TimeSeriesDataLoader(DataLoader):
                        pad_X: Optional[float] = 0.,
                        **kwargs) -> 'TimeSeriesDataLoader':
         """
-
         :param dataframe: A pandas ``DataFrame``
-        :param group_colname: Name for the group-column name
-        :param time_colname:
-        :param dt_unit:
-        :param measure_colnames:
-        :param X_colnames:
-        :param y_colnames:
-        :param pad_X: When stacking time-serieses of unequal length, we left-align them and so get trailing nans.
+        :param group_colname: Name for the group-column name.
+        :param time_colname: Name for the time-column name.
+        :param dt_unit: A numpy.timedelta64 (or string that will be converted to one) that indicates the time-units
+         used -- i.e., how far we advance with every timestep. Can be `None` if the data are in arbitrary (non-datetime)
+         units.
+        :param measure_colnames: A list of names of columns that include the actual time-series data in the dataframe.
+         Optional if `X_colnames` and `y_colnames` are passed.
+        :param X_colnames: In many settings we have a set of columns corresponding to predictors and a set of columns
+         corresponding to the actual time-series data. The former should be passed as `X_colnames` and the latter as
+         `y_colnames`.
+        :param y_colnames: See above.
+        :param pad_X: When stacking time-serieses of unequal length, we left-align them and so get trailing missings.
          Setting ``pad_X`` allows you to select the padding value for these. Default 0-padding.
-        :param kwargs:
-        :return:
+        :param kwargs: Other arguments to pass to :func:`TimeSeriesDataset.from_dataframe()`.
+        :return: An iterable that yields :class:`TimeSeriesDataset`.
         """
         _kwargs = {}
         for k in ('device', 'dtype'):

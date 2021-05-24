@@ -8,7 +8,6 @@ torchcast
    :maxdepth: 1
 
    quick_start
-   user_guide/user_guide
    examples/examples
    api/api
 

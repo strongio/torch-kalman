@@ -107,3 +107,4 @@ examples/*.csv
 docs/_html/*
 *.csv
 *.pt
+*.gz
