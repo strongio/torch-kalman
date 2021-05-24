@@ -48,7 +48,7 @@ class _Season:
 
 class FourierSeason(_Season, _RegressionBase):
     """
-    A process which captures seasonal patterns using fourier serieses. Essentially a `LinearModel` where the
+    A process which captures seasonal patterns using fourier serieses. Essentially a ``LinearModel`` where the
     model-matrix construction is done for you. Only recommended for toy problems; Consider `TBATS` or a
     `LinearModel` w/`torchcast.utils.add_season_features`.
     """
@@ -120,7 +120,7 @@ class FourierSeason(_Season, _RegressionBase):
 
 class Season(_Season, Process):
     """
-    Method from De Livera, A.M., Hyndman, R.J., & Snyder, R. D. (2011); in that paper TBATS refers to
+    Method from `De Livera, A.M., Hyndman, R.J., & Snyder, R. D. (2011)`; in that paper TBATS refers to
     the whole model; here it is specifically the novel approach to modeling seasonality that they proposed.
 
     :param id: Unique identifier for this process.
@@ -132,9 +132,14 @@ class Season(_Season, Process):
      will be converted to one).
     :param K: The number of the fourier components.
     :param measure: The name of the measure for this process.
-    :param process_variance: TODO
-    :param decay: TODO
-    :param decay_kwarg: TODO
+    :param process_variance: Whether the seasonal-structure is allowed to evolve over time (default: True), or is
+     fixed. Setting this to ``False`` can be helpful for limiting the uncertainty of long-range forecasts.
+    :param decay: By default, the seasonal structure will remain as the forecast horizon increases. An alternative is
+     to allow this structure to decay (i.e. pass ``True``). If you'd like more fine-grained control over this decay,
+     you can specify the min/max decay as a tuple (passing ``True`` uses a default value of ``(.98, 1.0)``). You can
+     also pass a :class:`torch.nn.Module` that predicts decay (i.e. a value between 0 and 1 but generally close to 1).
+    :param decay_kwarg: If ``decay`` is a :class:`torch.nn.Module` that takes input, you specify the keyword-argument
+     for that input (i.e. what will be passed to :func:`KalmanFilter.forward()`) here.
     """
 
     def __init__(self,

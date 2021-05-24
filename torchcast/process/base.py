@@ -19,7 +19,8 @@ class Process(nn.Module):
      passed.
     :param h_tensor: A tensor that is the 'observation' matrix (see `h_module`). Only one of h_module or h_tensor
      should be  passed.
-    :param h_kwarg: TODO
+    :param h_kwarg: If given, indicates the name of the keyword-argument that's expected and will be passed to
+     ``h_module`` (e.g. ``X`` for a regression process).
     :param f_modules: A torch.nn.ModuleDict; each element specifying a transition between state-elements. The keys
      specify the state-elements in the format '{from_el}->{to_el}'. The values are torch.nn.Modules which, when
      called (default with no input; can be overridden in subclasses with self.f_kwarg), will produce that element
@@ -27,9 +28,10 @@ class Process(nn.Module):
      ``shape[-1] == len(state_elements)``; this allows specifying the transition of each state-element to itself with
      a single call.
     :param f_tensors: A dictionary of tensors, specifying elements of the F-matrix. See `f_modules` for key format.
-    :param f_kwarg: TODO
-    :param no_pcov_state_elements: TODO
-    :param no_icov_state_elements: TODO
+    :param f_kwarg: If given, indicates the name of the keyword-argument that's expected and will be passed to
+     ``f_modules`` (e.g. ``X`` for a regression process).
+    :param no_pcov_state_elements: Names of ``state_elements`` without process-variance.
+    :param no_icov_state_elements: Names of ``state_elements`` without initial-variance.
     """
 
     def __init__(self,
