@@ -272,3 +272,8 @@ def pad_covariance(unpadded_cov: Tensor, mask_1d: List[int]) -> Tensor:
                 if to_r != to_c:
                     out[..., to_c, to_r] = out[..., to_r, to_c]  # symmetrical
     return out
+
+
+def cov2corr(cov: Tensor) -> Tensor:
+    std_ = torch.sqrt(torch.diagonal(cov, dim1=-2, dim2=-1))
+    return cov / (std_.unsqueeze(-1) @ std_.unsqueeze(-2))

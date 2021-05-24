@@ -7,7 +7,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.11.0
+#       jupytext_version: 1.6.0
 #   kernelspec:
 #     display_name: Python 3
 #     language: python
@@ -168,7 +168,6 @@ kf_pm_multivariate.fit(
     start_offsets=dataset_pm_multivariate_train.start_datetimes
 )
 # -
-
 # We can generate our 4-step-ahead predictions for validation as we did before:
 
 with torch.no_grad():

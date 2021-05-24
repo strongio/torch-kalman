@@ -25,4 +25,4 @@ Getting Started
 
 ``torchcast`` requires Python >= 3.6 and |PyTorch| >= 1.7.
 
-See the :doc:`quick_start` for a simple example that will get you up to speed, or delve into the :doc:`user_guide`.
+See the :doc:`quick_start` for a simple example that will get you up to speed, or delve into the :doc:`api/api`.

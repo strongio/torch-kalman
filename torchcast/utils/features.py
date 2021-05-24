@@ -15,7 +15,7 @@ def add_season_features(data: 'DataFrame',
     :param K: The degrees of freedom for the fourier transform. Higher K means more flexible seasons can be captured.
     :param period: Either a np.timedelta64, or one of {'weekly','yearly','daily'}
     :param time_colname: The name of the date[time] column. Default is to try and guess with the following (in order):
-    'datetime', 'date', 'timestamp', 'time'.
+     'datetime', 'date', 'timestamp', 'time'.
     :return: A copy of the original dataframe, now with K*2 additional columns capturing the seasonal pattern.
     """
     from pandas import concat

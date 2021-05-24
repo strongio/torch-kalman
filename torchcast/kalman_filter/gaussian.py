@@ -31,9 +31,8 @@ class GaussianStep(nn.Module):
         return self.predict(mean, cov, F=F, Q=Q)
 
     def predict(self, mean: Tensor, cov: Tensor, F: Tensor, Q: Tensor) -> Tuple[Tensor, Tensor]:
-        Ft = F.permute(0, 2, 1)
-        mean = F.matmul(mean.unsqueeze(2)).squeeze(2)
-        cov = F.matmul(cov).matmul(Ft) + Q
+        mean = (F @ mean.unsqueeze(-1)).squeeze(-1)
+        cov = F @ cov @ F.permute(0, 2, 1) + Q
         return mean, cov
 
     def update(self, input: Tensor, mean: Tensor, cov: Tensor, H: Tensor, R: Tensor) -> Tuple[Tensor, Tensor]:
@@ -77,13 +76,14 @@ class GaussianStep(nn.Module):
 
     def _update(self, input: Tensor, mean: Tensor, cov: Tensor, H: Tensor, R: Tensor) -> Tuple[Tensor, Tensor]:
         K = self.kalman_gain(cov=cov, H=H, R=R)
-        measured_mean = H.matmul(mean.unsqueeze(2)).squeeze(2)
-        new_mean = mean + K.matmul((input - measured_mean).unsqueeze(2)).squeeze(2)
+        measured_mean = (H @ mean.unsqueeze(-1)).squeeze(-1)
+        resid = input - measured_mean
+        new_mean = mean + (K @ resid.unsqueeze(-1)).squeeze(-1)
         new_cov = self.covariance_update(cov=cov, K=K, H=H, R=R)
         return new_mean, new_cov
 
     def covariance_update(self, cov: Tensor, K: Tensor, H: Tensor, R: Tensor) -> Tensor:
-        I = torch.eye(cov.shape[1], dtype=cov.dtype, device=cov.device)[None, :, :]
+        I = torch.eye(cov.shape[1], dtype=cov.dtype, device=cov.device).unsqueeze(0)
         ikh = I - K @ H
         if self.use_stable_cov_update:
             return ikh @ cov @ ikh.permute(0, 2, 1) + K @ R @ K.permute(0, 2, 1)
@@ -92,7 +92,7 @@ class GaussianStep(nn.Module):
 
     def kalman_gain(self, cov: Tensor, H: Tensor, R: Tensor) -> Tensor:
         Ht = H.permute(0, 2, 1)
-        covs_measured = cov.matmul(Ht)
+        covs_measured = cov @ Ht
         system_covariance = torch.baddbmm(R, H @ cov, Ht)
         A = system_covariance.permute(0, 2, 1)
         B = covs_measured.permute(0, 2, 1)

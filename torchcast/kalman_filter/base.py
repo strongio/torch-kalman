@@ -14,8 +14,7 @@ from torchcast.process.regression import Process
 
 class KalmanFilter(nn.Module):
     """
-    The KalmanFilter is a :class:`torch.nn.Module` which generates predictions and forecasts using a state-space model.
-    Processes are used to specify how latent-states translate into the measurable data being forecasted.
+    The KalmanFilter is a :class:`torch.nn.Module` which generates predictions/forecasts using a state-space model.
 
     :param processes: A list of :class:`.Process` modules.
     :param measures: A list of strings specifying the names of the dimensions of the time-series being measured.
@@ -116,7 +115,8 @@ class KalmanFilter(nn.Module):
         y = args[0]
 
         if optimizer is None:
-            optimizer = torch.optim.LBFGS(self.parameters(), max_iter=10, line_search_fn='strong_wolfe', lr=.5)
+            optimizer = torch.optim.LBFGS([p for p in self.parameters() if p.requires_grad],
+                                          max_iter=10, line_search_fn='strong_wolfe', lr=.5)
 
         self.set_initial_values(y)
 
@@ -274,7 +274,7 @@ class KalmanFilter(nn.Module):
         :param kwargs: Further arguments passed to the `processes`. For example, the :class:`.LinearModel` and
          :class:`.NN` processes expect a ``X`` argument for predictors.
         :return: A :class:`.Predictions` object with :func:`Predictions.log_prob()` and
-        :func:`Predictions.to_dataframe()` methods.
+         :func:`Predictions.to_dataframe()` methods.
         """
 
         # this may change in the future
